@@ -1,0 +1,35 @@
+{
+  "name": "parcelle-plus-server",
+  "version": "1.0.0",
+  "description": "Serveur backend ParcellePlus pour Raspberry Pi - Gestion polygones et messages",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start-secure": "node server-secure.js",
+    "dev": "nodemon server.js",
+    "dev-secure": "nodemon server-secure.js",
+    "setup": "node scripts/setup-database.js",
+    "test": "node test/test-server.js"
+  },
+  "keywords": ["parcelle", "polygon", "chat", "raspberry-pi"],
+  "author": "ParcellePlus",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5",
+    "uuid": "^9.0.1",
+    "body-parser": "^1.20.2",
+    "morgan": "^1.10.0",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "bcrypt": "^5.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+} 

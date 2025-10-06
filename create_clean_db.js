@@ -12,7 +12,7 @@ const { v4: uuidv4 } = require('uuid');
 
 // Configuration
 const DB_DIR = path.join(__dirname, 'database');
-const DB_PATH = path.join(DB_DIR, 'parcelle_chat.db');
+const DB_PATH = path.join(DB_DIR, 'parcelle_business.db');
 
 console.log('🗄️  Création d\'une base de données propre pour ParcellePlus');
 console.log('=======================================================');
@@ -72,22 +72,26 @@ async function createTables() {
         `);
         console.log('✅ Table users créée');
 
-        // Table polygons
+        // Table polygons (avec TOUTES les colonnes nécessaires)
         await runQuery(`
             CREATE TABLE IF NOT EXISTS polygons (
                 id TEXT PRIMARY KEY,
-                userId TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
                 coordinates TEXT NOT NULL,
                 price REAL NOT NULL,
                 surface REAL NOT NULL,
                 commune TEXT NOT NULL,
                 code_insee TEXT NOT NULL,
                 status TEXT DEFAULT 'available',
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (userId) REFERENCES users (id)
+                is_public INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
             )
         `);
-        console.log('✅ Table polygons créée');
+        console.log('✅ Table polygons créée avec colonnes : title, description, is_public, created_at, updated_at');
 
         // Table rooms
         await runQuery(`
@@ -205,38 +209,77 @@ async function insertTestPolygons() {
             return;
         }
 
+        const now = new Date().toISOString();
+
         const testPolygons = [
             {
                 id: uuidv4(),
-                userId: users[0].id,
+                user_id: users[0].id,
+                title: 'Terrain constructible Paris 1er',
+                description: 'Magnifique terrain en plein cœur de Paris, proche de toutes commodités.',
                 coordinates: JSON.stringify([
-                    [2.3522, 48.8566], [2.3532, 48.8566], [2.3532, 48.8576], [2.3522, 48.8576]
+                    [48.8566, 2.3522], [48.8566, 2.3532], [48.8576, 2.3532], [48.8576, 2.3522]
                 ]),
                 price: 250000,
                 surface: 100,
                 commune: 'Paris 1er',
-                code_insee: '75101'
+                code_insee: '75101',
+                status: 'available',
+                is_public: 1,
+                created_at: now,
+                updated_at: now
             },
             {
                 id: uuidv4(),
-                userId: users[1].id,
+                user_id: users[1].id,
+                title: 'Parcelle Lyon 2e - Idéal investissement',
+                description: 'Belle parcelle à Lyon, quartier recherché. Viabilisé et prêt à construire.',
                 coordinates: JSON.stringify([
-                    [4.8357, 45.7640], [4.8367, 45.7640], [4.8367, 45.7650], [4.8357, 45.7650]
+                    [45.7640, 4.8357], [45.7640, 4.8367], [45.7650, 4.8367], [45.7650, 4.8357]
                 ]),
                 price: 180000,
                 surface: 80,
                 commune: 'Lyon 2e',
-                code_insee: '69382'
+                code_insee: '69382',
+                status: 'available',
+                is_public: 1,
+                created_at: now,
+                updated_at: now
+            },
+            {
+                id: uuidv4(),
+                user_id: users[0].id,
+                title: 'Grand terrain Marseille',
+                description: 'Terrain spacieux avec vue sur la mer. Opportunité rare !',
+                coordinates: JSON.stringify([
+                    [43.2965, 5.3698], [43.2965, 5.3708], [43.2975, 5.3708], [43.2975, 5.3698]
+                ]),
+                price: 320000,
+                surface: 150,
+                commune: 'Marseille',
+                code_insee: '13055',
+                status: 'available',
+                is_public: 1,
+                created_at: now,
+                updated_at: now
             }
         ];
 
         for (const polygon of testPolygons) {
             await runQuery(`
-                INSERT INTO polygons (id, userId, coordinates, price, surface, commune, code_insee, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [polygon.id, polygon.userId, polygon.coordinates, polygon.price, polygon.surface, polygon.commune, polygon.code_insee, 'available']);
+                INSERT INTO polygons (
+                    id, user_id, title, description, coordinates, price, surface, 
+                    commune, code_insee, status, is_public, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [
+                polygon.id, polygon.user_id, polygon.title, polygon.description, 
+                polygon.coordinates, polygon.price, polygon.surface, polygon.commune, 
+                polygon.code_insee, polygon.status, polygon.is_public, 
+                polygon.created_at, polygon.updated_at
+            ]);
             
-            console.log(`✅ Annonce créée à ${polygon.commune}`);
+            console.log(`✅ Annonce créée : "${polygon.title}" à ${polygon.commune}`);
         }
 
     } catch (error) {

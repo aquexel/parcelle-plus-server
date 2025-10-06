@@ -56,18 +56,23 @@ async function createTables() {
     try {
         console.log('📋 Création des tables...');
 
-        // Table users
+        // Table users (schéma compatible avec UserService.js)
         await runQuery(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                firstName TEXT,
-                lastName TEXT,
+                email TEXT UNIQUE,
+                password_hash TEXT NOT NULL,
+                full_name TEXT,
                 phone TEXT,
-                address TEXT,
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+                user_type TEXT DEFAULT 'user',
+                device_id TEXT,
+                avatar_url TEXT,
+                is_active INTEGER DEFAULT 1,
+                is_verified INTEGER DEFAULT 0,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
         console.log('✅ Table users créée');
@@ -133,54 +138,51 @@ async function insertTestUsers() {
     try {
         console.log('👥 Insertion des utilisateurs de test...');
 
+        const bcrypt = require('bcrypt');
+        
         const testUsers = [
             {
                 id: uuidv4(),
                 username: 'testuser1',
                 email: 'test1@parcelle-plus.com',
                 password: 'testpass123',
-                firstName: 'Jean',
-                lastName: 'Dupont',
-                phone: '0123456789',
-                address: '123 Rue de la Paix, Paris'
+                full_name: 'Jean Dupont',
+                phone: '0123456789'
             },
             {
                 id: uuidv4(),
                 username: 'testuser2',
                 email: 'test2@parcelle-plus.com',
                 password: 'testpass123',
-                firstName: 'Marie',
-                lastName: 'Martin',
-                phone: '0987654321',
-                address: '456 Avenue des Champs, Lyon'
+                full_name: 'Marie Martin',
+                phone: '0987654321'
             },
             {
                 id: uuidv4(),
                 username: 'testuser3',
                 email: 'test3@parcelle-plus.com',
                 password: 'testpass123',
-                firstName: 'Pierre',
-                lastName: 'Durand',
-                phone: '0147258369',
-                address: '789 Boulevard Saint-Germain, Marseille'
+                full_name: 'Pierre Durand',
+                phone: '0147258369'
             },
             {
                 id: uuidv4(),
                 username: 'testuser4',
                 email: 'test4@parcelle-plus.com',
                 password: 'testpass123',
-                firstName: 'Sophie',
-                lastName: 'Leroy',
-                phone: '0369258147',
-                address: '321 Rue de Rivoli, Toulouse'
+                full_name: 'Sophie Leroy',
+                phone: '0369258147'
             }
         ];
 
         for (const user of testUsers) {
+            const passwordHash = await bcrypt.hash(user.password, 10);
+            const now = new Date().toISOString();
+            
             await runQuery(`
-                INSERT INTO users (id, username, email, password, firstName, lastName, phone, address)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `, [user.id, user.username, user.email, user.password, user.firstName, user.lastName, user.phone, user.address]);
+                INSERT INTO users (id, username, email, password_hash, full_name, phone, user_type, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, [user.id, user.username, user.email, passwordHash, user.full_name, user.phone, 'user', 1, now, now]);
             
             console.log(`✅ Utilisateur ${user.username} créé`);
         }

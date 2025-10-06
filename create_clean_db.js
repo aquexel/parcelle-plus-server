@@ -102,13 +102,11 @@ async function createTables() {
         await runQuery(`
             CREATE TABLE IF NOT EXISTS rooms (
                 id TEXT PRIMARY KEY,
-                polygonId TEXT NOT NULL,
-                buyerId TEXT NOT NULL,
-                sellerId TEXT NOT NULL,
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (polygonId) REFERENCES polygons (id),
-                FOREIGN KEY (buyerId) REFERENCES users (id),
-                FOREIGN KEY (sellerId) REFERENCES users (id)
+                name TEXT NOT NULL,
+                description TEXT,
+                created_by TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `);
         console.log('✅ Table rooms créée');

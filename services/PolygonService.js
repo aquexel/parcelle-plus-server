@@ -138,9 +138,9 @@ class PolygonService {
             
             const query = `
                 INSERT INTO polygons (
-                    id, user_id, title, description, price, area, coordinates, 
-                    location, status, commune, code_insee, surface, created_at, updated_at, is_public
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, user_id, title, description, price, coordinates, 
+                    status, commune, code_insee, surface, created_at, updated_at, is_public
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -149,10 +149,8 @@ class PolygonService {
                 polygonData.title || 'Nouvelle parcelle',
                 polygonData.description || '',
                 polygonData.price || 0,
-                polygonData.area || polygonData.surface || 0,
                 JSON.stringify(polygonData.coordinates),
-                polygonData.location || polygonData.commune || '',
-                polygonData.status || 'active',
+                polygonData.status || 'available',
                 polygonData.commune || '',
                 polygonData.codeInsee || '',
                 polygonData.surface || polygonData.area || 0,

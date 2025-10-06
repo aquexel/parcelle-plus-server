@@ -125,12 +125,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         const user = await userService.loginUser(username, password);
         
         res.json({
-            user_id: user.id,
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            fullName: user.fullName,
-            token: user.token
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                full_name: user.fullName,
+                fullName: user.fullName,
+                user_type: user.userType || 'user',
+                userType: user.userType || 'user',
+                token: user.token,
+                expiresAt: user.expiresAt
+            }
         });
     } catch (error) {
         console.error('Erreur lors de la connexion:', error);

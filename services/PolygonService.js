@@ -80,7 +80,7 @@ class PolygonService {
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, is_public
                 FROM polygons
-                WHERE is_public = 1 AND status = 'active'
+                WHERE is_public = 1 AND status = 'available'
                 ORDER BY created_at DESC 
                 LIMIT ?
             `;

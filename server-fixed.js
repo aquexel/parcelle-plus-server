@@ -85,12 +85,11 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
             return res.status(400).json({ error: 'Données manquantes' });
         }
 
-        const user = await userService.createUser({
+        const user = await userService.registerUser({
             username,
             email,
             password,
-            firstName,
-            lastName,
+            fullName: `${firstName || ''} ${lastName || ''}`.trim(),
             phone,
             address
         });
@@ -120,7 +119,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
             return res.status(400).json({ error: 'Nom d\'utilisateur et mot de passe requis' });
         }
 
-        const user = await userService.authenticateUser(username, password);
+        const user = await userService.loginUser(username, password);
         
         res.json({
             id: user.id,
@@ -282,3 +281,4 @@ process.on('SIGINT', () => {
     console.log('🛑 Arrêt du serveur...');
     process.exit(0);
 });
+

@@ -4,7 +4,7 @@ const path = require('path');
 
 class MessageService {
     constructor() {
-        this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_business.db');
+        this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
         this.db = new sqlite3.Database(this.dbPath);
         this.initializeDatabase();
     }

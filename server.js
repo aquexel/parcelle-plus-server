@@ -182,6 +182,22 @@ app.post('/api/polygons', async (req, res) => {
     }
 });
 
+app.delete('/api/polygons/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const success = await polygonService.deletePolygon(id);
+        
+        if (success) {
+            res.json({ success: true, message: 'Polygone supprimé' });
+        } else {
+            res.status(404).json({ error: 'Polygone non trouvé' });
+        }
+    } catch (error) {
+        console.error('Erreur lors de la suppression du polygone:', error);
+        res.status(500).json({ error: 'Erreur serveur lors de la suppression' });
+    }
+});
+
 // Routes des annonces (alias pour polygones)
 app.get('/api/announcements/public', async (req, res) => {
     try {

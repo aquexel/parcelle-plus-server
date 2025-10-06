@@ -182,6 +182,29 @@ app.post('/api/polygons', async (req, res) => {
     }
 });
 
+app.put('/api/polygons/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const polygonData = req.body;
+        
+        // Validation basique
+        if (!polygonData.coordinates) {
+            return res.status(400).json({ error: 'Données manquantes (coordinates requis)' });
+        }
+
+        const polygon = await polygonService.updatePolygon(id, polygonData);
+        
+        if (polygon) {
+            res.json(polygon);
+        } else {
+            res.status(404).json({ error: 'Polygone non trouvé' });
+        }
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour du polygone:', error);
+        res.status(500).json({ error: 'Erreur serveur lors de la mise à jour' });
+    }
+});
+
 app.delete('/api/polygons/:id', async (req, res) => {
     try {
         const { id } = req.params;
@@ -252,9 +275,23 @@ app.post('/api/announcements', async (req, res) => {
 });
 
 // Routes des messages
+// Support des deux formats : query param (?room=X) et URL param (/:roomId)
+app.get('/api/messages', async (req, res) => {
+    try {
+        const roomId = req.query.room || 'general';
+        console.log(`💬 Récupération messages pour room: ${roomId}`);
+        const messages = await messageService.getMessagesByRoom(roomId);
+        res.json(messages);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des messages:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 app.get('/api/messages/:roomId', async (req, res) => {
     try {
         const { roomId } = req.params;
+        console.log(`💬 Récupération messages pour room: ${roomId}`);
         const messages = await messageService.getMessagesByRoom(roomId);
         res.json(messages);
     } catch (error) {
@@ -266,10 +303,52 @@ app.get('/api/messages/:roomId', async (req, res) => {
 app.post('/api/messages', async (req, res) => {
     try {
         const messageData = req.body;
+        console.log(`💬 Création message: ${messageData.content?.substring(0, 50)}...`);
         const message = await messageService.createMessage(messageData);
         res.status(201).json(message);
     } catch (error) {
         console.error('Erreur lors de la création du message:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Routes des rooms
+app.get('/api/rooms', async (req, res) => {
+    try {
+        console.log('🏠 Récupération des rooms');
+        const rooms = await messageService.getAllRooms();
+        res.json(rooms);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des rooms:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+app.post('/api/rooms', async (req, res) => {
+    try {
+        const roomData = req.body;
+        console.log(`🏠 Création room: ${roomData.name}`);
+        const room = await messageService.createRoom(roomData);
+        res.status(201).json(room);
+    } catch (error) {
+        console.error('Erreur lors de la création de la room:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+app.delete('/api/rooms/:roomId', async (req, res) => {
+    try {
+        const { roomId } = req.params;
+        console.log(`🗑️ Suppression room: ${roomId}`);
+        const success = await messageService.deleteRoom(roomId);
+        
+        if (success) {
+            res.json({ success: true, message: 'Room supprimée' });
+        } else {
+            res.status(404).json({ error: 'Room non trouvée' });
+        }
+    } catch (error) {
+        console.error('Erreur lors de la suppression de la room:', error);
         res.status(500).json({ error: 'Erreur serveur' });
     }
 });

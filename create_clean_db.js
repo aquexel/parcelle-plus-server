@@ -115,12 +115,15 @@ async function createTables() {
         await runQuery(`
             CREATE TABLE IF NOT EXISTS messages (
                 id TEXT PRIMARY KEY,
-                roomId TEXT NOT NULL,
-                senderId TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                sender_name TEXT NOT NULL,
                 content TEXT NOT NULL,
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (roomId) REFERENCES rooms (id),
-                FOREIGN KEY (senderId) REFERENCES users (id)
+                room TEXT NOT NULL,
+                message_type TEXT DEFAULT 'text',
+                reply_to TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sender_id) REFERENCES users (id)
             )
         `);
         console.log('✅ Table messages créée');

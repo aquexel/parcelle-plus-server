@@ -83,7 +83,7 @@ app.get('/api/health', (req, res) => {
 // Routes d'authentification avec rate limiting
 app.post('/api/auth/register', authLimiter, async (req, res) => {
     try {
-        const { username, email, password, firstName, lastName, phone, address } = req.body;
+        const { username, email, password, fullName, phone, userType } = req.body;
         
         if (!username || !email || !password) {
             return res.status(400).json({ error: 'Données manquantes' });
@@ -93,9 +93,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
             username,
             email,
             password,
-            fullName: `${firstName || ''} ${lastName || ''}`.trim(),
-            phone,
-            address
+            fullName: fullName || '',
+            phone: phone || '',
+            userType: userType || 'user'
         });
 
         res.status(201).json({

@@ -171,6 +171,16 @@ class MessageService {
         });
     }
 
+    // Alias pour compatibilité avec les routes
+    async getMessagesByRoom(roomId, limit = 50, offset = 0) {
+        return this.getMessages(roomId, limit, offset);
+    }
+
+    // Alias pour compatibilité avec les routes
+    async createMessage(messageData) {
+        return this.saveMessage(messageData);
+    }
+
     async getMessageById(id) {
         return new Promise((resolve, reject) => {
             const query = `

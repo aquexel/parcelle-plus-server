@@ -510,6 +510,82 @@ class OfferService {
         });
     }
 
+    /**
+     * Supprime toutes les conversations et offres liées à une annonce
+     * @param {string} announcementId - ID de l'annonce
+     * @returns {Promise<{conversationsDeleted: number, offersDeleted: number, messagesDeleted: number}>}
+     */
+    deleteConversationsAndOffersByAnnouncement(announcementId) {
+        return new Promise((resolve, reject) => {
+            console.log(`🗑️ Suppression conversations/offres pour annonce ${announcementId}`);
+
+            // Récupérer d'abord les room_ids des conversations liées à cette annonce
+            const getRoomsQuery = `SELECT room_id FROM conversation_announcements WHERE announcement_id = ?`;
+            
+            this.db.all(getRoomsQuery, [announcementId], (err, rows) => {
+                if (err) {
+                    console.error('❌ Erreur récupération rooms:', err);
+                    return reject(err);
+                }
+
+                const roomIds = rows.map(row => row.room_id);
+                console.log(`📋 ${roomIds.length} conversations trouvées pour l'annonce`);
+
+                if (roomIds.length === 0) {
+                    return resolve({ conversationsDeleted: 0, offersDeleted: 0, messagesDeleted: 0 });
+                }
+
+                // Créer les placeholders pour la requête IN
+                const placeholders = roomIds.map(() => '?').join(',');
+
+                // 1. Supprimer les messages de ces conversations
+                const deleteMessagesQuery = `DELETE FROM messages WHERE room_id IN (${placeholders})`;
+                
+                this.db.run(deleteMessagesQuery, roomIds, function(err) {
+                    if (err) {
+                        console.error('❌ Erreur suppression messages:', err);
+                        return reject(err);
+                    }
+                    
+                    const messagesDeleted = this.changes;
+                    console.log(`✅ ${messagesDeleted} messages supprimés`);
+
+                    // 2. Supprimer les offres de ces conversations
+                    const deleteOffersQuery = `DELETE FROM offers WHERE announcement_id = ?`;
+                    
+                    this.db.run(deleteOffersQuery, [announcementId], function(err) {
+                        if (err) {
+                            console.error('❌ Erreur suppression offres:', err);
+                            return reject(err);
+                        }
+                        
+                        const offersDeleted = this.changes;
+                        console.log(`✅ ${offersDeleted} offres supprimées`);
+
+                        // 3. Supprimer les liens conversation-annonce
+                        const deleteConversationsQuery = `DELETE FROM conversation_announcements WHERE announcement_id = ?`;
+                        
+                        this.db.run(deleteConversationsQuery, [announcementId], function(err) {
+                            if (err) {
+                                console.error('❌ Erreur suppression conversations:', err);
+                                return reject(err);
+                            }
+                            
+                            const conversationsDeleted = this.changes;
+                            console.log(`✅ ${conversationsDeleted} conversations supprimées`);
+
+                            resolve({
+                                conversationsDeleted,
+                                offersDeleted,
+                                messagesDeleted
+                            });
+                        }.bind(this));
+                    }.bind(this));
+                }.bind(this));
+            });
+        });
+    }
+
     close() {
         this.db.close((err) => {
             if (err) {

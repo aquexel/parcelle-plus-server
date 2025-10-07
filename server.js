@@ -261,7 +261,15 @@ app.put('/api/polygons/:id', async (req, res) => {
 
 app.delete('/api/polygons/:id', async (req, res) => {
     try {
-        const deleted = await polygonService.deletePolygon(req.params.id);
+        const polygonId = req.params.id;
+        console.log(`🗑️ Suppression polygone ${polygonId}`);
+        
+        // Supprimer d'abord les conversations et offres liées
+        const cleanup = await offerService.deleteConversationsAndOffersByAnnouncement(polygonId);
+        console.log(`📊 Nettoyage: ${cleanup.conversationsDeleted} conversations, ${cleanup.offersDeleted} offres, ${cleanup.messagesDeleted} messages`);
+        
+        // Puis supprimer le polygone
+        const deleted = await polygonService.deletePolygon(polygonId);
         if (!deleted) {
             return res.status(404).json({ error: 'Polygone non trouvé' });
         }
@@ -269,10 +277,13 @@ app.delete('/api/polygons/:id', async (req, res) => {
         // Notifier les autres clients
         broadcastNotification({
             type: 'polygon_deleted',
-            polygonId: req.params.id
+            polygonId: polygonId
         });
         
-        res.json({ message: 'Polygone supprimé' });
+        res.json({ 
+            message: 'Polygone supprimé',
+            cleanup: cleanup
+        });
     } catch (error) {
         console.error('❌ Erreur suppression polygone:', error);
         res.status(500).json({ error: 'Erreur serveur' });

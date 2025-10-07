@@ -10,6 +10,7 @@ const path = require('path');
 const PolygonService = require('./services/PolygonService');
 const MessageService = require('./services/MessageService');
 const UserService = require('./services/UserService');
+const OfferService = require('./services/OfferService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -29,6 +30,7 @@ app.use(express.urlencoded({ extended: true }));
 const polygonService = new PolygonService();
 const messageService = new MessageService();
 const userService = new UserService();
+const offerService = new OfferService();
 
 // Créer le serveur HTTP
 const server = http.createServer(app);
@@ -151,6 +153,8 @@ app.get('/', (req, res) => {
             polygons: '/api/polygons',
             messages: '/api/messages',
             users: '/api/users',
+            offers: '/api/offers',
+            conversations: '/api/conversations',
             websocket: 'ws://37.66.21.17:3000'
         }
     });
@@ -314,6 +318,222 @@ app.post('/api/messages', async (req, res) => {
     } catch (error) {
         console.error('❌ ERREUR DÉTAILLÉE sauvegarde message:', error);
         console.error('❌ Stack trace:', error.stack);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// ========== ROUTES PROPOSITIONS/OFFRES ==========
+
+// Lier une annonce à une conversation (premier contact)
+app.post('/api/conversations/link-announcement', async (req, res) => {
+    try {
+        const { roomId, announcementId, buyerId, sellerId, initialMessageId } = req.body;
+        
+        if (!roomId || !announcementId || !buyerId || !sellerId) {
+            return res.status(400).json({ 
+                error: 'roomId, announcementId, buyerId et sellerId sont requis' 
+            });
+        }
+
+        const link = await offerService.linkAnnouncementToConversation({
+            roomId,
+            announcementId,
+            buyerId,
+            sellerId,
+            initialMessageId
+        });
+
+        console.log(`✅ Annonce ${announcementId} liée à la conversation ${roomId}`);
+        res.status(201).json(link);
+    } catch (error) {
+        console.error('❌ Erreur liaison annonce-conversation:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer l'annonce liée à une conversation
+app.get('/api/conversations/:roomId/announcement', async (req, res) => {
+    try {
+        const announcement = await offerService.getConversationAnnouncement(req.params.roomId);
+        
+        if (!announcement) {
+            return res.status(404).json({ error: 'Aucune annonce liée à cette conversation' });
+        }
+
+        res.json(announcement);
+    } catch (error) {
+        console.error('❌ Erreur récupération annonce conversation:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Créer une nouvelle proposition
+app.post('/api/offers', async (req, res) => {
+    try {
+        const offerData = req.body;
+        console.log('💰 POST /api/offers - Création proposition:', offerData);
+
+        // Validation des données
+        const required = ['announcementId', 'buyerId', 'buyerName', 'sellerId', 'sellerName', 
+                         'roomId', 'originalPrice', 'proposedPrice'];
+        const missing = required.filter(field => !offerData[field]);
+        
+        if (missing.length > 0) {
+            return res.status(400).json({ 
+                error: `Champs manquants: ${missing.join(', ')}` 
+            });
+        }
+
+        const savedOffer = await offerService.createOffer(offerData);
+        console.log('✅ Proposition créée:', savedOffer.id);
+
+        // Notifier via WebSocket
+        broadcastNotification({
+            type: 'new_offer',
+            offer: savedOffer,
+            targetUserId: offerData.sellerId
+        });
+
+        res.status(201).json(savedOffer);
+    } catch (error) {
+        console.error('❌ Erreur création proposition:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer une proposition par ID
+app.get('/api/offers/:id', async (req, res) => {
+    try {
+        const offer = await offerService.getOfferById(req.params.id);
+        
+        if (!offer) {
+            return res.status(404).json({ error: 'Proposition non trouvée' });
+        }
+
+        res.json(offer);
+    } catch (error) {
+        console.error('❌ Erreur récupération proposition:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer toutes les propositions d'une conversation
+app.get('/api/offers/room/:roomId', async (req, res) => {
+    try {
+        const offers = await offerService.getOffersByRoom(req.params.roomId);
+        res.json(offers);
+    } catch (error) {
+        console.error('❌ Erreur récupération propositions conversation:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer les propositions d'un utilisateur
+app.get('/api/offers/user/:userId', async (req, res) => {
+    try {
+        const { role = 'all' } = req.query; // 'buyer', 'seller', or 'all'
+        const offers = await offerService.getOffersByUser(req.params.userId, role);
+        res.json(offers);
+    } catch (error) {
+        console.error('❌ Erreur récupération propositions utilisateur:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Accepter une proposition
+app.post('/api/offers/:id/accept', async (req, res) => {
+    try {
+        const { actorId, actorName } = req.body;
+        
+        if (!actorId || !actorName) {
+            return res.status(400).json({ 
+                error: 'actorId et actorName sont requis' 
+            });
+        }
+
+        const offer = await offerService.acceptOffer(req.params.id, actorId, actorName);
+        console.log(`✅ Proposition ${req.params.id} acceptée par ${actorName}`);
+
+        // Notifier via WebSocket
+        broadcastNotification({
+            type: 'offer_accepted',
+            offer: offer
+        });
+
+        res.json(offer);
+    } catch (error) {
+        console.error('❌ Erreur acceptation proposition:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Refuser une proposition
+app.post('/api/offers/:id/reject', async (req, res) => {
+    try {
+        const { actorId, actorName, reason } = req.body;
+        
+        if (!actorId || !actorName) {
+            return res.status(400).json({ 
+                error: 'actorId et actorName sont requis' 
+            });
+        }
+
+        const offer = await offerService.rejectOffer(req.params.id, actorId, actorName, reason);
+        console.log(`❌ Proposition ${req.params.id} refusée par ${actorName}`);
+
+        // Notifier via WebSocket
+        broadcastNotification({
+            type: 'offer_rejected',
+            offer: offer
+        });
+
+        res.json(offer);
+    } catch (error) {
+        console.error('❌ Erreur refus proposition:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Créer une contre-proposition
+app.post('/api/offers/:id/counter', async (req, res) => {
+    try {
+        const counterOfferData = req.body;
+        console.log('🔄 POST /api/offers/:id/counter - Contre-proposition:', counterOfferData);
+
+        const counterOffer = await offerService.createCounterOffer(req.params.id, counterOfferData);
+        console.log(`✅ Contre-proposition créée: ${counterOffer.id}`);
+
+        // Notifier via WebSocket
+        broadcastNotification({
+            type: 'counter_offer',
+            offer: counterOffer
+        });
+
+        res.status(201).json(counterOffer);
+    } catch (error) {
+        console.error('❌ Erreur création contre-proposition:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Récupérer l'historique d'une proposition
+app.get('/api/offers/:id/history', async (req, res) => {
+    try {
+        const history = await offerService.getOfferHistory(req.params.id);
+        res.json(history);
+    } catch (error) {
+        console.error('❌ Erreur récupération historique proposition:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer les statistiques des propositions d'un utilisateur
+app.get('/api/offers/stats/:userId', async (req, res) => {
+    try {
+        const stats = await offerService.getOfferStats(req.params.userId);
+        res.json(stats);
+    } catch (error) {
+        console.error('❌ Erreur récupération statistiques propositions:', error);
         res.status(500).json({ error: 'Erreur serveur' });
     }
 });
@@ -620,6 +840,7 @@ process.on('SIGTERM', () => {
         polygonService.close();
         messageService.close();
         userService.close();
+        offerService.close();
         console.log('🛑 Serveur arrêté.');
         process.exit(0);
     });

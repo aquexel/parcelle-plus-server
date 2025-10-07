@@ -163,3 +163,4 @@ migrateDatabase()
         process.exit(1);
     });
 
+

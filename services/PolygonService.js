@@ -24,6 +24,7 @@ class PolygonService {
                 commune TEXT,
                 code_insee TEXT,
                 surface REAL,
+                zone_plu TEXT DEFAULT '',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -34,6 +35,14 @@ class PolygonService {
                 console.error('❌ Erreur création table polygons:', err);
             } else {
                 console.log('✅ Table polygons initialisée');
+                // Ajouter la colonne zone_plu si elle n'existe pas déjà
+                this.db.run(`ALTER TABLE polygons ADD COLUMN zone_plu TEXT DEFAULT ''`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        console.error('⚠️ Note: colonne zone_plu probablement déjà existante');
+                    } else if (!err) {
+                        console.log('✅ Colonne zone_plu ajoutée');
+                    }
+                });
             }
         });
     }
@@ -43,7 +52,7 @@ class PolygonService {
             let query = `
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, is_public
+                    commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu
                 FROM polygons
             `;
             let params = [];
@@ -78,7 +87,7 @@ class PolygonService {
             const query = `
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, is_public
+                    commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu
                 FROM polygons
                 WHERE is_public = 1 AND status = 'available'
                 ORDER BY created_at DESC 
@@ -107,7 +116,7 @@ class PolygonService {
             const query = `
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at
+                    commune, code_insee, price, status, created_at, updated_at, zone_plu
                 FROM polygons 
                 WHERE id = ?
             `;
@@ -139,8 +148,8 @@ class PolygonService {
             const query = `
                 INSERT INTO polygons (
                     id, user_id, title, description, price, coordinates, 
-                    status, commune, code_insee, surface, created_at, updated_at, is_public
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, commune, code_insee, surface, created_at, updated_at, is_public, zone_plu
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -156,7 +165,8 @@ class PolygonService {
                 polygonData.surface || polygonData.area || 0,
                 now,
                 now,
-                polygonData.isPublic !== undefined ? (polygonData.isPublic ? 1 : 0) : 1 // Default public
+                polygonData.isPublic !== undefined ? (polygonData.isPublic ? 1 : 0) : 1, // Default public
+                polygonData.zonePlu || ''
             ];
 
             this.db.run(query, params, function(err) {
@@ -277,7 +287,7 @@ class PolygonService {
             const query = `
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at
+                    commune, code_insee, price, status, created_at, updated_at, zone_plu
                 FROM polygons 
                 WHERE user_id = ? 
                 ORDER BY created_at DESC 
@@ -305,7 +315,7 @@ class PolygonService {
             const query = `
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at
+                    commune, code_insee, price, status, created_at, updated_at, zone_plu
                 FROM polygons 
                 WHERE commune LIKE ? 
                 ORDER BY created_at DESC 

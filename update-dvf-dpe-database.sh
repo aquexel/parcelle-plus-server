@@ -93,10 +93,13 @@ for i in "${!FILES[@]}"; do
     
     echo "[$NUM/$TOTAL] 📦 $FILE"
     
-    # Extraire le fichier avec wildcards
+    # Extraire le fichier (structure: ./csv/fichier.csv)
     tar -xzf "$BDNB_ARCHIVE" \
-        --wildcards "*/$FILE" \
-        --strip-components=2 \
+        --strip-components=1 \
+        "./csv/$FILE" \
+        -C "$CSV_DIR" 2>/dev/null || \
+    tar -xzf "$BDNB_ARCHIVE" \
+        "csv/$FILE" \
         -C "$CSV_DIR" 2>/dev/null || true
     
     # Vérifier si extrait

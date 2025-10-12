@@ -142,13 +142,9 @@ for i in "${!FILES_TO_EXTRACT[@]}"; do
     fi
     
     if [ -n "$FULL_PATH" ]; then
-        # Animation d'extraction
-        for j in {1..3}; do
-            echo -ne "⏳"
-            sleep 0.2
-        done
+        # Extraire le fichier (sans animation qui peut bloquer)
+        echo -n "      ⏳ Extraction..."
         
-        # Extraire le fichier
         tar -xzf "$BDNB_ARCHIVE" -C "$CSV_DIR" --strip-components=2 "$FULL_PATH" 2>/dev/null || \
         tar -xzf "$BDNB_ARCHIVE" -C "$CSV_DIR" --strip-components=1 "$FULL_PATH" 2>/dev/null || \
         (tar -xzf "$BDNB_ARCHIVE" "$FULL_PATH" && mv "$FULL_PATH" "$CSV_DIR/" 2>/dev/null)

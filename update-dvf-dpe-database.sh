@@ -224,51 +224,49 @@ echo "✅ Base de données créée : $DB_SIZE"
 echo ""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🧹 ÉTAPE 4/4 : Nettoyage
+# 🧹 ÉTAPE 4/4 : Nettoyage automatique
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🧹 ÉTAPE 4/4 : Nettoyage"
+echo "🧹 ÉTAPE 4/4 : Nettoyage automatique"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Calculer l'espace occupé
+# Calculer l'espace occupé avant nettoyage
 CSV_SIZE=$(du -sh "$CSV_DIR" 2>/dev/null | cut -f1 || echo "?")
 ARCHIVE_SIZE=$(du -sh "$BDNB_ARCHIVE" 2>/dev/null | cut -f1 || echo "?")
 
-echo "💾 Espace disque utilisé :"
-echo "  - Archive : $ARCHIVE_SIZE"
+echo "💾 Espace disque avant nettoyage :"
+echo "  - Archive BDNB : $ARCHIVE_SIZE"
 echo "  - CSV extraits : $CSV_SIZE"
 echo "  - Base de données : $DB_SIZE"
 echo ""
 
-# Demander si on veut supprimer les CSV
-read -p "Supprimer les CSV extraits pour libérer ~10 GB ? (O/n) " -n 1 -r
-echo ""
-
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    echo "🗑️  Suppression des CSV..."
+# Supprimer automatiquement les CSV
+if [ -d "$CSV_DIR" ]; then
+    echo "🗑️  Suppression des CSV extraits ($CSV_SIZE)..."
     rm -rf "$CSV_DIR"
     echo "✅ CSV supprimés"
-else
-    echo "📂 CSV conservés dans $CSV_DIR"
 fi
 
 echo ""
 
-# Demander si on veut supprimer l'archive
-read -p "Supprimer l'archive BDNB pour libérer ~35 GB ? (o/N) " -n 1 -r
-echo ""
-
-if [[ $REPLY =~ ^[OoYy]$ ]]; then
-    echo "🗑️  Suppression de l'archive..."
+# Supprimer automatiquement l'archive
+if [ -f "$BDNB_ARCHIVE" ]; then
+    echo "🗑️  Suppression de l'archive BDNB ($ARCHIVE_SIZE)..."
     rm -f "$BDNB_ARCHIVE"
     echo "✅ Archive supprimée"
-    echo "⚠️  Pour la prochaine mise à jour, il faudra re-télécharger"
-else
-    echo "📦 Archive conservée dans $BDNB_ARCHIVE"
-    echo "💡 Prochaine mise à jour plus rapide (pas de téléchargement)"
 fi
+
+# Supprimer le dossier bdnb_data s'il est vide
+if [ -d "$BDNB_DIR" ] && [ -z "$(ls -A "$BDNB_DIR")" ]; then
+    rmdir "$BDNB_DIR"
+    echo "✅ Dossier bdnb_data supprimé (vide)"
+fi
+
+echo ""
+echo "💡 Fichiers temporaires supprimés pour libérer ~45 GB"
+echo "⚠️  Prochaine mise à jour : re-téléchargement complet nécessaire"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

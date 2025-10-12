@@ -147,7 +147,8 @@ mkdir -p "$(dirname "$DB_FILE")"
 echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 
-NODE_OPTIONS="--max-old-space-size=4096" node create-dvf-dpe-annexes-db.js "$CSV_DIR"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODE_OPTIONS="--max-old-space-size=4096" node "$SCRIPT_DIR/create-dvf-dpe-annexes-db.js" "$CSV_DIR"
 
 if [ $? -ne 0 ]; then
     echo ""

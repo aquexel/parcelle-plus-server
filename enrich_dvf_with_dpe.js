@@ -81,20 +81,32 @@ async function enrichDVF() {
         console.log('\n📊 ÉTAPE 1 : Initialisation de la base DPE...');
         console.log(`✅ Base DPE séparée : dpe_bdnb.db`);
 
-        // ÉTAPE 2 : Lire les données BDNB DVF
-        console.log('\n📂 ÉTAPE 2 : Lecture des transactions DVF-BDNB...');
-        const bdnbDVF = await readCSV(path.join(BDNB_PATH, 'batiment_groupe_dvf_open_representatif.csv'));
-        console.log(`✅ Transactions DVF-BDNB : ${bdnbDVF.rows.length}`);
+        // ÉTAPE 2 : Lire les données des bâtiments (coordonnées GPS)
+        console.log('\n📂 ÉTAPE 2 : Lecture des bâtiments (coordonnées GPS)...');
+        let batimentFilePath = path.join(BDNB_PATH, 'batiment_groupe.csv');
+        if (!fs.existsSync(batimentFilePath)) {
+            // Chercher dans un sous-dossier potentiel
+            const subdirs = fs.readdirSync(BDNB_PATH).filter(f => fs.statSync(path.join(BDNB_PATH, f)).isDirectory());
+            if (subdirs.length > 0) {
+                batimentFilePath = path.join(BDNB_PATH, subdirs[0], 'batiment_groupe.csv');
+            }
+        }
+        console.log(`   📄 Fichier: ${batimentFilePath}`);
+        const bdnbBatiments = await readCSV(batimentFilePath);
+        console.log(`✅ Bâtiments chargés : ${bdnbBatiments.rows.length}`);
 
         // ÉTAPE 3 : Lire les DPE des bâtiments
         console.log('\n📂 ÉTAPE 3 : Lecture des DPE des bâtiments...');
-        const bdnbDPE = await readCSV(path.join(BDNB_PATH, 'batiment_groupe_dpe_representatif_logement.csv'));
+        let dpeFilePath = path.join(BDNB_PATH, 'batiment_groupe_dpe_representatif_logement.csv');
+        if (!fs.existsSync(dpeFilePath)) {
+            const subdirs = fs.readdirSync(BDNB_PATH).filter(f => fs.statSync(path.join(BDNB_PATH, f)).isDirectory());
+            if (subdirs.length > 0) {
+                dpeFilePath = path.join(BDNB_PATH, subdirs[0], 'batiment_groupe_dpe_representatif_logement.csv');
+            }
+        }
+        console.log(`   📄 Fichier: ${dpeFilePath}`);
+        const bdnbDPE = await readCSV(dpeFilePath);
         console.log(`✅ DPE disponibles : ${bdnbDPE.rows.length}`);
-
-        // ÉTAPE 4 : Lire les adresses des bâtiments
-        console.log('\n📂 ÉTAPE 4 : Lecture des adresses des bâtiments...');
-        const bdnbAdresses = await readCSV(path.join(BDNB_PATH, 'batiment_groupe_adresse.csv'));
-        console.log(`✅ Adresses disponibles : ${bdnbAdresses.rows.length}`);
 
         // ÉTAPE 5 : Créer un index des DPE par batiment_groupe_id
         console.log('\n🔗 ÉTAPE 5 : Indexation des DPE par bâtiment...');

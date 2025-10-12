@@ -5,8 +5,8 @@
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UPDATE_SCRIPT="$SCRIPT_DIR/update-dpe-database.sh"
-LOG_FILE="$SCRIPT_DIR/logs/dpe_update.log"
+UPDATE_SCRIPT="$SCRIPT_DIR/update-dvf-dpe-database.sh"
+LOG_FILE="$SCRIPT_DIR/logs/dvf_dpe_update.log"
 
 # Création du dossier logs
 mkdir -p "$SCRIPT_DIR/logs"
@@ -15,9 +15,9 @@ mkdir -p "$SCRIPT_DIR/logs"
 CRON_JOB="0 3 1 2,9 * cd $SCRIPT_DIR && bash $UPDATE_SCRIPT >> $LOG_FILE 2>&1"
 
 # Vérification si la tâche existe déjà
-if crontab -l 2>/dev/null | grep -q "update-dpe-database.sh"; then
+if crontab -l 2>/dev/null | grep -q "update-dvf-dpe-database.sh"; then
     echo "⚠️  Tâche cron déjà configurée"
-    crontab -l | grep "update-dpe-database.sh"
+    crontab -l | grep "update-dvf-dpe-database.sh"
 else
     # Ajout de la tâche cron
     (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -

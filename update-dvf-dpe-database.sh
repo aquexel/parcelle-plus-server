@@ -49,13 +49,32 @@ echo "📥 Téléchargement de toute la France (~35 GB)"
 echo "⚠️  Cela peut prendre 15-40 minutes selon votre connexion"
 echo ""
 
-# Télécharger avec wget et barre de progression
-wget --progress=bar:force:noscroll \
+# Fonction pour afficher une barre de progression
+show_progress() {
+    local percent=$1
+    local width=50
+    local filled=$((width * percent / 100))
+    local empty=$((width - filled))
+    
+    printf "\r["
+    printf "%${filled}s" | tr ' ' '█'
+    printf "%${empty}s" | tr ' ' '░'
+    printf "] %3d%%" "$percent"
+}
+
+# Télécharger avec wget et barre de progression visuelle
+echo "⏳ Téléchargement en cours..."
+echo ""
+
+wget --progress=dot:giga \
      -O "$BDNB_ARCHIVE" \
      "$BDNB_URL" 2>&1 | \
-     grep --line-buffered -oP '\d+%|\d+\.\d+[MG]' | \
-     while read line; do
-         echo -ne "\r⏳ Téléchargement : $line"
+     while IFS= read -r line; do
+         # Extraire le pourcentage
+         if [[ $line =~ ([0-9]+)% ]]; then
+             percent="${BASH_REMATCH[1]}"
+             show_progress "$percent"
+         fi
      done
 
 echo ""
@@ -105,9 +124,14 @@ done
 echo ""
 
 EXTRACTED=0
+TOTAL=${#FILES_TO_EXTRACT[@]}
 
-for file in "${FILES_TO_EXTRACT[@]}"; do
-    echo "⏳ Extraction de $file..."
+for i in "${!FILES_TO_EXTRACT[@]}"; do
+    file="${FILES_TO_EXTRACT[$i]}"
+    file_num=$((i + 1))
+    
+    echo "[$file_num/$TOTAL] 📦 $file"
+    echo -n "      "
     
     # Trouver le chemin complet dans l'archive
     FULL_PATH=$(tar -tzf "$BDNB_ARCHIVE" 2>/dev/null | grep -m1 "/$file$" || echo "")
@@ -118,6 +142,12 @@ for file in "${FILES_TO_EXTRACT[@]}"; do
     fi
     
     if [ -n "$FULL_PATH" ]; then
+        # Animation d'extraction
+        for j in {1..3}; do
+            echo -ne "⏳"
+            sleep 0.2
+        done
+        
         # Extraire le fichier
         tar -xzf "$BDNB_ARCHIVE" -C "$CSV_DIR" --strip-components=2 "$FULL_PATH" 2>/dev/null || \
         tar -xzf "$BDNB_ARCHIVE" -C "$CSV_DIR" --strip-components=1 "$FULL_PATH" 2>/dev/null || \
@@ -126,14 +156,15 @@ for file in "${FILES_TO_EXTRACT[@]}"; do
         if [ -f "$CSV_DIR/$file" ]; then
             SIZE=$(du -h "$CSV_DIR/$file" | cut -f1)
             LINES=$(wc -l < "$CSV_DIR/$file" 2>/dev/null || echo "?")
-            echo "✅ $file : $SIZE, $LINES lignes"
+            echo -ne "\r      ✅ $SIZE, $LINES lignes\n"
             ((EXTRACTED++))
         else
-            echo "⚠️  $file : extraction partielle ou échec"
+            echo -ne "\r      ⚠️  Extraction partielle ou échec\n"
         fi
     else
-        echo "❌ $file : introuvable dans l'archive"
+        echo -ne "\r      ❌ Introuvable dans l'archive\n"
     fi
+    echo ""
 done
 
 echo ""

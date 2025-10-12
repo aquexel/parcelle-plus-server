@@ -120,6 +120,14 @@ if [ $EXTRACTED -lt $TOTAL ]; then
     echo ""
 fi
 
+# Supprimer l'archive immédiatement pour libérer 36G
+if [ -f "$BDNB_ARCHIVE" ]; then
+    echo "🗑️  Suppression archive (36G)..."
+    sudo rm -f "$BDNB_ARCHIVE"
+    echo "✅ Archive supprimée - 36G libérés"
+    echo ""
+fi
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🏗️  ÉTAPE 3/4 : Création de la base
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -167,12 +175,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 CSV_SIZE=$(du -sh "$CSV_DIR" 2>/dev/null | cut -f1 || echo "0")
-ARCHIVE_SIZE=$(du -sh "$BDNB_ARCHIVE" 2>/dev/null | cut -f1 || echo "0")
 
-echo "💾 Avant nettoyage :"
-echo "  - Archive : $ARCHIVE_SIZE"
-echo "  - CSV     : $CSV_SIZE"
-echo "  - Base    : $DB_SIZE"
+echo "💾 Nettoyage CSV ($CSV_SIZE)..."
 echo ""
 
 # Supprimer CSV
@@ -182,15 +186,6 @@ if [ -d "$CSV_DIR" ]; then
     echo "✅ CSV supprimés"
 fi
 
-echo ""
-
-# Supprimer archive
-if [ -f "$BDNB_ARCHIVE" ]; then
-    echo "🗑️  Suppression archive..."
-    sudo rm -f "$BDNB_ARCHIVE"
-    echo "✅ Archive supprimée"
-fi
-
 # Supprimer dossier si vide
 if [ -d "$BDNB_DIR" ] && [ -z "$(ls -A "$BDNB_DIR")" ]; then
     sudo rmdir "$BDNB_DIR"
@@ -198,7 +193,7 @@ if [ -d "$BDNB_DIR" ] && [ -z "$(ls -A "$BDNB_DIR")" ]; then
 fi
 
 echo ""
-echo "💡 ~45 GB libérés"
+echo "💡 CSV nettoyés (archive déjà supprimée)"
 echo ""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -5,8 +5,6 @@
 # Script simple et robuste
 #############################################
 
-set -e
-
 PROJECT_DIR="${1:-/opt/parcelle-plus}"
 BDNB_URL="https://www.data.gouv.fr/api/1/datasets/r/ad4bb2f6-0f40-46d2-a636-8d2604532f74"
 BDNB_DIR="$PROJECT_DIR/bdnb_data"
@@ -91,7 +89,8 @@ for i in "${!FILES[@]}"; do
     echo "[$NUM/$TOTAL] 📦 $FILE"
     
     # Extraire le fichier (structure: ./csv/fichier.csv)
-    sudo tar -xzf "$BDNB_ARCHIVE" "./csv/$FILE" --strip-components=1 -C "$CSV_DIR"
+    EXTRACT_OUTPUT=$(sudo tar -xzf "$BDNB_ARCHIVE" "./csv/$FILE" --strip-components=1 -C "$CSV_DIR" 2>&1)
+    EXTRACT_EXIT=$?
     
     # Vérifier si extrait
     if [ -f "$CSV_DIR/$FILE" ]; then
@@ -99,7 +98,10 @@ for i in "${!FILES[@]}"; do
         echo "        ✅ $SIZE"
         ((EXTRACTED++))
     else
-        echo "        ❌ Échec extraction"
+        echo "        ❌ Échec extraction (exit: $EXTRACT_EXIT)"
+        if [ -n "$EXTRACT_OUTPUT" ]; then
+            echo "        Erreur: $EXTRACT_OUTPUT"
+        fi
     fi
     
     echo ""

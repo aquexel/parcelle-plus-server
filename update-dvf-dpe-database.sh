@@ -88,8 +88,8 @@ for i in "${!FILES[@]}"; do
     
     echo "[$NUM/$TOTAL] 📦 $FILE"
     
-    # Se déplacer dans le dossier cible et extraire
-    EXTRACT_OUTPUT=$(cd "$CSV_DIR" && sudo tar -xzf "$PROJECT_DIR/$BDNB_ARCHIVE" "./csv/$FILE" --strip-components=2 2>&1)
+    # Se déplacer dans le dossier cible et extraire (archive = ../bdnb_france.tar.gz)
+    EXTRACT_OUTPUT=$(cd "$CSV_DIR" && sudo tar -xzf "../bdnb_france.tar.gz" "./csv/$FILE" --strip-components=2 2>&1)
     EXTRACT_EXIT=$?
     
     # Vérifier si extrait

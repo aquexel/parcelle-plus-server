@@ -1,9 +1,11 @@
 # 🚀 Commandes Serveur OVH - Déploiement DPE
 
-## 📋 Prérequis
-- Serveur OVH : `149.202.33.164`
-- Accès SSH configuré
-- Git installé sur le serveur
+## 📋 Informations Serveur
+- **Serveur OVH** : `149.202.33.164`
+- **Utilisateur SSH** : `ubuntu`
+- **Chemin projet** : `/opt/parcelle-plus`
+- **Utilisateur service** : `parcelle`
+- **Repository** : `https://github.com/aquexel/parcelle-plus-server.git`
 
 ---
 
@@ -11,12 +13,12 @@
 
 ### 1️⃣ Connexion SSH au serveur
 ```bash
-ssh utilisateur@149.202.33.164
+ssh ubuntu@149.202.33.164
 ```
 
 ### 2️⃣ Navigation vers le dossier du projet
 ```bash
-cd /chemin/vers/parcelle-plus-server
+cd /opt/parcelle-plus
 ```
 
 ### 3️⃣ Pull des dernières modifications GitHub
@@ -26,7 +28,7 @@ git pull origin main
 
 ### 4️⃣ Installation des dépendances Node.js (si nouvelles)
 ```bash
-npm install
+sudo -u parcelle npm install --production
 ```
 
 ### 5️⃣ Rendre les scripts exécutables
@@ -43,15 +45,15 @@ bash deploy-dpe-ovh.sh
 ```
 **⏱️ Durée estimée :** 15-30 minutes (téléchargement + traitement)
 
-### 7️⃣ Redémarrer PM2
+### 7️⃣ Redémarrer PM2 (en tant qu'utilisateur parcelle)
 ```bash
-pm2 restart parcelle-plus-server
-pm2 save
+sudo -u parcelle pm2 restart parcelle-plus
+sudo -u parcelle pm2 save
 ```
 
 ### 8️⃣ Vérifier les logs
 ```bash
-pm2 logs parcelle-plus-server --lines 50
+sudo -u parcelle pm2 logs parcelle-plus --lines 50
 ```
 
 ---
@@ -60,9 +62,9 @@ pm2 logs parcelle-plus-server --lines 50
 
 ### Exécution manuelle
 ```bash
-cd /chemin/vers/parcelle-plus-server
+cd /opt/parcelle-plus
 bash update-dpe-database.sh 40
-pm2 restart parcelle-plus-server
+sudo -u parcelle pm2 restart parcelle-plus
 ```
 
 ---
@@ -71,7 +73,7 @@ pm2 restart parcelle-plus-server
 
 ### Activation des mises à jour automatiques
 ```bash
-cd /chemin/vers/parcelle-plus-server
+cd /opt/parcelle-plus
 bash setup-dpe-cron.sh
 ```
 

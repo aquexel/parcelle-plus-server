@@ -62,7 +62,7 @@ echo ""
 chmod +x download-bdnb-data.sh
 
 # Vérifier si les données existent déjà
-BDNB_DIR="/opt/parcelle-plus/data/bdnb_csv"
+BDNB_DIR="/opt/parcelle-plus/bdnb_data"
 if [ -d "$BDNB_DIR" ] && [ "$(ls -A $BDNB_DIR 2>/dev/null)" ]; then
     echo "⚠️ Données BDNB déjà présentes"
     read -p "🔄 Voulez-vous re-télécharger les données ? (o/N) " -n 1 -r

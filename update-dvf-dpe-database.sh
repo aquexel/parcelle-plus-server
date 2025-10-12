@@ -68,8 +68,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 echo "🗑️  Nettoyage ancien dossier CSV..."
-rm -rf "$CSV_DIR"
-mkdir -p "$CSV_DIR"
+sudo rm -rf "$CSV_DIR"
+sudo mkdir -p "$CSV_DIR"
 
 # Liste des fichiers à extraire
 declare -a FILES=(
@@ -91,7 +91,7 @@ for i in "${!FILES[@]}"; do
     echo "[$NUM/$TOTAL] 📦 $FILE"
     
     # Extraire le fichier (structure: ./csv/fichier.csv)
-    tar -xzf "$BDNB_ARCHIVE" "./csv/$FILE" --strip-components=1 -C "$CSV_DIR"
+    sudo tar -xzf "$BDNB_ARCHIVE" "./csv/$FILE" --strip-components=1 -C "$CSV_DIR"
     
     # Vérifier si extrait
     if [ -f "$CSV_DIR/$FILE" ]; then
@@ -176,7 +176,7 @@ echo ""
 # Supprimer CSV
 if [ -d "$CSV_DIR" ]; then
     echo "🗑️  Suppression CSV..."
-    rm -rf "$CSV_DIR"
+    sudo rm -rf "$CSV_DIR"
     echo "✅ CSV supprimés"
 fi
 
@@ -185,13 +185,13 @@ echo ""
 # Supprimer archive
 if [ -f "$BDNB_ARCHIVE" ]; then
     echo "🗑️  Suppression archive..."
-    rm -f "$BDNB_ARCHIVE"
+    sudo rm -f "$BDNB_ARCHIVE"
     echo "✅ Archive supprimée"
 fi
 
 # Supprimer dossier si vide
 if [ -d "$BDNB_DIR" ] && [ -z "$(ls -A "$BDNB_DIR")" ]; then
-    rmdir "$BDNB_DIR"
+    sudo rmdir "$BDNB_DIR"
     echo "✅ Dossier bdnb_data supprimé"
 fi
 

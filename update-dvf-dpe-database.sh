@@ -67,11 +67,8 @@ echo "📦 ÉTAPE 2/4 : Extraction des fichiers nécessaires"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-if [ -d "$CSV_DIR" ]; then
-    echo "🗑️  Nettoyage ancien dossier CSV..."
-    rm -rf "$CSV_DIR"
-fi
-
+echo "🗑️  Nettoyage ancien dossier CSV..."
+rm -rf "$CSV_DIR"
 mkdir -p "$CSV_DIR"
 
 # Liste des fichiers à extraire

@@ -19,7 +19,7 @@ echo ""
 # Vérifier si on est sur le serveur
 if [ ! -d "$APP_DIR" ]; then
     echo "❌ Erreur : Ce script doit être exécuté sur le serveur OVH"
-    echo "💡 Connectez-vous d'abord : ssh ubuntu@149.202.33.164"
+    echo "💡 Connectez-vous d'abord : ssh ubuntu@VOTRE_IP_SERVEUR"
     exit 1
 fi
 
@@ -163,7 +163,7 @@ echo ""
 echo "📝 Prochaines étapes :"
 echo "   1. Ajouter la route API dans server.js"
 echo "   2. Redémarrer : sudo -u parcelle pm2 restart parcelle-plus"
-echo "   3. Tester : curl -X POST http://149.202.33.164:3000/api/dvf/estimate-with-dpe"
+echo "   3. Tester : curl -X POST http://localhost:3000/api/dvf/estimate-with-dpe"
 echo ""
 echo "📖 Documentation : METHODOLOGIE_DPE.md"
 echo "🔍 Logs : sudo -u parcelle pm2 logs parcelle-plus"

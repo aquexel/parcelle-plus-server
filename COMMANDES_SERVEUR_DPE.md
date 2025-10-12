@@ -1,7 +1,6 @@
 # 🚀 Commandes Serveur OVH - Déploiement DPE
 
 ## 📋 Informations Serveur
-- **Serveur OVH** : `149.202.33.164`
 - **Utilisateur SSH** : `ubuntu`
 - **Chemin projet** : `/opt/parcelle-plus`
 - **Utilisateur service** : `parcelle`
@@ -13,7 +12,7 @@
 
 ### 1️⃣ Connexion SSH au serveur
 ```bash
-ssh ubuntu@149.202.33.164
+ssh ubuntu@VOTRE_IP_SERVEUR
 ```
 
 ### 2️⃣ Navigation vers le dossier du projet

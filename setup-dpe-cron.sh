@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Configuration CRON pour mise à jour semestrielle DPE
-# Exécution automatique : 1er février et 1er septembre à 3h du matin
+# Exécution automatique : 1er mars et 1er octobre à 3h du matin
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,8 +11,8 @@ LOG_FILE="$SCRIPT_DIR/logs/dvf_dpe_update.log"
 # Création du dossier logs
 mkdir -p "$SCRIPT_DIR/logs"
 
-# Création de la tâche cron
-CRON_JOB="0 3 1 2,9 * cd $SCRIPT_DIR && bash $UPDATE_SCRIPT >> $LOG_FILE 2>&1"
+# Création de la tâche cron (1er mars=3, 1er octobre=10)
+CRON_JOB="0 3 1 3,10 * cd $SCRIPT_DIR && bash $UPDATE_SCRIPT >> $LOG_FILE 2>&1"
 
 # Vérification si la tâche existe déjà
 if crontab -l 2>/dev/null | grep -q "update-dvf-dpe-database.sh"; then
@@ -24,8 +24,8 @@ else
     echo "✅ Tâche cron configurée avec succès !"
     echo ""
     echo "📅 Planification :"
-    echo "   - 1er février à 3h00"
-    echo "   - 1er septembre à 3h00"
+    echo "   - 1er mars à 3h00"
+    echo "   - 1er octobre à 3h00"
     echo ""
     echo "📋 Tâches cron actuelles :"
     crontab -l

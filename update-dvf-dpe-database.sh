@@ -147,13 +147,13 @@ mkdir -p "$(dirname "$DB_FILE")"
 echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 
-# Chercher le script (soit dans le même dossier, soit dans PROJECT_DIR)
-if [ -f "$PROJECT_DIR/create-dvf-dpe-annexes-db.js" ]; then
-    SCRIPT_PATH="$PROJECT_DIR/create-dvf-dpe-annexes-db.js"
-elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db.js" ]; then
-    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db.js"
+# Chercher le script optimisé (soit dans le même dossier, soit dans PROJECT_DIR)
+if [ -f "$PROJECT_DIR/create-dvf-dpe-annexes-db-optimized.js" ]; then
+    SCRIPT_PATH="$PROJECT_DIR/create-dvf-dpe-annexes-db-optimized.js"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-optimized.js" ]; then
+    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-optimized.js"
 else
-    echo "❌ Script create-dvf-dpe-annexes-db.js introuvable"
+    echo "❌ Script create-dvf-dpe-annexes-db-optimized.js introuvable"
     exit 1
 fi
 

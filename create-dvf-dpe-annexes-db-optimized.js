@@ -269,8 +269,8 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
                 insertSQL: `INSERT OR IGNORE INTO temp_dpe (batiment_groupe_id, classe_dpe) VALUES (?, ?)`,
                 process: (row) => {
                     const id = row.batiment_groupe_id;
-                    const dpe = row.classe_dpe_representatif_logement;
-                    if (!id || !dpe || dpe === 'N') return null;
+                    const dpe = row.classe_bilan_dpe; // Nom correct de la colonne
+                    if (!id || !dpe || dpe === 'N' || dpe === '') return null;
                     return [id, dpe];
                 }
             }
@@ -286,13 +286,21 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
                 insertSQL: `INSERT INTO temp_dvf VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 process: (row) => {
                     const id = row.batiment_groupe_id;
-                    const valeur = parseFloat(row.valeur_fonciere_etat_initial_avg);
-                    const date = row.date_mutation_etat_initial_max;
-                    const surfMaison = parseFloat(row.surface_reelle_bati_avg) || null;
-                    const surfAppart = parseFloat(row.surface_reelle_bati_avg) || null;
-                    const surfTerrain = parseFloat(row.surface_terrain_avg) || null;
-                    const nbPieces = parseInt(row.nombre_piece_principale_avg) || null;
-                    const type = row.type_local || 'inconnu';
+                    const valeur = parseFloat(row.valeur_fonciere);
+                    const date = row.date_mutation;
+                    const surfMaison = parseFloat(row.surface_bati_mutee_residencielle_individuelle) || null;
+                    const surfAppart = parseFloat(row.surface_bati_mutee_residencielle_collective) || null;
+                    const surfTerrain = parseFloat(row.surface_terrain_mutee) || null;
+                    const nbPieces = parseInt(row.nb_piece_principale) || null;
+                    
+                    // Déterminer le type de bien
+                    let type = 'inconnu';
+                    const nbMaison = parseInt(row.nb_maison_mutee_mutation) || 0;
+                    const nbAppart = parseInt(row.nb_appartement_mutee_mutation) || 0;
+                    
+                    if (nbMaison > 0) type = 'maison';
+                    else if (nbAppart > 0) type = 'appartement';
+                    else if (surfTerrain && surfTerrain > 0) type = 'terrain';
                     
                     if (!id || isNaN(valeur) || valeur <= 0) return null;
                     
@@ -326,7 +334,7 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
                 insertSQL: `INSERT INTO temp_rel_parcelle_sitadel VALUES (?, ?)`,
                 process: (row) => {
                     const parcId = row.parcelle_id;
-                    const sitId = row.sitadel_id;
+                    const sitId = row.type_numero_dau; // Correspond à l'ID de SITADEL
                     if (!parcId || !sitId) return null;
                     return [parcId, sitId];
                 }
@@ -339,11 +347,15 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
             {
                 insertSQL: `INSERT OR IGNORE INTO temp_sitadel VALUES (?, ?, ?, ?, ?)`,
                 process: (row) => {
-                    const sitId = row.sitadel_id;
-                    const piscine = row.nb_piscine && parseInt(row.nb_piscine) > 0 ? 1 : 0;
-                    const garage = row.nb_garage && parseInt(row.nb_garage) > 0 ? 1 : 0;
-                    const veranda = row.nb_veranda && parseInt(row.nb_veranda) > 0 ? 1 : 0;
-                    const date = row.date_permis_construire;
+                    const sitId = row.type_numero_dau; // ID unique du permis
+                    const typeAnnexe = row.type_annexe || '';
+                    const date = row.date_reelle_autorisation;
+                    
+                    // Détecter les annexes depuis type_annexe (si disponible)
+                    const piscine = typeAnnexe.toLowerCase().includes('piscine') ? 1 : 0;
+                    const garage = typeAnnexe.toLowerCase().includes('garage') ? 1 : 0;
+                    const veranda = typeAnnexe.toLowerCase().includes('veranda') || typeAnnexe.toLowerCase().includes('véranda') ? 1 : 0;
+                    
                     if (!sitId) return null;
                     return [sitId, piscine, garage, veranda, date];
                 }

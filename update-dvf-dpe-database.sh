@@ -147,8 +147,17 @@ mkdir -p "$(dirname "$DB_FILE")"
 echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NODE_OPTIONS="--max-old-space-size=4096" node "$SCRIPT_DIR/create-dvf-dpe-annexes-db.js" "$CSV_DIR"
+# Chercher le script (soit dans le même dossier, soit dans PROJECT_DIR)
+if [ -f "$PROJECT_DIR/create-dvf-dpe-annexes-db.js" ]; then
+    SCRIPT_PATH="$PROJECT_DIR/create-dvf-dpe-annexes-db.js"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db.js" ]; then
+    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db.js"
+else
+    echo "❌ Script create-dvf-dpe-annexes-db.js introuvable"
+    exit 1
+fi
+
+NODE_OPTIONS="--max-old-space-size=4096" node "$SCRIPT_PATH" "$CSV_DIR"
 
 if [ $? -ne 0 ]; then
     echo ""

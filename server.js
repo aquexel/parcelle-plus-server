@@ -157,7 +157,7 @@ app.get('/', (req, res) => {
             users: '/api/users',
             offers: '/api/offers',
             conversations: '/api/conversations',
-            websocket: 'ws://37.66.21.17:3000'
+            websocket: 'ws://149.202.33.164:3000'
         }
     });
 });
@@ -1021,9 +1021,9 @@ app.use((err, req, res, next) => {
 server.listen(PORT, '0.0.0.0', () => {
     console.log('🚀 ========================================');
     console.log(`🚀 Serveur ParcellePlus démarré sur le port ${PORT}`);
-    console.log(`🚀 URL publique: http://37.66.21.17:${PORT}`);
-    console.log(`🚀 WebSocket: ws://37.66.21.17:${PORT}`);
-    console.log('🚀 Services: Polygons, Messages, Users');
+    console.log(`🚀 URL publique: http://149.202.33.164:${PORT}`);
+    console.log(`🚀 WebSocket: ws://149.202.33.164:${PORT}`);
+    console.log('🚀 Services: Polygons, Messages, Users, DVF+DPE');
     console.log('🚀 ========================================');
     
     // Nettoyage automatique des sessions expirées toutes les heures

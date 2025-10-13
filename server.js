@@ -11,6 +11,7 @@ const PolygonService = require('./services/PolygonService');
 const MessageService = require('./services/MessageService');
 const UserService = require('./services/UserService');
 const OfferService = require('./services/OfferService');
+const PriceAlertService = require('./services/PriceAlertService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -31,6 +32,7 @@ const polygonService = new PolygonService();
 const messageService = new MessageService();
 const userService = new UserService();
 const offerService = new OfferService();
+const priceAlertService = new PriceAlertService();
 
 // Créer le serveur HTTP
 const server = http.createServer(app);
@@ -226,6 +228,39 @@ app.post('/api/polygons', async (req, res) => {
         const polygonData = req.body;
         const savedPolygon = await polygonService.savePolygon(polygonData);
         
+        // Vérifier les alertes de prix pour cette nouvelle annonce
+        try {
+            const matchingAlerts = await priceAlertService.checkAnnouncementForAlerts(savedPolygon);
+            
+            if (matchingAlerts.length > 0) {
+                console.log(`🔔 ${matchingAlerts.length} alertes correspondent à la nouvelle annonce`);
+                
+                // Envoyer une notification à chaque acheteur concerné
+                for (const alert of matchingAlerts) {
+                    // Marquer comme notifié
+                    await priceAlertService.markAsNotified(alert.id, savedPolygon.id, alert.userId);
+                    
+                    // Envoyer notification WebSocket
+                    broadcastNotification({
+                        type: 'price_alert',
+                        userId: alert.userId,
+                        announcement: savedPolygon,
+                        alert: {
+                            id: alert.id,
+                            maxPrice: alert.maxPrice,
+                            minSurface: alert.minSurface,
+                            maxSurface: alert.maxSurface
+                        },
+                        message: `🔔 Nouvelle annonce: ${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`
+                    });
+                    
+                    console.log(`📲 Notification envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                }
+            }
+        } catch (alertError) {
+            console.error('⚠️ Erreur vérification alertes (non bloquant):', alertError);
+        }
+        
         // Notifier les autres clients
         broadcastNotification({
             type: 'polygon_created',
@@ -286,6 +321,158 @@ app.delete('/api/polygons/:id', async (req, res) => {
         });
     } catch (error) {
         console.error('❌ Erreur suppression polygone:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// ========== ROUTES STATISTIQUES VUES ANNONCES ==========
+
+// Enregistrer une vue d'annonce
+app.post('/api/announcements/:id/view', async (req, res) => {
+    try {
+        const { id: announcementId } = req.params;
+        const { viewerId, viewerType = 'buyer' } = req.body;
+
+        if (!viewerId) {
+            return res.status(400).json({ error: 'viewerId requis' });
+        }
+
+        // Vérifier si l'utilisateur a déjà vu cette annonce
+        const hasViewed = await polygonService.hasViewed(announcementId, viewerId);
+        
+        if (!hasViewed) {
+            // Enregistrer la nouvelle vue
+            const view = await polygonService.recordView(announcementId, viewerId, viewerType);
+            console.log(`👁️ Vue enregistrée pour annonce ${announcementId} par ${viewerId}`);
+            res.status(201).json({ success: true, view });
+        } else {
+            console.log(`👁️ Vue déjà comptabilisée pour annonce ${announcementId} par ${viewerId}`);
+            res.json({ success: true, message: 'Vue déjà comptabilisée' });
+        }
+    } catch (error) {
+        console.error('❌ Erreur enregistrement vue:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer les statistiques d'une annonce spécifique
+app.get('/api/announcements/:id/stats', async (req, res) => {
+    try {
+        const { id: announcementId } = req.params;
+        const stats = await polygonService.getAnnouncementViews(announcementId);
+        res.json(stats);
+    } catch (error) {
+        console.error('❌ Erreur récupération statistiques annonce:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer les statistiques de toutes les annonces d'un vendeur
+app.get('/api/sellers/:sellerId/stats', async (req, res) => {
+    try {
+        const { sellerId } = req.params;
+        const stats = await polygonService.getSellerStats(sellerId);
+        console.log(`📊 Statistiques vendeur ${sellerId}:`, stats);
+        res.json(stats);
+    } catch (error) {
+        console.error('❌ Erreur récupération statistiques vendeur:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// ========== ROUTES ALERTES DE PRIX ==========
+
+// Créer une nouvelle alerte de prix
+app.post('/api/price-alerts', async (req, res) => {
+    try {
+        const alertData = req.body;
+        
+        if (!alertData.userId || !alertData.maxPrice) {
+            return res.status(400).json({ error: 'userId et maxPrice sont requis' });
+        }
+        
+        const alert = await priceAlertService.createAlert(alertData);
+        console.log(`✅ Alerte créée: ${alert.id} pour utilisateur ${alert.userId}`);
+        res.status(201).json(alert);
+    } catch (error) {
+        console.error('❌ Erreur création alerte:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer toutes les alertes d'un utilisateur
+app.get('/api/price-alerts/user/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const alerts = await priceAlertService.getUserAlerts(userId);
+        res.json(alerts);
+    } catch (error) {
+        console.error('❌ Erreur récupération alertes:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Récupérer les statistiques des alertes d'un utilisateur
+app.get('/api/price-alerts/user/:userId/stats', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const stats = await priceAlertService.getUserAlertStats(userId);
+        res.json(stats);
+    } catch (error) {
+        console.error('❌ Erreur récupération stats alertes:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Mettre à jour une alerte
+app.put('/api/price-alerts/:alertId', async (req, res) => {
+    try {
+        const { alertId } = req.params;
+        const updateData = req.body;
+        
+        const updatedAlert = await priceAlertService.updateAlert(alertId, updateData);
+        if (!updatedAlert) {
+            return res.status(404).json({ error: 'Alerte non trouvée' });
+        }
+        
+        res.json(updatedAlert);
+    } catch (error) {
+        console.error('❌ Erreur mise à jour alerte:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Supprimer une alerte
+app.delete('/api/price-alerts/:alertId', async (req, res) => {
+    try {
+        const { alertId } = req.params;
+        const deleted = await priceAlertService.deleteAlert(alertId);
+        
+        if (!deleted) {
+            return res.status(404).json({ error: 'Alerte non trouvée' });
+        }
+        
+        res.json({ success: true, message: 'Alerte supprimée' });
+    } catch (error) {
+        console.error('❌ Erreur suppression alerte:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Activer/désactiver une alerte
+app.patch('/api/price-alerts/:alertId/toggle', async (req, res) => {
+    try {
+        const { alertId } = req.params;
+        const { isActive } = req.body;
+        
+        const updatedAlert = await priceAlertService.updateAlert(alertId, { isActive });
+        if (!updatedAlert) {
+            return res.status(404).json({ error: 'Alerte non trouvée' });
+        }
+        
+        res.json(updatedAlert);
+    } catch (error) {
+        console.error('❌ Erreur toggle alerte:', error);
         res.status(500).json({ error: 'Erreur serveur' });
     }
 });
@@ -819,6 +1006,10 @@ app.get('/api/health', (req, res) => {
         connections: clients.size
     });
 });
+
+// Route DVF avec DPE et Annexes (pour estimation enrichie)
+const dvfWithFeaturesRoute = require('./routes/dvfWithFeaturesRoute');
+app.get('/api/dvf/search-with-features', dvfWithFeaturesRoute);
 
 // Gestion des erreurs
 app.use((err, req, res, next) => {

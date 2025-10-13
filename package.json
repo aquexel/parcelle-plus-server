@@ -26,7 +26,8 @@
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
     "bcrypt": "^5.1.1",
-    "proj4": "^2.9.2"
+    "proj4": "^2.9.2",
+    "csv-parser": "^3.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

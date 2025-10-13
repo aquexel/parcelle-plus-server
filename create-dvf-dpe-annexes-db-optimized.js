@@ -7,7 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
+const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const proj4 = require('proj4');
 
@@ -169,64 +169,55 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
         return 0;
     }
     
-    const fileStream = fs.createReadStream(csvFile);
-    const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
-    
-    let headers = null;
-    let lineNumber = 0;
-    let batch = [];
-    const BATCH_SIZE = 5000;
-    let totalInserted = 0;
-    
-    const insertStmt = db.prepare(processRow.insertSQL);
-    const insertBatch = db.transaction((rows) => {
-        for (const row of rows) {
-            try {
-                insertStmt.run(row);
-            } catch (e) {
-                // Ignorer doublons
+    return new Promise((resolve, reject) => {
+        let lineNumber = 0;
+        let batch = [];
+        const BATCH_SIZE = 5000;
+        let totalInserted = 0;
+        
+        const insertStmt = db.prepare(processRow.insertSQL);
+        const insertBatch = db.transaction((rows) => {
+            for (const row of rows) {
+                try {
+                    insertStmt.run(row);
+                } catch (e) {
+                    // Ignorer doublons
+                }
             }
-        }
-    });
-    
-    for await (const line of rl) {
-        lineNumber++;
-        
-        if (lineNumber === 1) {
-            headers = line.split(',').map(h => h.trim().replace(/"/g, ''));
-            continue;
-        }
-        
-        if (lineNumber % 100000 === 0) {
-            process.stdout.write(`\r   📊 ${(lineNumber / 1000000).toFixed(1)}M lignes`);
-        }
-        
-        const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
-        const row = {};
-        headers.forEach((header, i) => {
-            row[header] = values[i] || null;
         });
         
-        const processed = processRow.process(row);
-        if (processed) {
-            batch.push(processed);
-            
-            if (batch.length >= BATCH_SIZE) {
-                insertBatch(batch);
-                totalInserted += batch.length;
-                batch = [];
-            }
-        }
-    }
-    
-    // Derniers lots
-    if (batch.length > 0) {
-        insertBatch(batch);
-        totalInserted += batch.length;
-    }
-    
-    console.log(`\r   ✅ ${totalInserted.toLocaleString()} lignes insérées`);
-    return totalInserted;
+        fs.createReadStream(csvFile)
+            .pipe(csv())
+            .on('data', (row) => {
+                lineNumber++;
+                
+                if (lineNumber % 100000 === 0) {
+                    process.stdout.write(`\r   📊 ${(lineNumber / 1000000).toFixed(1)}M lignes`);
+                }
+                
+                const processed = processRow.process(row);
+                if (processed) {
+                    batch.push(processed);
+                    
+                    if (batch.length >= BATCH_SIZE) {
+                        insertBatch(batch);
+                        totalInserted += batch.length;
+                        batch = [];
+                    }
+                }
+            })
+            .on('end', () => {
+                // Derniers lots
+                if (batch.length > 0) {
+                    insertBatch(batch);
+                    totalInserted += batch.length;
+                }
+                
+                console.log(`\r   ✅ ${totalInserted.toLocaleString()} lignes insérées`);
+                resolve(totalInserted);
+            })
+            .on('error', reject);
+    });
 }
 
 /**

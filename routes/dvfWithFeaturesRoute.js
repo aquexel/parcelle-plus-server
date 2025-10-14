@@ -95,6 +95,8 @@ module.exports = (req, res) => {
                 nb_pieces,
                 latitude,
                 longitude,
+                code_departement,
+                nom_commune,
                 classe_dpe,
                 presence_piscine,
                 presence_garage,

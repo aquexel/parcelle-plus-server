@@ -56,6 +56,7 @@ db.exec(`
         latitude REAL,
         longitude REAL,
         code_departement TEXT,
+        nom_commune TEXT,
         classe_dpe TEXT,
         presence_piscine INTEGER DEFAULT 0,
         presence_garage INTEGER DEFAULT 0,
@@ -78,7 +79,8 @@ db.exec(`
         batiment_groupe_id TEXT PRIMARY KEY,
         latitude REAL,
         longitude REAL,
-        code_departement TEXT
+        code_departement TEXT,
+        nom_commune TEXT
     );
     
     CREATE TEMP TABLE temp_dpe (
@@ -231,11 +233,12 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
             path.join(BDNB_DIR, 'batiment_groupe.csv'),
             'temp_batiment',
             {
-                insertSQL: `INSERT OR IGNORE INTO temp_batiment (batiment_groupe_id, latitude, longitude, code_departement) VALUES (?, ?, ?, ?)`,
+                insertSQL: `INSERT OR IGNORE INTO temp_batiment (batiment_groupe_id, latitude, longitude, code_departement, nom_commune) VALUES (?, ?, ?, ?, ?)`,
                 process: (row) => {
                     const id = row.batiment_groupe_id;
                     const wkt = row.geom_groupe;
                     const dept = row.code_departement_insee;
+                    const commune = row.libelle_commune_insee || '';
                     
                     if (!id || !wkt) return null;
                     
@@ -245,7 +248,7 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
                     const gps = lambert93ToWGS84(centroid.x, centroid.y);
                     if (!gps) return null;
                     
-                    return [id, gps.latitude, gps.longitude, dept];
+                    return [id, gps.latitude, gps.longitude, dept, commune];
                 }
             }
         );
@@ -370,6 +373,7 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
                 latitude,
                 longitude,
                 code_departement,
+                nom_commune,
                 classe_dpe,
                 presence_piscine,
                 presence_garage,
@@ -390,6 +394,7 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
                 bat.latitude,
                 bat.longitude,
                 bat.code_departement,
+                bat.nom_commune,
                 dpe.classe_dpe,
                 COALESCE(sit.presence_piscine, 0),
                 COALESCE(sit.presence_garage, 0),

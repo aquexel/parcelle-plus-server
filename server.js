@@ -575,6 +575,16 @@ app.post('/api/offers', async (req, res) => {
         }
 
         const savedOffer = await offerService.createOffer(offerData);
+        
+        // Vérifier si c'est une erreur de proposition dupliquée
+        if (savedOffer.error && savedOffer.code === 'DUPLICATE_OFFER') {
+            console.log('❌ Proposition dupliquée refusée');
+            return res.status(409).json({
+                error: savedOffer.error,
+                code: savedOffer.code
+            });
+        }
+        
         console.log('✅ Proposition créée:', savedOffer.id);
 
         // Notifier via WebSocket

@@ -160,6 +160,17 @@ class OfferService {
     async createOffer(offerData) {
         return new Promise(async (resolve, reject) => {
             try {
+                // Vérifier si l'acheteur a déjà une proposition active pour cette annonce
+                const hasActiveOffer = await this.hasActiveOfferForAnnouncement(offerData.announcementId, offerData.buyerId);
+                
+                if (hasActiveOffer) {
+                    console.log(`❌ Proposition refusée: l'acheteur ${offerData.buyerId} a déjà une proposition active pour l'annonce ${offerData.announcementId}`);
+                    return resolve({
+                        error: 'Vous avez déjà une proposition en cours pour cette annonce. Attendez la réponse du vendeur.',
+                        code: 'DUPLICATE_OFFER'
+                    });
+                }
+
                 const id = uuidv4();
                 const now = new Date().toISOString();
 
@@ -273,6 +284,30 @@ class OfferService {
                     });
                     console.log(`✅ ${rows.length} propositions récupérées pour la room ${roomId}`);
                     resolve(rows);
+                }
+            });
+        });
+    }
+
+    /**
+     * Vérifier si un acheteur a déjà une proposition en cours pour une annonce
+     */
+    async hasActiveOfferForAnnouncement(announcementId, buyerId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT COUNT(*) as count
+                FROM offers 
+                WHERE announcement_id = ? AND buyer_id = ? AND status = 'pending'
+            `;
+
+            this.db.get(query, [announcementId, buyerId], (err, row) => {
+                if (err) {
+                    console.error('❌ Erreur vérification proposition existante:', err);
+                    reject(err);
+                } else {
+                    const hasActiveOffer = row.count > 0;
+                    console.log(`🔍 Vérification proposition: annonce ${announcementId}, acheteur ${buyerId}, proposition en attente: ${hasActiveOffer}`);
+                    resolve(hasActiveOffer);
                 }
             });
         });

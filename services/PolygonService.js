@@ -272,6 +272,10 @@ class PolygonService {
                 updateFields.push('status = ?');
                 params.push(updateData.status);
             }
+            if (updateData.isPublic !== undefined) {
+                updateFields.push('is_public = ?');
+                params.push(updateData.isPublic ? 1 : 0);
+            }
             
             updateFields.push('updated_at = ?');
             params.push(now);

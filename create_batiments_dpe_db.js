@@ -321,3 +321,4 @@ async function createBatimentsDB() {
 // Lancer le script
 createBatimentsDB();
 
+

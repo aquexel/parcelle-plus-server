@@ -113,3 +113,4 @@ echo -e "\n${YELLOW}⚠️  N'oubliez pas de redémarrer PM2 :${NC}"
 echo -e "   pm2 restart parcelle-plus-server"
 echo -e "${GREEN}========================================${NC}"
 
+

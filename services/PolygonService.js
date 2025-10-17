@@ -30,6 +30,25 @@ class PolygonService {
             )
         `;
 
+        // Table pour comptabiliser les vues d'annonces
+        const createAnnouncementViewsTable = `
+            CREATE TABLE IF NOT EXISTS announcement_views (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                announcement_id TEXT NOT NULL,
+                viewer_id TEXT NOT NULL,
+                viewer_type TEXT NOT NULL,
+                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (announcement_id) REFERENCES polygons(id) ON DELETE CASCADE
+            )
+        `;
+
+        // Index pour améliorer les performances des requêtes
+        const createViewsIndexes = [
+            `CREATE INDEX IF NOT EXISTS idx_views_announcement ON announcement_views(announcement_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_views_viewer ON announcement_views(viewer_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_views_date ON announcement_views(viewed_at)`
+        ];
+
         this.db.run(createPolygonsTable, (err) => {
             if (err) {
                 console.error('❌ Erreur création table polygons:', err);
@@ -42,6 +61,23 @@ class PolygonService {
                     } else if (!err) {
                         console.log('✅ Colonne zone_plu ajoutée');
                     }
+                });
+            }
+        });
+
+        // Créer la table des vues
+        this.db.run(createAnnouncementViewsTable, (err) => {
+            if (err) {
+                console.error('❌ Erreur création table announcement_views:', err);
+            } else {
+                console.log('✅ Table announcement_views initialisée');
+                // Créer les index
+                createViewsIndexes.forEach(indexQuery => {
+                    this.db.run(indexQuery, (err) => {
+                        if (err) {
+                            console.error('❌ Erreur création index:', err);
+                        }
+                    });
                 });
             }
         });
@@ -358,6 +394,139 @@ class PolygonService {
                 } else {
                     console.log('✅ Statistiques récupérées');
                     resolve(row);
+                }
+            });
+        });
+    }
+
+    // ========== GESTION DES VUES D'ANNONCES ==========
+
+    /**
+     * Enregistrer une vue d'annonce par un acheteur
+     */
+    async recordView(announcementId, viewerId, viewerType = 'buyer') {
+        return new Promise((resolve, reject) => {
+            const query = `
+                INSERT INTO announcement_views (announcement_id, viewer_id, viewer_type)
+                VALUES (?, ?, ?)
+            `;
+
+            this.db.run(query, [announcementId, viewerId, viewerType], function(err) {
+                if (err) {
+                    console.error('❌ Erreur enregistrement vue:', err);
+                    reject(err);
+                } else {
+                    console.log(`✅ Vue enregistrée: annonce ${announcementId} par ${viewerId}`);
+                    resolve({ id: this.lastID, announcementId, viewerId, viewerType });
+                }
+            });
+        });
+    }
+
+    /**
+     * Récupérer le nombre de vues pour une annonce spécifique
+     */
+    async getAnnouncementViews(announcementId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT 
+                    COUNT(*) as total_views,
+                    COUNT(DISTINCT viewer_id) as unique_viewers,
+                    MAX(viewed_at) as last_viewed
+                FROM announcement_views
+                WHERE announcement_id = ?
+            `;
+
+            this.db.get(query, [announcementId], (err, row) => {
+                if (err) {
+                    console.error('❌ Erreur récupération vues annonce:', err);
+                    reject(err);
+                } else {
+                    console.log(`✅ Statistiques vues pour annonce ${announcementId}: ${row.total_views} vues, ${row.unique_viewers} visiteurs uniques`);
+                    resolve({
+                        announcementId,
+                        totalViews: row.total_views || 0,
+                        uniqueViewers: row.unique_viewers || 0,
+                        lastViewed: row.last_viewed
+                    });
+                }
+            });
+        });
+    }
+
+    /**
+     * Récupérer les statistiques de toutes les annonces d'un vendeur
+     */
+    async getSellerStats(sellerId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT 
+                    p.id,
+                    p.title,
+                    p.price,
+                    p.surface,
+                    p.commune,
+                    p.status,
+                    p.created_at,
+                    COUNT(av.id) as total_views,
+                    COUNT(DISTINCT av.viewer_id) as unique_viewers,
+                    MAX(av.viewed_at) as last_viewed
+                FROM polygons p
+                LEFT JOIN announcement_views av ON p.id = av.announcement_id
+                WHERE p.user_id = ?
+                GROUP BY p.id
+                ORDER BY p.created_at DESC
+            `;
+
+            this.db.all(query, [sellerId], (err, rows) => {
+                if (err) {
+                    console.error('❌ Erreur récupération statistiques vendeur:', err);
+                    reject(err);
+                } else {
+                    const stats = rows.map(row => ({
+                        announcementId: row.id,
+                        title: row.title,
+                        price: row.price,
+                        surface: row.surface,
+                        commune: row.commune,
+                        status: row.status,
+                        createdAt: row.created_at,
+                        totalViews: row.total_views || 0,
+                        uniqueViewers: row.unique_viewers || 0,
+                        lastViewed: row.last_viewed
+                    }));
+
+                    const totalStats = {
+                        totalAnnouncements: stats.length,
+                        totalViews: stats.reduce((sum, s) => sum + s.totalViews, 0),
+                        totalUniqueViewers: stats.reduce((sum, s) => sum + s.uniqueViewers, 0),
+                        announcements: stats
+                    };
+
+                    console.log(`✅ Statistiques vendeur ${sellerId}: ${totalStats.totalAnnouncements} annonces, ${totalStats.totalViews} vues totales`);
+                    resolve(totalStats);
+                }
+            });
+        });
+    }
+
+    /**
+     * Vérifier si un utilisateur a déjà vu une annonce (pour éviter les doublons)
+     */
+    async hasViewed(announcementId, viewerId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT COUNT(*) as count
+                FROM announcement_views
+                WHERE announcement_id = ? AND viewer_id = ?
+            `;
+
+            this.db.get(query, [announcementId, viewerId], (err, row) => {
+                if (err) {
+                    console.error('❌ Erreur vérification vue:', err);
+                    reject(err);
+                } else {
+                    resolve(row.count > 0);
                 }
             });
         });

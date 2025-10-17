@@ -337,18 +337,10 @@ app.post('/api/announcements/:id/view', async (req, res) => {
             return res.status(400).json({ error: 'viewerId requis' });
         }
 
-        // Vérifier si l'utilisateur a déjà vu cette annonce
-        const hasViewed = await polygonService.hasViewed(announcementId, viewerId);
-        
-        if (!hasViewed) {
-            // Enregistrer la nouvelle vue
-            const view = await polygonService.recordView(announcementId, viewerId, viewerType);
-            console.log(`👁️ Vue enregistrée pour annonce ${announcementId} par ${viewerId}`);
-            res.status(201).json({ success: true, view });
-        } else {
-            console.log(`👁️ Vue déjà comptabilisée pour annonce ${announcementId} par ${viewerId}`);
-            res.json({ success: true, message: 'Vue déjà comptabilisée' });
-        }
+        // Enregistrer chaque vue (même utilisateur peut voir plusieurs fois)
+        const view = await polygonService.recordView(announcementId, viewerId, viewerType);
+        console.log(`👁️ Vue enregistrée pour annonce ${announcementId} par ${viewerId}`);
+        res.status(201).json({ success: true, view });
     } catch (error) {
         console.error('❌ Erreur enregistrement vue:', error);
         res.status(500).json({ error: 'Erreur serveur' });

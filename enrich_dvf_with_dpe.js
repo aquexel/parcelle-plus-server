@@ -12,6 +12,7 @@ const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { wktLambert93ToWGS84 } = require('./convert_lambert_to_wgs84');
 
 // Configuration
 const DB_PATH = path.join(__dirname, 'database', 'dpe_bdnb.db'); // ⭐ Base séparée

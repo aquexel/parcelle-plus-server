@@ -327,7 +327,7 @@ class PolygonService {
             const query = `
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, zone_plu
+                    commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu
                 FROM polygons 
                 WHERE user_id = ? 
                 ORDER BY created_at DESC 
@@ -341,7 +341,8 @@ class PolygonService {
                 } else {
                     const polygons = rows.map(row => ({
                         ...row,
-                        coordinates: JSON.parse(row.coordinates)
+                        coordinates: JSON.parse(row.coordinates),
+                        isPublic: row.is_public === 1
                     }));
                     console.log(`✅ ${polygons.length} polygones récupérés pour l'utilisateur ${userId}`);
                     resolve(polygons);

@@ -541,6 +541,22 @@ app.post('/api/conversations/link-announcement', async (req, res) => {
     }
 });
 
+// Récupérer les conversations d'un utilisateur
+app.get('/api/conversations/user/:userId', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        console.log(`🔍 Récupération conversations pour utilisateur: ${userId}`);
+        
+        const conversations = await offerService.getUserConversations(userId);
+        console.log(`✅ ${conversations.length} conversations trouvées pour ${userId}`);
+        
+        res.json(conversations);
+    } catch (error) {
+        console.error('❌ Erreur récupération conversations utilisateur:', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 // Récupérer l'annonce liée à une conversation
 app.get('/api/conversations/:roomId/announcement', async (req, res) => {
     try {

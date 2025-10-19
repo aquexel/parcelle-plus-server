@@ -134,6 +134,44 @@ class OfferService {
     /**
      * Récupérer l'annonce liée à une conversation
      */
+    async getUserConversations(userId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT DISTINCT
+                    ca.room_id,
+                    ca.announcement_id,
+                    ca.buyer_id,
+                    ca.seller_id,
+                    ca.created_at
+                FROM conversation_announcements ca
+                WHERE ca.buyer_id = ? OR ca.seller_id = ?
+                ORDER BY ca.created_at DESC
+            `;
+
+            this.db.all(query, [userId, userId], (err, rows) => {
+                if (err) {
+                    console.error('❌ Erreur récupération conversations utilisateur:', err);
+                    reject(err);
+                } else {
+                    console.log(`✅ ${rows.length} conversations trouvées pour ${userId}`);
+                    
+                    // Transformer en format attendu par l'application
+                    const conversations = rows.map(row => ({
+                        id: row.room_id,
+                        roomId: row.room_id,
+                        announcementId: row.announcement_id,
+                        buyerId: row.buyer_id,
+                        sellerId: row.seller_id,
+                        createdAt: row.created_at,
+                        messageCount: 0 // Sera calculé côté client si nécessaire
+                    }));
+                    
+                    resolve(conversations);
+                }
+            });
+        });
+    }
+
     async getConversationAnnouncement(roomId) {
         return new Promise((resolve, reject) => {
             const query = `

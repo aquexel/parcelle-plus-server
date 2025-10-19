@@ -631,7 +631,7 @@ class OfferService {
                 
                 // 1. Trouver la room liée à cette annonce
                 this.db.get(`
-                    SELECT room FROM conversation_announcements 
+                    SELECT room_id FROM conversation_announcements 
                     WHERE announcement_id = ? AND buyer_id = ? AND seller_id = ?
                 `, [announcementId, buyerId, sellerId], (err, row) => {
                     if (err) {
@@ -646,7 +646,7 @@ class OfferService {
                         return;
                     }
                     
-                    const roomId = row.room;
+                    const roomId = row.room_id;
                     console.log(`🗑️ Suppression conversation room: ${roomId}`);
                     
                     // 2. Supprimer les propositions liées

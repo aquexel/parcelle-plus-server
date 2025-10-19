@@ -557,6 +557,47 @@ app.get('/api/conversations/:roomId/announcement', async (req, res) => {
     }
 });
 
+// Supprimer une conversation pour une annonce spécifique
+app.delete('/api/conversations/delete-for-announcement', async (req, res) => {
+    try {
+        const { announcementId, buyerId, sellerId } = req.body;
+        
+        if (!announcementId || !buyerId || !sellerId) {
+            return res.status(400).json({ 
+                error: 'Paramètres manquants: announcementId, buyerId, sellerId requis' 
+            });
+        }
+        
+        console.log(`🗑️ Suppression conversation pour annonce: ${announcementId}`);
+        console.log(`   Acheteur: ${buyerId}, Vendeur: ${sellerId}`);
+        
+        // Supprimer la conversation via OfferService
+        const result = await offerService.deleteConversationForAnnouncement(announcementId, buyerId, sellerId);
+        
+        if (result.success) {
+            console.log(`✅ Conversation supprimée avec succès pour annonce ${announcementId}`);
+            res.json({ 
+                success: true, 
+                message: 'Conversation supprimée avec succès',
+                deletedCount: result.deletedCount 
+            });
+        } else {
+            console.log(`❌ Erreur suppression conversation: ${result.error}`);
+            res.status(500).json({ 
+                success: false, 
+                error: result.error || 'Erreur lors de la suppression de la conversation' 
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Erreur suppression conversation:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Erreur serveur lors de la suppression de la conversation' 
+        });
+    }
+});
+
 // Créer une nouvelle proposition
 app.post('/api/offers', async (req, res) => {
     try {

@@ -621,6 +621,82 @@ class OfferService {
         });
     }
 
+    /**
+     * Supprimer une conversation pour une annonce spécifique
+     */
+    async deleteConversationForAnnouncement(announcementId, buyerId, sellerId) {
+        return new Promise((resolve) => {
+            this.db.serialize(() => {
+                let deletedCount = 0;
+                
+                // 1. Trouver la room liée à cette annonce
+                this.db.get(`
+                    SELECT room FROM conversation_announcements 
+                    WHERE announcement_id = ? AND buyer_id = ? AND seller_id = ?
+                `, [announcementId, buyerId, sellerId], (err, row) => {
+                    if (err) {
+                        console.error('❌ Erreur recherche conversation:', err);
+                        resolve({ success: false, error: err.message });
+                        return;
+                    }
+                    
+                    if (!row) {
+                        console.log(`⚠️ Aucune conversation trouvée pour annonce ${announcementId}`);
+                        resolve({ success: true, deletedCount: 0, message: 'Aucune conversation trouvée' });
+                        return;
+                    }
+                    
+                    const roomId = row.room;
+                    console.log(`🗑️ Suppression conversation room: ${roomId}`);
+                    
+                    // 2. Supprimer les propositions liées
+                    this.db.run(`
+                        DELETE FROM offers WHERE room = ?
+                    `, [roomId], function(err) {
+                        if (err) {
+                            console.error('❌ Erreur suppression propositions:', err);
+                        } else {
+                            console.log(`🗑️ ${this.changes} propositions supprimées`);
+                            deletedCount += this.changes;
+                        }
+                    });
+                    
+                    // 3. Supprimer les messages
+                    this.db.run(`
+                        DELETE FROM messages WHERE room = ?
+                    `, [roomId], function(err) {
+                        if (err) {
+                            console.error('❌ Erreur suppression messages:', err);
+                        } else {
+                            console.log(`🗑️ ${this.changes} messages supprimés`);
+                            deletedCount += this.changes;
+                        }
+                    });
+                    
+                    // 4. Supprimer la liaison annonce-conversation
+                    this.db.run(`
+                        DELETE FROM conversation_announcements 
+                        WHERE announcement_id = ? AND buyer_id = ? AND seller_id = ?
+                    `, [announcementId, buyerId, sellerId], function(err) {
+                        if (err) {
+                            console.error('❌ Erreur suppression liaison:', err);
+                            resolve({ success: false, error: err.message });
+                        } else {
+                            console.log(`🗑️ ${this.changes} liaisons supprimées`);
+                            deletedCount += this.changes;
+                            
+                            resolve({ 
+                                success: true, 
+                                deletedCount: deletedCount,
+                                message: `Conversation supprimée: ${deletedCount} éléments supprimés`
+                            });
+                        }
+                    });
+                });
+            });
+        });
+    }
+
     close() {
         this.db.close((err) => {
             if (err) {

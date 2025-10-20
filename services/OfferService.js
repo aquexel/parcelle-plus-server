@@ -159,6 +159,18 @@ class OfferService {
                 } else {
                     console.log(`✅ ${rows.length} conversations trouvées pour ${userId}`);
                     
+                    // Debug: Afficher les données brutes
+                    console.log('🔍 Données brutes de la requête SQL:');
+                    rows.forEach((row, index) => {
+                        console.log(`  Conversation ${index + 1}:`, {
+                            room_id: row.room_id,
+                            buyer_id: row.buyer_id,
+                            seller_id: row.seller_id,
+                            buyer_username: row.buyer_username,
+                            seller_username: row.seller_username
+                        });
+                    });
+                    
                     // Transformer en format attendu par l'application
                     const conversations = rows.map(row => ({
                         id: row.room_id,
@@ -171,6 +183,17 @@ class OfferService {
                         createdAt: row.created_at,
                         messageCount: 0 // Sera calculé côté client si nécessaire
                     }));
+                    
+                    // Debug: Afficher la réponse finale
+                    console.log('🔍 Réponse finale des conversations:');
+                    conversations.forEach((conv, index) => {
+                        console.log(`  Conversation ${index + 1}:`, {
+                            buyerName: conv.buyerName,
+                            sellerName: conv.sellerName,
+                            buyerId: conv.buyerId,
+                            sellerId: conv.sellerId
+                        });
+                    });
                     
                     resolve(conversations);
                 }

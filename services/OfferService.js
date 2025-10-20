@@ -132,25 +132,86 @@ class OfferService {
     }
 
     /**
+     * Créer les utilisateurs manquants à partir des messages existants
+     */
+    async createMissingUsers() {
+        return new Promise((resolve, reject) => {
+            console.log('🔧 Création des utilisateurs manquants...');
+            
+            // Récupérer tous les utilisateurs uniques des messages
+            const query = `
+                SELECT DISTINCT sender_id, sender_name 
+                FROM messages 
+                WHERE sender_id IS NOT NULL AND sender_name IS NOT NULL
+            `;
+            
+            this.db.all(query, [], (err, messageUsers) => {
+                if (err) {
+                    console.error('❌ Erreur récupération utilisateurs des messages:', err);
+                    reject(err);
+                    return;
+                }
+                
+                console.log(`🔍 ${messageUsers.length} utilisateurs trouvés dans les messages`);
+                
+                // Pour chaque utilisateur des messages, vérifier s'il existe dans la table users
+                let processed = 0;
+                messageUsers.forEach(user => {
+                    this.db.get("SELECT id FROM users WHERE id = ?", [user.sender_id], (err, existingUser) => {
+                        if (err) {
+                            console.error('❌ Erreur vérification utilisateur:', err);
+                        } else if (!existingUser) {
+                            // Créer l'utilisateur manquant
+                            this.db.run(
+                                "INSERT INTO users (id, username, email, password, createdAt) VALUES (?, ?, ?, ?, ?)",
+                                [user.sender_id, user.sender_name, `${user.sender_name}@temp.com`, 'temp_password', new Date().toISOString()],
+                                function(err) {
+                                    if (err) {
+                                        console.error('❌ Erreur création utilisateur:', err);
+                                    } else {
+                                        console.log(`✅ Utilisateur créé: ${user.sender_name} (${user.sender_id})`);
+                                    }
+                                }
+                            );
+                        }
+                        
+                        processed++;
+                        if (processed === messageUsers.length) {
+                            console.log('✅ Synchronisation des utilisateurs terminée');
+                            resolve();
+                        }
+                    });
+                });
+                
+                if (messageUsers.length === 0) {
+                    resolve();
+                }
+            });
+        });
+    }
+
+    /**
      * Récupérer l'annonce liée à une conversation
      */
     async getUserConversations(userId) {
         return new Promise((resolve, reject) => {
-            const query = `
-                SELECT DISTINCT
-                    ca.room_id,
-                    ca.announcement_id,
-                    ca.buyer_id,
-                    ca.seller_id,
-                    ca.created_at,
-                    buyer.username as buyer_username,
-                    seller.username as seller_username
-                FROM conversation_announcements ca
-                LEFT JOIN users buyer ON ca.buyer_id = buyer.id
-                LEFT JOIN users seller ON ca.seller_id = seller.id
-                WHERE ca.buyer_id = ? OR ca.seller_id = ?
-                ORDER BY ca.created_at DESC
-            `;
+            // D'abord, créer les utilisateurs manquants à partir des messages
+            this.createMissingUsers().then(() => {
+                const query = `
+                    SELECT DISTINCT
+                        ca.room_id,
+                        ca.announcement_id,
+                        ca.buyer_id,
+                        ca.seller_id,
+                        ca.created_at,
+                        buyer.username as buyer_username,
+                        seller.username as seller_username
+                    FROM conversation_announcements ca
+                    LEFT JOIN users buyer ON ca.buyer_id = buyer.id
+                    LEFT JOIN users seller ON ca.seller_id = seller.id
+                    WHERE ca.buyer_id = ? OR ca.seller_id = ?
+                    ORDER BY ca.created_at DESC
+                `;
 
             this.db.all(query, [userId, userId], (err, rows) => {
                 if (err) {

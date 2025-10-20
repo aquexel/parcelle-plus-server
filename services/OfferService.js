@@ -10,6 +10,9 @@ class OfferService {
     constructor() {
         this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
         this.db = new sqlite3.Database(this.dbPath);
+        // Base de données des utilisateurs (différente)
+        this.usersDbPath = path.join(__dirname, '..', 'database', 'parcelle_business.db');
+        this.usersDb = new sqlite3.Database(this.usersDbPath);
         this.initializeDatabase();
     }
 
@@ -131,132 +134,76 @@ class OfferService {
         });
     }
 
-    /**
-     * Créer les utilisateurs manquants à partir des messages existants
-     */
-    async createMissingUsers() {
-        return new Promise((resolve, reject) => {
-            console.log('🔧 Création des utilisateurs manquants...');
-            
-            // Récupérer tous les utilisateurs uniques des messages
-            const query = `
-                SELECT DISTINCT sender_id, sender_name 
-                FROM messages 
-                WHERE sender_id IS NOT NULL AND sender_name IS NOT NULL
-            `;
-            
-            this.db.all(query, [], (err, messageUsers) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateurs des messages:', err);
-                    reject(err);
-                    return;
-                }
-                
-                console.log(`🔍 ${messageUsers.length} utilisateurs trouvés dans les messages`);
-                
-                // Pour chaque utilisateur des messages, vérifier s'il existe dans la table users
-                let processed = 0;
-                messageUsers.forEach(user => {
-                    this.db.get("SELECT id FROM users WHERE id = ?", [user.sender_id], (err, existingUser) => {
-                        if (err) {
-                            console.error('❌ Erreur vérification utilisateur:', err);
-                        } else if (!existingUser) {
-                            // Créer l'utilisateur manquant
-                            this.db.run(
-                                "INSERT INTO users (id, username, email, password, createdAt) VALUES (?, ?, ?, ?, ?)",
-                                [user.sender_id, user.sender_name, `${user.sender_name}@temp.com`, 'temp_password', new Date().toISOString()],
-                                function(err) {
-                                    if (err) {
-                                        console.error('❌ Erreur création utilisateur:', err);
-                                    } else {
-                                        console.log(`✅ Utilisateur créé: ${user.sender_name} (${user.sender_id})`);
-                                    }
-                                }
-                            );
-                        }
-                        
-                        processed++;
-                        if (processed === messageUsers.length) {
-                            console.log('✅ Synchronisation des utilisateurs terminée');
-                            resolve();
-                        }
-                    });
-                });
-                
-                if (messageUsers.length === 0) {
-                    resolve();
-                }
-            });
-        });
-    }
 
     /**
      * Récupérer l'annonce liée à une conversation
      */
     async getUserConversations(userId) {
         return new Promise((resolve, reject) => {
-            // D'abord, créer les utilisateurs manquants à partir des messages
-            this.createMissingUsers().then(() => {
-                const query = `
-                    SELECT DISTINCT
-                        ca.room_id,
-                        ca.announcement_id,
-                        ca.buyer_id,
-                        ca.seller_id,
-                        ca.created_at,
-                        buyer.username as buyer_username,
-                        seller.username as seller_username
-                    FROM conversation_announcements ca
-                    LEFT JOIN users buyer ON ca.buyer_id = buyer.id
-                    LEFT JOIN users seller ON ca.seller_id = seller.id
-                    WHERE ca.buyer_id = ? OR ca.seller_id = ?
-                    ORDER BY ca.created_at DESC
-                `;
-
-            this.db.all(query, [userId, userId], (err, rows) => {
+            // Récupérer les conversations depuis parcelle_chat.db
+            const conversationQuery = `
+                SELECT DISTINCT
+                    ca.room_id,
+                    ca.announcement_id,
+                    ca.buyer_id,
+                    ca.seller_id,
+                    ca.created_at
+                FROM conversation_announcements ca
+                WHERE ca.buyer_id = ? OR ca.seller_id = ?
+                ORDER BY ca.created_at DESC
+            `;
+            
+            this.db.all(conversationQuery, [userId, userId], (err, rows) => {
                 if (err) {
                     console.error('❌ Erreur récupération conversations utilisateur:', err);
                     reject(err);
                 } else {
                     console.log(`✅ ${rows.length} conversations trouvées pour ${userId}`);
                     
-                    // Debug: Afficher les données brutes
-                    console.log('🔍 Données brutes de la requête SQL:');
-                    rows.forEach((row, index) => {
-                        console.log(`  Conversation ${index + 1}:`, {
-                            room_id: row.room_id,
-                            buyer_id: row.buyer_id,
-                            seller_id: row.seller_id,
-                            buyer_username: row.buyer_username,
-                            seller_username: row.seller_username
+                    // Pour chaque conversation, récupérer les noms d'utilisateurs depuis parcelle_business.db
+                    let processed = 0;
+                    const conversations = [];
+                    
+                    rows.forEach(row => {
+                        // Récupérer le nom de l'acheteur
+                        this.usersDb.get("SELECT username FROM users WHERE id = ?", [row.buyer_id], (err, buyer) => {
+                            if (err) {
+                                console.error('❌ Erreur récupération acheteur:', err);
+                            }
+                            
+                            // Récupérer le nom du vendeur
+                            this.usersDb.get("SELECT username FROM users WHERE id = ?", [row.seller_id], (err, seller) => {
+                                if (err) {
+                                    console.error('❌ Erreur récupération vendeur:', err);
+                                }
+                                
+                                const conversation = {
+                                    id: row.room_id,
+                                    roomId: row.room_id,
+                                    announcementId: row.announcement_id,
+                                    buyerId: row.buyer_id,
+                                    sellerId: row.seller_id,
+                                    buyerName: buyer?.username || `Utilisateur ${row.buyer_id.substring(0, 8)}`,
+                                    sellerName: seller?.username || `Utilisateur ${row.seller_id.substring(0, 8)}`,
+                                    createdAt: row.created_at,
+                                    messageCount: 0
+                                };
+                                
+                                console.log(`🔍 Conversation: ${conversation.buyerName} ↔ ${conversation.sellerName}`);
+                                conversations.push(conversation);
+                                
+                                processed++;
+                                if (processed === rows.length) {
+                                    console.log('✅ Toutes les conversations traitées');
+                                    resolve(conversations);
+                                }
+                            });
                         });
                     });
                     
-                    // Transformer en format attendu par l'application
-                    const conversations = rows.map(row => ({
-                        id: row.room_id,
-                        roomId: row.room_id,
-                        announcementId: row.announcement_id,
-                        buyerId: row.buyer_id,
-                        sellerId: row.seller_id,
-                        buyerName: row.buyer_username || `Utilisateur ${row.buyer_id.substring(0, 8)}`,
-                        sellerName: row.seller_username || `Utilisateur ${row.seller_id.substring(0, 8)}`,
-                        createdAt: row.created_at,
-                        messageCount: 0 // Sera calculé côté client si nécessaire
-                    }));
-                    
-                    // Debug: Afficher la réponse finale
-                    console.log('🔍 Réponse finale des conversations:');
-                    conversations.forEach((conv, index) => {
-                        console.log(`  Conversation ${index + 1}:`, {
-                            buyerName: conv.buyerName,
-                            sellerName: conv.sellerName,
-                            buyerId: conv.buyerId,
-                            sellerId: conv.sellerId
-                        });
-                    });
-                    
-                    resolve(conversations);
+                    if (rows.length === 0) {
+                        resolve([]);
+                    }
                 }
             });
         });

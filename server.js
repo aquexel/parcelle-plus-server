@@ -33,6 +33,7 @@ const messageService = new MessageService();
 const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
+const pushNotificationService = new (require('./services/PushNotificationService'))();
 
 // Créer le serveur HTTP
 const server = http.createServer(app);
@@ -42,6 +43,31 @@ const wss = new WebSocket.Server({ server });
 
 // Gestion des connexions WebSocket
 const clients = new Map();
+
+// Fonction pour déterminer l'utilisateur cible d'une notification
+async function determineTargetUserId(roomId, senderId) {
+    try {
+        // Extraire les IDs des utilisateurs depuis le roomId
+        // Format: private_user1_user2_announcement_XXXXX
+        if (roomId.startsWith('private_')) {
+            const cleanRoomId = roomId.replace('private_', '');
+            const parts = cleanRoomId.split('_announcement_')[0].split('_');
+            
+            if (parts.length >= 2) {
+                const user1 = parts[0];
+                const user2 = parts[1];
+                
+                // Retourner l'utilisateur qui n'est pas l'expéditeur
+                return senderId === user1 ? user2 : user1;
+            }
+        }
+        
+        return null;
+    } catch (error) {
+        console.error('❌ Erreur détermination utilisateur cible:', error.message);
+        return null;
+    }
+}
 
 wss.on('connection', (ws, req) => {
     const clientId = uuidv4();
@@ -502,6 +528,25 @@ app.post('/api/messages', async (req, res) => {
                 }
             }
         });
+        
+        // Envoyer une notification push si le service est disponible
+        if (pushNotificationService.isInitialized()) {
+            try {
+                // Déterminer l'utilisateur cible (celui qui n'a pas envoyé le message)
+                const targetUserId = await determineTargetUserId(messageData.room, messageData.senderId);
+                if (targetUserId) {
+                    await pushNotificationService.sendMessageNotification(
+                        targetUserId,
+                        messageData.senderName,
+                        messageData.content,
+                        messageData.room,
+                        messageData.senderId
+                    );
+                }
+            } catch (pushError) {
+                console.error('❌ Erreur notification push:', pushError.message);
+            }
+        }
         
         console.log('✅ Réponse envoyée avec status 201');
         res.status(201).json(savedMessage);
@@ -1053,6 +1098,33 @@ app.get('/api/users/online', (req, res) => {
         count: onlineUsers.length,
         users: onlineUsers
     });
+});
+
+// Enregistrer le token FCM d'un utilisateur
+app.post('/api/fcm/register-token', async (req, res) => {
+    try {
+        const { userId, fcmToken } = req.body;
+        
+        if (!userId || !fcmToken) {
+            return res.status(400).json({ 
+                error: 'userId et fcmToken requis' 
+            });
+        }
+        
+        console.log(`📱 Enregistrement token FCM pour utilisateur: ${userId}`);
+        
+        // Enregistrer le token dans la base de données
+        await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+        
+        res.json({ 
+            message: 'Token FCM enregistré avec succès',
+            userId: userId
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur enregistrement token FCM:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
 });
 
 // Route de test de santé

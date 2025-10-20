@@ -142,8 +142,14 @@ class OfferService {
                     ca.announcement_id,
                     ca.buyer_id,
                     ca.seller_id,
-                    ca.created_at
+                    ca.created_at,
+                    buyer.username as buyer_username,
+                    buyer.full_name as buyer_full_name,
+                    seller.username as seller_username,
+                    seller.full_name as seller_full_name
                 FROM conversation_announcements ca
+                LEFT JOIN users buyer ON ca.buyer_id = buyer.id
+                LEFT JOIN users seller ON ca.seller_id = seller.id
                 WHERE ca.buyer_id = ? OR ca.seller_id = ?
                 ORDER BY ca.created_at DESC
             `;
@@ -162,6 +168,8 @@ class OfferService {
                         announcementId: row.announcement_id,
                         buyerId: row.buyer_id,
                         sellerId: row.seller_id,
+                        buyerName: row.buyer_username || row.buyer_full_name || `Utilisateur ${row.buyer_id.substring(0, 8)}`,
+                        sellerName: row.seller_username || row.seller_full_name || `Utilisateur ${row.seller_id.substring(0, 8)}`,
                         createdAt: row.created_at,
                         messageCount: 0 // Sera calculé côté client si nécessaire
                     }));

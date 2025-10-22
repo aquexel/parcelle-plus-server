@@ -10,9 +10,9 @@ BDNB_URL="https://www.data.gouv.fr/api/1/datasets/r/ad4bb2f6-0f40-46d2-a636-8d26
 BDNB_DIR="$PROJECT_DIR/bdnb_data"
 BDNB_ARCHIVE="$BDNB_DIR/bdnb_france.tar.gz"
 CSV_DIR="$BDNB_DIR/csv"
-DB_FILE="$PROJECT_DIR/database/dvf_avec_dpe_et_annexes.db"
+DB_FILE="$PROJECT_DIR/database/dvf_avec_dpe_et_annexes_enhanced.db"
 
-echo "🔄 === MISE À JOUR BASE DVF + DPE + ANNEXES ==="
+echo "🔄 === MISE À JOUR BASE DVF + DPE + ANNEXES (ENRICHIE) ==="
 echo ""
 echo "📂 Répertoire projet : $PROJECT_DIR"
 echo "💾 Base de données : $DB_FILE"
@@ -147,13 +147,13 @@ mkdir -p "$(dirname "$DB_FILE")"
 echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 
-# Chercher le script optimisé (soit dans le même dossier, soit dans PROJECT_DIR)
-if [ -f "$PROJECT_DIR/create-dvf-dpe-annexes-db-optimized.js" ]; then
-    SCRIPT_PATH="$PROJECT_DIR/create-dvf-dpe-annexes-db-optimized.js"
-elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-optimized.js" ]; then
-    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-optimized.js"
+# Chercher le script enrichi (soit dans le même dossier, soit dans PROJECT_DIR)
+if [ -f "$PROJECT_DIR/create-dvf-dpe-annexes-db-enhanced.js" ]; then
+    SCRIPT_PATH="$PROJECT_DIR/create-dvf-dpe-annexes-db-enhanced.js"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-enhanced.js" ]; then
+    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-enhanced.js"
 else
-    echo "❌ Script create-dvf-dpe-annexes-db-optimized.js introuvable"
+    echo "❌ Script create-dvf-dpe-annexes-db-enhanced.js introuvable"
     exit 1
 fi
 
@@ -230,6 +230,8 @@ SELECT 'Avec DPE: ' || SUM(CASE WHEN classe_dpe IS NOT NULL THEN 1 ELSE 0 END) |
 SELECT 'Avec piscine: ' || SUM(presence_piscine) || ' (' || ROUND(100.0 * SUM(presence_piscine) / COUNT(*), 1) || '%)' FROM dvf_avec_dpe_et_annexes;
 SELECT 'Avec garage: ' || SUM(presence_garage) || ' (' || ROUND(100.0 * SUM(presence_garage) / COUNT(*), 1) || '%)' FROM dvf_avec_dpe_et_annexes;
 SELECT 'Avec véranda: ' || SUM(presence_veranda) || ' (' || ROUND(100.0 * SUM(presence_veranda) / COUNT(*), 1) || '%)' FROM dvf_avec_dpe_et_annexes;
+SELECT 'Avec orientation: ' || SUM(CASE WHEN orientation_principale IS NOT NULL THEN 1 ELSE 0 END) || ' (' || ROUND(100.0 * SUM(CASE WHEN orientation_principale IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*), 1) || '%)' FROM dvf_avec_dpe_et_annexes;
+SELECT 'Avec pourcentage vitrage: ' || SUM(CASE WHEN pourcentage_vitrage IS NOT NULL THEN 1 ELSE 0 END) || ' (' || ROUND(100.0 * SUM(CASE WHEN pourcentage_vitrage IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*), 1) || '%)' FROM dvf_avec_dpe_et_annexes;
 EOF
     echo ""
 fi

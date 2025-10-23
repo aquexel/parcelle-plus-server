@@ -303,15 +303,15 @@ async function loadCSVToTemp(csvFile, tableName, processRow) {
         // ÉTAPE 3 : Charger DPE simplifié
         console.log('📂 ÉTAPE 3 : Chargement DPE simplifié...');
         await loadCSVToTemp(
-            path.join(BDNB_DIR, 'dpe_logement.csv'),
+            path.join(BDNB_DIR, 'batiment_groupe_dpe_representatif_logement.csv'),
             'temp_dpe',
             {
                 insertSQL: `INSERT OR IGNORE INTO temp_dpe (
                     batiment_groupe_id, classe_dpe, orientation_principale, pourcentage_vitrage
                 ) VALUES (?, ?, ?, ?)`,
                 process: (row) => {
-                    const id = row.identifiant_dpe;
-                    const dpe = row.classe_bilan_dpe;
+                    const id = row.batiment_groupe_id;
+                    const dpe = row.classe_dpe;
                     const surfNord = parseFloat(row.surface_vitree_nord) || 0;
                     const surfSud = parseFloat(row.surface_vitree_sud) || 0;
                     const surfEst = parseFloat(row.surface_vitree_est) || 0;

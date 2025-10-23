@@ -253,6 +253,52 @@ class PushNotificationService {
     }
 
     /**
+     * Envoyer une notification personnalisée
+     */
+    async sendCustomNotification(userId, title, body, data = {}) {
+        if (!this.initialized) {
+            console.log('⚠️ Firebase non initialisé - Notification non envoyée');
+            return false;
+        }
+
+        try {
+            // Récupérer le token FCM de l'utilisateur
+            const fcmToken = await this.getUserFCMToken(userId);
+            if (!fcmToken) {
+                console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${userId}`);
+                return false;
+            }
+
+            const message = {
+                token: fcmToken,
+                notification: {
+                    title: title,
+                    body: body
+                },
+                data: {
+                    ...data,
+                    timestamp: new Date().toISOString()
+                },
+                android: {
+                    priority: 'high',
+                    notification: {
+                        sound: 'default',
+                        priority: 'high'
+                    }
+                }
+            };
+
+            const response = await admin.messaging().send(message);
+            console.log(`✅ Notification personnalisée envoyée: ${response}`);
+            return true;
+
+        } catch (error) {
+            console.error('❌ Erreur envoi notification personnalisée:', error.message);
+            return false;
+        }
+    }
+
+    /**
      * Vérifier si le service est initialisé
      */
     isInitialized() {

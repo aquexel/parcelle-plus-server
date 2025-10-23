@@ -1127,6 +1127,47 @@ app.post('/api/fcm/register-token', async (req, res) => {
     }
 });
 
+// Envoyer une notification FCM
+app.post('/api/fcm/send-notification', async (req, res) => {
+    try {
+        const { userId, title, body, data = {} } = req.body;
+        
+        if (!userId || !title || !body) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'userId, title et body requis' 
+            });
+        }
+        
+        console.log(`🔔 Envoi notification FCM pour utilisateur: ${userId}`);
+        console.log(`📝 Titre: ${title}`);
+        console.log(`📄 Corps: ${body}`);
+        
+        // Utiliser le service de notifications push existant
+        const success = await pushNotificationService.sendCustomNotification(userId, title, body, data);
+        
+        if (success) {
+            res.json({ 
+                success: true,
+                message: 'Notification envoyée avec succès',
+                userId: userId
+            });
+        } else {
+            res.status(500).json({ 
+                success: false,
+                error: 'Échec envoi notification' 
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Erreur envoi notification FCM:', error.message);
+        res.status(500).json({ 
+            success: false,
+            error: 'Erreur serveur' 
+        });
+    }
+});
+
 // Route de test de santé
 app.get('/api/health', (req, res) => {
     res.json({

@@ -24,6 +24,7 @@ const DEPARTMENTS = [
 
 const DB_FILE = path.join(__dirname, 'database', 'dvf_bdnb_complete.db');
 const DOWNLOAD_DIR = path.join(__dirname, 'dvf_downloads');
+const DVF_DIR = process.argv[3] || path.join(__dirname, 'dvf_data');
 const BDNB_DIR = process.argv[2] || path.join(__dirname, 'open_data_millesime_2024-10-a_dep40_csv', 'csv');
 
 // Créer les dossiers
@@ -32,6 +33,9 @@ if (!fs.existsSync(path.dirname(DB_FILE))) {
 }
 if (!fs.existsSync(DOWNLOAD_DIR)) {
     fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+}
+if (!fs.existsSync(DVF_DIR)) {
+    fs.mkdirSync(DVF_DIR, { recursive: true });
 }
 
 // Créer la base de données

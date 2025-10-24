@@ -6,7 +6,15 @@ const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { promisify } = require('util');
 const { exec } = require('child_process');
+const os = require('os');
 const execPromise = promisify(exec);
+
+// Configuration parallélisme
+const NUM_CPUS = os.cpus().length;
+const MAX_PARALLEL_DVF = Math.min(NUM_CPUS, 4); // Max 4 fichiers DVF en parallèle
+const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 4); // Max 4 fichiers BDNB en parallèle
+
+console.log(`🖥️  Processeur : ${NUM_CPUS} cœurs disponibles`);
 
 console.log('🚀 === CRÉATION BASE DVF + BDNB COMPLÈTE (JOINTURES PAR ID) ===\n');
 
@@ -473,14 +481,14 @@ function insertDVFBatch(transactions) {
 
 // Fonction pour charger les données BDNB
 async function loadBDNBData() {
-    console.log('📊 Chargement des données BDNB...\n');
+    console.log(`📊 Chargement des données BDNB (parallèle: ${MAX_PARALLEL_BDNB} fichiers max)...\n`);
     
-    // Charger les relations parcelle → bâtiment
-    console.log('📂 Chargement rel_batiment_groupe_parcelle.csv...');
-    await loadCSV(
-        path.join(BDNB_DIR, 'rel_batiment_groupe_parcelle.csv'),
-        'temp_bdnb_relations',
+    // Définir les tâches de chargement BDNB
+    const bdnbTasks = [
         {
+            name: 'relations',
+            file: 'rel_batiment_groupe_parcelle.csv',
+            table: 'temp_bdnb_relations',
             insertSQL: `INSERT OR IGNORE INTO temp_bdnb_relations VALUES (?, ?)`,
             process: (row) => {
                 const parcelleId = row.parcelle_id?.trim();
@@ -489,15 +497,11 @@ async function loadBDNBData() {
                 if (!parcelleId || !batimentId) return null;
                 return [parcelleId, batimentId];
             }
-        }
-    );
-    
-    // Charger les bâtiments BDNB
-    console.log('📂 Chargement batiment_groupe.csv...');
-    await loadCSV(
-        path.join(BDNB_DIR, 'batiment_groupe.csv'),
-        'temp_bdnb_batiment',
+        },
         {
+            name: 'bâtiments',
+            file: 'batiment_groupe.csv',
+            table: 'temp_bdnb_batiment',
             insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?)`,
             process: (row) => {
                 const id = row.batiment_groupe_id?.trim();
@@ -509,10 +513,81 @@ async function loadBDNBData() {
                 if (!id) return null;
                 return [id, commune, nomCommune, longitude, latitude];
             }
+        },
+        {
+            name: 'DPE',
+            file: 'batiment_groupe_dpe_representatif_logement.csv',
+            table: 'temp_bdnb_dpe',
+            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            process: (row) => {
+                const id = row.batiment_groupe_id?.trim();
+                const dpe = row.classe_bilan_dpe?.trim();
+                
+                const surfNord = parseFloat(row.surface_vitree_nord) || 0;
+                const surfSud = parseFloat(row.surface_vitree_sud) || 0;
+                const surfEst = parseFloat(row.surface_vitree_est) || 0;
+                const surfOuest = parseFloat(row.surface_vitree_ouest) || 0;
+                const surfHorizontal = parseFloat(row.surface_vitree_horizontal) || 0;
+                
+                let orientation = calculateOrientation(surfNord, surfSud, surfEst, surfOuest, surfHorizontal);
+                
+                if (orientation === 'inconnue' && row.l_orientation_baie_vitree) {
+                    const orientationBaie = parseOrientationFromBaie(row.l_orientation_baie_vitree);
+                    if (orientationBaie) {
+                        orientation = orientationBaie;
+                    }
+                }
+                
+                const pourcentageVitrage = parseVitragePercentage(row.pourcentage_surface_baie_vitree_exterieur);
+                const surfaceHabitableLogement = parseFloat(row.surface_habitable_logement) || null;
+                const dateEtablissementDpe = row.date_etablissement_dpe?.trim() || null;
+                const presencePiscine = parseInt(row.presence_piscine) || 0;
+                const presenceGarage = parseInt(row.presence_garage) || 0;
+                const presenceVeranda = parseInt(row.presence_veranda) || 0;
+                const typeDpe = row.type_dpe?.trim();
+                const isDpeOfficiel = typeDpe === 'DPE' || !typeDpe;
+                
+                if (!id || !dpe || dpe === 'N' || dpe === '') return null;
+                
+                return [id, dpe, orientation, pourcentageVitrage, surfaceHabitableLogement, dateEtablissementDpe, presencePiscine, presenceGarage, presenceVeranda, typeDpe, isDpeOfficiel ? 1 : 0];
+            }
         }
-    );
+    ];
     
-    // Charger les DPE BDNB
+    // Traiter par batch de MAX_PARALLEL_BDNB
+    for (let i = 0; i < bdnbTasks.length; i += MAX_PARALLEL_BDNB) {
+        const batch = bdnbTasks.slice(i, i + MAX_PARALLEL_BDNB);
+        console.log(`⚙️  Chargement parallèle de ${batch.length} fichier(s) BDNB...`);
+        console.log(`   ${batch.map(t => t.name).join(', ')}\n`);
+        
+        const results = await Promise.allSettled(
+            batch.map(async task => {
+                console.log(`📂 Chargement ${task.file}...`);
+                const filePath = path.join(BDNB_DIR, task.file);
+                await loadCSV(filePath, task.table, {
+                    insertSQL: task.insertSQL,
+                    process: task.process
+                });
+                console.log(`   ✅ ${task.name} chargé`);
+                return task.name;
+            })
+        );
+        
+        // Vérifier les échecs
+        results.forEach((result, idx) => {
+            if (result.status === 'rejected') {
+                console.log(`   ⚠️ Erreur ${batch[idx].name}: ${result.reason.message}`);
+            }
+        });
+        
+        console.log('');
+    }
+}
+
+// Fonction obsolète - gardée pour compatibilité mais ne sera plus appelée
+async function OLD_loadBDNBData() {
+    console.log('📊 Chargement des données BDNB...\n');
+    
     console.log('📂 Chargement batiment_groupe_dpe_representatif_logement.csv...');
     await loadCSV(
         path.join(BDNB_DIR, 'batiment_groupe_dpe_representatif_logement.csv'),
@@ -1070,37 +1145,50 @@ async function createCompleteDatabase() {
     let totalFiles = 0;
     let totalTransactions = 0;
     
-    console.log(`📂 Traitement de ${YEARS.length} fichiers DVF déjà téléchargés\n`);
+    console.log(`📂 Traitement de ${YEARS.length} fichiers DVF (parallèle: ${MAX_PARALLEL_DVF} fichiers max)\n`);
     
-    // Étape 1: Traiter les fichiers DVF déjà téléchargés par le script shell
+    // Étape 1: Traiter les fichiers DVF en parallèle par batch
     console.log(`📂 Traitement des fichiers DVF dans : ${DVF_DIR}\n`);
     
-    for (const year of YEARS) {
-        console.log(`📅 === ANNÉE ${year} ===`);
+    // Préparer les tâches DVF
+    const dvfTasks = YEARS.map(year => ({
+        year,
+        fileName: `dvf_${year}.csv`,
+        filePath: path.join(DVF_DIR, `dvf_${year}.csv`)
+    })).filter(task => fs.existsSync(task.filePath));
+    
+    console.log(`📋 ${dvfTasks.length} fichiers DVF trouvés\n`);
+    
+    // Traiter par batch de MAX_PARALLEL_DVF
+    for (let i = 0; i < dvfTasks.length; i += MAX_PARALLEL_DVF) {
+        const batch = dvfTasks.slice(i, i + MAX_PARALLEL_DVF);
+        console.log(`⚙️  Traitement parallèle de ${batch.length} fichier(s) DVF...`);
+        console.log(`   ${batch.map(t => t.year).join(', ')}\n`);
         
-        // Utiliser le fichier déjà téléchargé par le script shell
-        const fileName = `dvf_${year}.csv`;
-        const filePath = path.join(DVF_DIR, fileName);
-        
-        try {
-            if (fs.existsSync(filePath)) {
-                console.log(`📥 Traitement fichier ${year}...`);
+        const results = await Promise.allSettled(
+            batch.map(async task => {
+                console.log(`📅 === ANNÉE ${task.year} ===`);
+                console.log(`📥 Traitement fichier ${task.year}...`);
                 
-                const count = await processDVFFile(filePath, year, 'ALL');
-                totalTransactions += count;
-                totalFiles++;
-                
+                const count = await processDVFFile(task.filePath, task.year, 'ALL');
                 console.log(`   ✅ ${count.toLocaleString()} transactions traitées`);
                 console.log('');
+                
+                return { year: task.year, count };
+            })
+        );
+        
+        // Compter les succès
+        results.forEach(result => {
+            if (result.status === 'fulfilled') {
+                totalTransactions += result.value.count;
+                totalFiles++;
             } else {
-                console.log(`   ⚠️ Fichier ${fileName} non trouvé`);
-                console.log('');
+                console.log(`   ⚠️ Erreur ${result.reason.message}`);
             }
-            
-        } catch (error) {
-            console.log(`   ⚠️ ${year}: ${error.message}`);
-            console.log('');
-        }
+        });
+        
+        console.log('');
     }
     
     // Étape 2: Charger les données BDNB

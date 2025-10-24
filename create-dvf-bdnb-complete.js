@@ -300,7 +300,30 @@ async function processDVFFile(filePath, year, department) {
                 }
                 
                 // Support des deux formats (ancien et moderne)
-                const idMutation = row.id_mutation?.trim() || row['Identifiant de document']?.trim();
+                let idMutation = row.id_mutation?.trim() || row['Identifiant de document']?.trim();
+                
+                // L'ancien format n'a pas d'ID unique, on doit le créer
+                if (!idMutation) {
+                    const dateMutation = row['Date mutation']?.trim() || row.date_mutation?.trim() || '';
+                    const noDisposition = row['No disposition']?.trim() || row.numero_disposition?.trim() || '';
+                    const commune = row['Commune']?.trim() || row.nom_commune?.trim() || '';
+                    const section = row['Section']?.trim() || '';
+                    const noPlan = row['No plan']?.trim() || '';
+                    
+                    // Créer un ID unique basé sur plusieurs champs
+                    if (dateMutation) {
+                        idMutation = `${dateMutation}`;
+                        if (noDisposition) idMutation += `_${noDisposition}`;
+                        if (commune) idMutation += `_${commune}`;
+                        if (section) idMutation += `_${section}`;
+                        if (noPlan) idMutation += `_${noPlan}`;
+                        if (!noDisposition && !section && !noPlan) {
+                            // Fallback: utiliser le numéro de ligne
+                            idMutation += `_${lineCount}`;
+                        }
+                    }
+                }
+                
                 let valeurFonciere = parseFloat(row.valeur_fonciere) || 0;
                 
                 // Format ancien: virgules européennes dans les nombres

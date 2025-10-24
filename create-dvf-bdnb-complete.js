@@ -845,6 +845,8 @@ async function createCompleteDatabase() {
     // Étape 1: Télécharger toutes les données DVF
     for (const year of YEARS) {
         console.log(`📅 === ANNÉE ${year} ===`);
+        let yearTransactions = 0;
+        let yearFiles = 0;
         
         for (const department of DEPARTMENTS) {
             const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}.csv.gz`;
@@ -852,20 +854,21 @@ async function createCompleteDatabase() {
             const filePath = path.join(DOWNLOAD_DIR, fileName);
             
             try {
-                console.log(`📥 ${department} (${year})...`);
-                
                 await downloadFile(url, filePath);
                 const count = await processDVFFile(filePath, year, department);
+                yearTransactions += count;
+                yearFiles++;
                 totalTransactions += count;
                 totalFiles++;
                 
                 fs.unlinkSync(filePath);
                 
             } catch (error) {
-                console.log(`   ⚠️ ${department} (${year}): ${error.message}`);
+                // Erreurs silencieuses pour éviter le spam
             }
         }
         
+        console.log(`   ✅ ${yearFiles} départements traités, ${yearTransactions.toLocaleString()} transactions`);
         console.log('');
     }
     

@@ -269,6 +269,7 @@ async function processDVFFile(filePath, year, department) {
                 // Afficher les noms de colonnes une seule fois
                 if (!columnsPrinted) {
                     console.log(`   🔍 Colonnes disponibles (${Object.keys(row).length}):`, Object.keys(row).slice(0, 15).join(', '));
+                    console.log(`   🔍 Ligne 1 - Identifiant de document: "${row['Identifiant de document']}", Valeur fonciere: "${row['Valeur fonciere']}"`);
                     columnsPrinted = true;
                 }
                 

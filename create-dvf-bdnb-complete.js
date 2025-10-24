@@ -4,6 +4,8 @@ const https = require('https');
 const zlib = require('zlib');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
+const { promisify } = require('util');
+const gunzip = promisify(zlib.gunzip);
 
 console.log('🚀 === CRÉATION BASE DVF + BDNB COMPLÈTE (JOINTURES PAR ID) ===\n');
 
@@ -157,17 +159,46 @@ function downloadFile(url, filePath) {
     });
 }
 
-// Fonction pour traiter un fichier CSV DVF
-async function processDVFFile(filePath, year, department) {
+// Fonction pour décompresser un fichier GZIP
+async function decompressGzipFile(inputPath, outputPath) {
     return new Promise((resolve, reject) => {
-        const transactions = [];
-        let lineCount = 0;
-        let rejectedCount = 0;
-        let rejectedReasons = {};
+        const input = fs.createReadStream(inputPath);
+        const output = fs.createWriteStream(outputPath);
         
-        fs.createReadStream(filePath)
-            .pipe(csv())
-            .on('data', (row) => {
+        input.pipe(zlib.createGunzip())
+            .pipe(output)
+            .on('finish', () => {
+                console.log(`   📦 Fichier décompressé : ${path.basename(outputPath)}`);
+                resolve();
+            })
+            .on('error', (error) => {
+                reject(error);
+            });
+    });
+}
+
+// Fonction pour traiter un fichier CSV DVF (avec décompression automatique)
+async function processDVFFile(filePath, year, department) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            let actualFilePath = filePath;
+            
+            // Vérifier si le fichier est compressé (.gz)
+            if (filePath.endsWith('.gz')) {
+                console.log(`   📦 Décompression du fichier GZIP...`);
+                const decompressedPath = filePath.replace('.gz', '');
+                await decompressGzipFile(filePath, decompressedPath);
+                actualFilePath = decompressedPath;
+            }
+            
+            const transactions = [];
+            let lineCount = 0;
+            let rejectedCount = 0;
+            let rejectedReasons = {};
+            
+            fs.createReadStream(actualFilePath)
+                .pipe(csv())
+                .on('data', (row) => {
                 lineCount++;
                 
                 // Vérifications essentielles (moins strictes)
@@ -239,9 +270,25 @@ async function processDVFFile(filePath, year, department) {
                 if (rejectedCount > 0) {
                     console.log(`   📋 Raisons: ${JSON.stringify(rejectedReasons)}`);
                 }
+                
+                // Nettoyer le fichier temporaire décompressé
+                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
+                    fs.unlinkSync(actualFilePath);
+                    console.log(`   🗑️ Fichier temporaire supprimé`);
+                }
+                
                 resolve(lineCount - rejectedCount);
             })
-            .on('error', reject);
+            .on('error', (error) => {
+                // Nettoyer le fichier temporaire en cas d'erreur
+                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
+                    fs.unlinkSync(actualFilePath);
+                }
+                reject(error);
+            });
+        } catch (error) {
+            reject(error);
+        }
     });
 }
 

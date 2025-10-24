@@ -248,12 +248,8 @@ with zipfile.ZipFile(zip_path, 'r') as zip_ref:
 async function processDVFFile(filePath, year, department) {
     return new Promise(async (resolve, reject) => {
         try {
-            // Décompresser automatiquement si nécessaire
-            const actualFilePath = await decompressFile(filePath);
-            
-            // Détecter le séparateur en fonction de l'extension du fichier extrait
-            const separator = actualFilePath.endsWith('.txt') ? '|' : ',';
-            console.log(`   📋 Séparateur détecté : "${separator}" (fichier ${path.extname(actualFilePath)})`);
+            // Les fichiers DVF sont maintenant au format geo-dvf (CSV avec virgules)
+            // Pas besoin de décompression, le script shell s'en charge
             
             const transactions = [];
             let lineCount = 0;
@@ -261,24 +257,23 @@ async function processDVFFile(filePath, year, department) {
             let rejectedReasons = {};
             let columnsPrinted = false;
             
-            fs.createReadStream(actualFilePath)
-                .pipe(csv({ separator: separator }))
+            fs.createReadStream(filePath)
+                .pipe(csv())
                 .on('data', (row) => {
                 lineCount++;
                 
                 // Afficher les noms de colonnes une seule fois
                 if (!columnsPrinted) {
                     console.log(`   🔍 Colonnes disponibles (${Object.keys(row).length}):`, Object.keys(row).slice(0, 15).join(', '));
-                    console.log(`   🔍 Ligne 1 - Identifiant de document: "${row['Identifiant de document']}", Valeur fonciere: "${row['Valeur fonciere']}"`);
                     columnsPrinted = true;
                 }
                 
-                // Vérifications essentielles (support formats variés)
-                const idMutation = row['Identifiant de document']?.trim() || row.id_mutation?.trim() || row['Id mutation']?.trim();
-                const valeurFonciere = parseFloat(row['Valeur fonciere']) || parseFloat(row.valeur_fonciere) || parseFloat(row.VALEUR_FONCIERE);
-                const longitude = parseFloat(row.Longitude) || parseFloat(row.longitude) || parseFloat(row.LONGITUDE) || null;
-                const latitude = parseFloat(row.Latitude) || parseFloat(row.latitude) || parseFloat(row.LATITUDE) || null;
-                const idParcelle = row['No plan']?.trim() || row.id_parcelle?.trim() || row['Id parcelle']?.trim();
+                // Format geo-dvf officiel (snake_case, nombres sans virgules)
+                const idMutation = row.id_mutation?.trim();
+                const valeurFonciere = parseFloat(row.valeur_fonciere) || 0;
+                const longitude = parseFloat(row.longitude) || null;
+                const latitude = parseFloat(row.latitude) || null;
+                const idParcelle = row.id_parcelle?.trim();
                 
                 // Accepter les transactions même sans coordonnées GPS
                 if (!idMutation || valeurFonciere <= 0) {
@@ -289,22 +284,22 @@ async function processDVFFile(filePath, year, department) {
                 }
                 
                 // Calculer les prix au m²
-                const surfaceBati = parseFloat(row['Surface reelle bati']) || parseFloat(row.surface_reelle_bati) || parseFloat(row.SURFACE_REELLE_BATI) || 0;
-                const surfaceTerrain = parseFloat(row['Surface terrain']) || parseFloat(row.surface_terrain) || parseFloat(row.SURFACE_TERRAIN) || 0;
+                const surfaceBati = parseFloat(row.surface_reelle_bati) || 0;
+                const surfaceTerrain = parseFloat(row.surface_terrain) || 0;
                 const prixM2Bati = surfaceBati > 0 ? valeurFonciere / surfaceBati : null;
                 const prixM2Terrain = surfaceTerrain > 0 ? valeurFonciere / surfaceTerrain : null;
                 
                 transactions.push({
                     id_mutation: idMutation,
-                    date_mutation: row['Date mutation']?.trim() || row.date_mutation?.trim() || row.DATE_MUTATION?.trim(),
+                    date_mutation: row.date_mutation?.trim(),
                     valeur_fonciere: valeurFonciere,
-                    code_commune: row['Code commune']?.trim() || row.code_commune?.trim() || row.CODE_COMMUNE?.trim(),
-                    nom_commune: row['Commune']?.trim() || row.nom_commune?.trim() || row.NOM_COMMUNE?.trim(),
-                    code_departement: row['Code departement']?.trim() || row.code_departement?.trim() || row.CODE_DEPARTEMENT?.trim(),
-                    type_local: row['Type local']?.trim() || row.type_local?.trim() || row.TYPE_LOCAL?.trim(),
+                    code_commune: row.code_commune?.trim(),
+                    nom_commune: row.nom_commune?.trim(),
+                    code_departement: row.code_departement?.trim(),
+                    type_local: row.type_local?.trim(),
                     surface_reelle_bati: surfaceBati || null,
-                    nombre_pieces_principales: parseInt(row['Nombre pieces principales']) || parseInt(row.nombre_pieces_principales) || parseInt(row.NOMBRE_PIECES_PRINCIPALES) || null,
-                    nature_culture: row['Nature culture']?.trim() || row.nature_culture?.trim() || row.NATURE_CULTURE?.trim(),
+                    nombre_pieces_principales: parseInt(row.nombre_pieces_principales) || null,
+                    nature_culture: row.nature_culture?.trim(),
                     surface_terrain: surfaceTerrain || null,
                     longitude: longitude,
                     latitude: latitude,
@@ -337,21 +332,9 @@ async function processDVFFile(filePath, year, department) {
                     console.log(`   📋 Raisons: ${JSON.stringify(rejectedReasons)}`);
                 }
                 
-                // Nettoyer le fichier temporaire extrait (sauf si c'est le fichier original)
-                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
-                    fs.unlinkSync(actualFilePath);
-                    console.log(`   🗑️ Fichier temporaire supprimé`);
-                }
-                
                 resolve(lineCount - rejectedCount);
             })
-            .on('error', (error) => {
-                // Nettoyer en cas d'erreur
-                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
-                    fs.unlinkSync(actualFilePath);
-                }
-                reject(error);
-            });
+            .on('error', reject);
         } catch (error) {
             reject(error);
         }

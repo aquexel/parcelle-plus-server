@@ -162,6 +162,8 @@ async function processDVFFile(filePath, year, department) {
     return new Promise((resolve, reject) => {
         const transactions = [];
         let lineCount = 0;
+        let rejectedCount = 0;
+        let rejectedReasons = {};
         
         fs.createReadStream(filePath)
             .pipe(csv())
@@ -177,6 +179,9 @@ async function processDVFFile(filePath, year, department) {
                 
                 // Accepter les transactions même sans coordonnées GPS
                 if (!idMutation || valeurFonciere <= 0) {
+                    rejectedCount++;
+                    const reason = !idMutation ? 'no_id' : 'no_value';
+                    rejectedReasons[reason] = (rejectedReasons[reason] || 0) + 1;
                     return;
                 }
                 
@@ -222,7 +227,13 @@ async function processDVFFile(filePath, year, department) {
                     insertDVFBatch(transactions);
                 }
                 
-                resolve(lineCount);
+                console.log(`   📊 ${lineCount.toLocaleString()} lignes lues`);
+                console.log(`   ✅ ${(lineCount - rejectedCount).toLocaleString()} transactions acceptées`);
+                console.log(`   ❌ ${rejectedCount.toLocaleString()} transactions rejetées`);
+                if (rejectedCount > 0) {
+                    console.log(`   📋 Raisons: ${JSON.stringify(rejectedReasons)}`);
+                }
+                resolve(lineCount - rejectedCount);
             })
             .on('error', reject);
     });

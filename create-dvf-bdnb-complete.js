@@ -839,29 +839,32 @@ async function createCompleteDatabase() {
     let totalFiles = 0;
     let totalTransactions = 0;
     
-    console.log(`📥 Téléchargement de ${YEARS.length} fichiers DVF complets (un par année)\n`);
+    console.log(`📂 Traitement de ${YEARS.length} fichiers DVF déjà téléchargés\n`);
     
-    // Étape 1: Télécharger toutes les données DVF (fichiers complets par année)
+    // Étape 1: Traiter les fichiers DVF déjà téléchargés par le script shell
+    console.log(`📂 Traitement des fichiers DVF dans : ${DVF_DIR}\n`);
+    
     for (const year of YEARS) {
         console.log(`📅 === ANNÉE ${year} ===`);
         
-        // URL du fichier complet pour l'année
-        const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/valeursfoncieres-${year}.txt.gz`;
+        // Utiliser le fichier déjà téléchargé par le script shell
         const fileName = `dvf_${year}.csv`;
-        const filePath = path.join(DOWNLOAD_DIR, fileName);
+        const filePath = path.join(DVF_DIR, fileName);
         
         try {
-            console.log(`📥 Téléchargement fichier complet ${year}...`);
-            
-            await downloadFile(url, filePath);
-            const count = await processDVFFile(filePath, year, 'ALL');
-            totalTransactions += count;
-            totalFiles++;
-            
-            fs.unlinkSync(filePath);
-            
-            console.log(`   ✅ ${count.toLocaleString()} transactions traitées`);
-            console.log('');
+            if (fs.existsSync(filePath)) {
+                console.log(`📥 Traitement fichier ${year}...`);
+                
+                const count = await processDVFFile(filePath, year, 'ALL');
+                totalTransactions += count;
+                totalFiles++;
+                
+                console.log(`   ✅ ${count.toLocaleString()} transactions traitées`);
+                console.log('');
+            } else {
+                console.log(`   ⚠️ Fichier ${fileName} non trouvé`);
+                console.log('');
+            }
             
         } catch (error) {
             console.log(`   ⚠️ ${year}: ${error.message}`);

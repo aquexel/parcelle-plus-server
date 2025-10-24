@@ -44,7 +44,8 @@ db.pragma('temp_store = MEMORY');
 
 // Table principale DVF + BDNB
 db.exec(`
-    CREATE TABLE IF NOT EXISTS dvf_bdnb_complete (
+    DROP TABLE IF EXISTS dvf_bdnb_complete;
+    CREATE TABLE dvf_bdnb_complete (
         id_mutation TEXT PRIMARY KEY,
         date_mutation TEXT,
         valeur_fonciere REAL,

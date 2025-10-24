@@ -87,7 +87,9 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS temp_bdnb_batiment (
         batiment_groupe_id TEXT PRIMARY KEY,
         code_commune_insee TEXT,
-        libelle_commune_insee TEXT
+        libelle_commune_insee TEXT,
+        longitude REAL,
+        latitude REAL
     )
 `);
 
@@ -298,14 +300,16 @@ async function loadBDNBData() {
         path.join(BDNB_DIR, 'batiment_groupe.csv'),
         'temp_bdnb_batiment',
         {
-            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?)`,
+            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?)`,
             process: (row) => {
                 const id = row.batiment_groupe_id?.trim();
                 const commune = row.code_commune_insee?.trim();
                 const nomCommune = row.libelle_commune_insee?.trim();
+                const longitude = parseFloat(row.longitude) || null;
+                const latitude = parseFloat(row.latitude) || null;
                 
                 if (!id) return null;
-                return [id, commune, nomCommune];
+                return [id, commune, nomCommune, longitude, latitude];
             }
         }
     );

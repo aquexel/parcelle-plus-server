@@ -839,36 +839,34 @@ async function createCompleteDatabase() {
     let totalFiles = 0;
     let totalTransactions = 0;
     
-    console.log(`📥 Téléchargement de ${YEARS.length} années × ${DEPARTMENTS.length} départements = ${YEARS.length * DEPARTMENTS.length} fichiers\n`);
+    console.log(`📥 Téléchargement de ${YEARS.length} fichiers DVF complets (un par année)\n`);
     
-    // Étape 1: Télécharger toutes les données DVF
+    // Étape 1: Télécharger toutes les données DVF (fichiers complets par année)
     for (const year of YEARS) {
         console.log(`📅 === ANNÉE ${year} ===`);
-        let yearTransactions = 0;
-        let yearFiles = 0;
         
-        for (const department of DEPARTMENTS) {
-            const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}.csv.gz`;
-            const fileName = `dvf_${department}_${year}.csv`;
-            const filePath = path.join(DOWNLOAD_DIR, fileName);
+        // URL du fichier complet pour l'année
+        const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/valeursfoncieres-${year}.txt.gz`;
+        const fileName = `dvf_${year}.csv`;
+        const filePath = path.join(DOWNLOAD_DIR, fileName);
+        
+        try {
+            console.log(`📥 Téléchargement fichier complet ${year}...`);
             
-            try {
-                await downloadFile(url, filePath);
-                const count = await processDVFFile(filePath, year, department);
-                yearTransactions += count;
-                yearFiles++;
-                totalTransactions += count;
-                totalFiles++;
-                
-                fs.unlinkSync(filePath);
-                
-            } catch (error) {
-                // Erreurs silencieuses pour éviter le spam
-            }
+            await downloadFile(url, filePath);
+            const count = await processDVFFile(filePath, year, 'ALL');
+            totalTransactions += count;
+            totalFiles++;
+            
+            fs.unlinkSync(filePath);
+            
+            console.log(`   ✅ ${count.toLocaleString()} transactions traitées`);
+            console.log('');
+            
+        } catch (error) {
+            console.log(`   ⚠️ ${year}: ${error.message}`);
+            console.log('');
         }
-        
-        console.log(`   ✅ ${yearFiles} départements traités, ${yearTransactions.toLocaleString()} transactions`);
-        console.log('');
     }
     
     // Étape 2: Charger les données BDNB

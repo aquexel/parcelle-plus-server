@@ -16,6 +16,21 @@ const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 4); // Max 4 fichiers BDNB en paral
 
 console.log(`🖥️  Processeur : ${NUM_CPUS} cœurs disponibles`);
 
+// Fonction pour afficher une barre de progression
+function showProgress(current, total, label = '', barLength = 30) {
+    const percentage = Math.floor((current / total) * 100);
+    const filledLength = Math.floor((current / total) * barLength);
+    const bar = '█'.repeat(filledLength) + '░'.repeat(barLength - filledLength);
+    const progress = `[${bar}] ${percentage}% ${label}`;
+    
+    // Utiliser \r pour écraser la ligne précédente
+    if (current < total) {
+        process.stdout.write(`\r   ${progress}`);
+    } else {
+        process.stdout.write(`\r   ${progress}\n`);
+    }
+}
+
 console.log('🚀 === CRÉATION BASE DVF + BDNB COMPLÈTE (JOINTURES PAR ID) ===\n');
 
 // Configuration
@@ -555,6 +570,7 @@ async function loadBDNBData() {
     ];
     
     // Traiter par batch de MAX_PARALLEL_BDNB
+    let processedBdnb = 0;
     for (let i = 0; i < bdnbTasks.length; i += MAX_PARALLEL_BDNB) {
         const batch = bdnbTasks.slice(i, i + MAX_PARALLEL_BDNB);
         console.log(`⚙️  Chargement parallèle de ${batch.length} fichier(s) BDNB...`);
@@ -573,13 +589,16 @@ async function loadBDNBData() {
             })
         );
         
-        // Vérifier les échecs
+        // Vérifier les échecs et compter
         results.forEach((result, idx) => {
             if (result.status === 'rejected') {
                 console.log(`   ⚠️ Erreur ${batch[idx].name}: ${result.reason.message}`);
             }
+            processedBdnb++;
         });
         
+        // Afficher la progression globale
+        showProgress(processedBdnb, bdnbTasks.length, `(${processedBdnb}/${bdnbTasks.length} fichiers BDNB)`);
         console.log('');
     }
 }
@@ -1160,6 +1179,7 @@ async function createCompleteDatabase() {
     console.log(`📋 ${dvfTasks.length} fichiers DVF trouvés\n`);
     
     // Traiter par batch de MAX_PARALLEL_DVF
+    let processedFiles = 0;
     for (let i = 0; i < dvfTasks.length; i += MAX_PARALLEL_DVF) {
         const batch = dvfTasks.slice(i, i + MAX_PARALLEL_DVF);
         console.log(`⚙️  Traitement parallèle de ${batch.length} fichier(s) DVF...`);
@@ -1183,11 +1203,15 @@ async function createCompleteDatabase() {
             if (result.status === 'fulfilled') {
                 totalTransactions += result.value.count;
                 totalFiles++;
+                processedFiles++;
             } else {
                 console.log(`   ⚠️ Erreur ${result.reason.message}`);
+                processedFiles++;
             }
         });
         
+        // Afficher la progression globale
+        showProgress(processedFiles, dvfTasks.length, `(${processedFiles}/${dvfTasks.length} fichiers DVF)`);
         console.log('');
     }
     

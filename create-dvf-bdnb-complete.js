@@ -251,6 +251,10 @@ async function processDVFFile(filePath, year, department) {
             // Décompresser automatiquement si nécessaire
             const actualFilePath = await decompressFile(filePath);
             
+            // Détecter le séparateur en fonction de l'extension du fichier extrait
+            const separator = actualFilePath.endsWith('.txt') ? '|' : ',';
+            console.log(`   📋 Séparateur détecté : "${separator}" (fichier ${path.extname(actualFilePath)})`);
+            
             const transactions = [];
             let lineCount = 0;
             let rejectedCount = 0;
@@ -258,7 +262,7 @@ async function processDVFFile(filePath, year, department) {
             let columnsPrinted = false;
             
             fs.createReadStream(actualFilePath)
-                .pipe(csv())
+                .pipe(csv({ separator: separator }))
                 .on('data', (row) => {
                 lineCount++;
                 
@@ -268,12 +272,12 @@ async function processDVFFile(filePath, year, department) {
                     columnsPrinted = true;
                 }
                 
-                // Vérifications essentielles (moins strictes)
-                const idMutation = row.id_mutation?.trim() || row['Id mutation']?.trim() || row.ID_MUTATION?.trim();
-                const valeurFonciere = parseFloat(row.valeur_fonciere) || parseFloat(row['Valeur fonciere']) || parseFloat(row.VALEUR_FONCIERE);
-                const longitude = parseFloat(row.longitude) || parseFloat(row.Longitude) || parseFloat(row.LONGITUDE) || null;
-                const latitude = parseFloat(row.latitude) || parseFloat(row.Latitude) || parseFloat(row.LATITUDE) || null;
-                const idParcelle = row.id_parcelle?.trim() || row['Id parcelle']?.trim() || row.ID_PARCELLE?.trim();
+                // Vérifications essentielles (support formats variés)
+                const idMutation = row['Identifiant de document']?.trim() || row.id_mutation?.trim() || row['Id mutation']?.trim();
+                const valeurFonciere = parseFloat(row['Valeur fonciere']) || parseFloat(row.valeur_fonciere) || parseFloat(row.VALEUR_FONCIERE);
+                const longitude = parseFloat(row.Longitude) || parseFloat(row.longitude) || parseFloat(row.LONGITUDE) || null;
+                const latitude = parseFloat(row.Latitude) || parseFloat(row.latitude) || parseFloat(row.LATITUDE) || null;
+                const idParcelle = row['No plan']?.trim() || row.id_parcelle?.trim() || row['Id parcelle']?.trim();
                 
                 // Accepter les transactions même sans coordonnées GPS
                 if (!idMutation || valeurFonciere <= 0) {
@@ -284,22 +288,22 @@ async function processDVFFile(filePath, year, department) {
                 }
                 
                 // Calculer les prix au m²
-                const surfaceBati = parseFloat(row.surface_reelle_bati) || parseFloat(row['Surface reelle bati']) || parseFloat(row.SURFACE_REELLE_BATI) || 0;
-                const surfaceTerrain = parseFloat(row.surface_terrain) || parseFloat(row['Surface terrain']) || parseFloat(row.SURFACE_TERRAIN) || 0;
+                const surfaceBati = parseFloat(row['Surface reelle bati']) || parseFloat(row.surface_reelle_bati) || parseFloat(row.SURFACE_REELLE_BATI) || 0;
+                const surfaceTerrain = parseFloat(row['Surface terrain']) || parseFloat(row.surface_terrain) || parseFloat(row.SURFACE_TERRAIN) || 0;
                 const prixM2Bati = surfaceBati > 0 ? valeurFonciere / surfaceBati : null;
                 const prixM2Terrain = surfaceTerrain > 0 ? valeurFonciere / surfaceTerrain : null;
                 
                 transactions.push({
                     id_mutation: idMutation,
-                    date_mutation: row.date_mutation?.trim() || row['Date mutation']?.trim() || row.DATE_MUTATION?.trim(),
+                    date_mutation: row['Date mutation']?.trim() || row.date_mutation?.trim() || row.DATE_MUTATION?.trim(),
                     valeur_fonciere: valeurFonciere,
-                    code_commune: row.code_commune?.trim() || row['Code commune']?.trim() || row.CODE_COMMUNE?.trim(),
-                    nom_commune: row.nom_commune?.trim() || row['Nom commune']?.trim() || row.NOM_COMMUNE?.trim(),
-                    code_departement: row.code_departement?.trim() || row['Code departement']?.trim() || row.CODE_DEPARTEMENT?.trim(),
-                    type_local: row.type_local?.trim() || row['Type local']?.trim() || row.TYPE_LOCAL?.trim(),
+                    code_commune: row['Code commune']?.trim() || row.code_commune?.trim() || row.CODE_COMMUNE?.trim(),
+                    nom_commune: row['Commune']?.trim() || row.nom_commune?.trim() || row.NOM_COMMUNE?.trim(),
+                    code_departement: row['Code departement']?.trim() || row.code_departement?.trim() || row.CODE_DEPARTEMENT?.trim(),
+                    type_local: row['Type local']?.trim() || row.type_local?.trim() || row.TYPE_LOCAL?.trim(),
                     surface_reelle_bati: surfaceBati || null,
-                    nombre_pieces_principales: parseInt(row.nombre_pieces_principales) || parseInt(row['Nombre pieces principales']) || parseInt(row.NOMBRE_PIECES_PRINCIPALES) || null,
-                    nature_culture: row.nature_culture?.trim() || row['Nature culture']?.trim() || row.NATURE_CULTURE?.trim(),
+                    nombre_pieces_principales: parseInt(row['Nombre pieces principales']) || parseInt(row.nombre_pieces_principales) || parseInt(row.NOMBRE_PIECES_PRINCIPALES) || null,
+                    nature_culture: row['Nature culture']?.trim() || row.nature_culture?.trim() || row.NATURE_CULTURE?.trim(),
                     surface_terrain: surfaceTerrain || null,
                     longitude: longitude,
                     latitude: latitude,

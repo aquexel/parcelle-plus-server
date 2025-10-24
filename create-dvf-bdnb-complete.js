@@ -5,7 +5,8 @@ const zlib = require('zlib');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { promisify } = require('util');
-const gunzip = promisify(zlib.gunzip);
+const { exec } = require('child_process');
+const execPromise = promisify(exec);
 
 console.log('🚀 === CRÉATION BASE DVF + BDNB COMPLÈTE (JOINTURES PAR ID) ===\n');
 
@@ -159,30 +160,76 @@ function downloadFile(url, filePath) {
     });
 }
 
-// Fonction pour décompresser un fichier GZIP
-async function decompressGzipFile(inputPath, outputPath) {
-    return new Promise((resolve, reject) => {
-        const input = fs.createReadStream(inputPath);
-        const output = fs.createWriteStream(outputPath);
+// Fonction pour détecter et décompresser automatiquement un fichier
+async function decompressFile(inputPath) {
+    // Lire les premiers bytes pour détecter le format
+    const buffer = Buffer.alloc(4);
+    const fd = fs.openSync(inputPath, 'r');
+    fs.readSync(fd, buffer, 0, 4, 0);
+    fs.closeSync(fd);
+    
+    const signature = buffer.toString('hex');
+    
+    // ZIP: 504b0304
+    if (signature.startsWith('504b03')) {
+        console.log(`   📦 Archive ZIP détectée, extraction...`);
+        const outputDir = path.dirname(inputPath);
         
-        input.pipe(zlib.createGunzip())
-            .pipe(output)
-            .on('finish', () => {
-                console.log(`   📦 Fichier décompressé : ${path.basename(outputPath)}`);
-                resolve();
-            })
-            .on('error', (error) => {
-                reject(error);
-            });
-    });
+        try {
+            // Utiliser unzip pour extraire
+            await execPromise(`unzip -o -q "${inputPath}" -d "${outputDir}"`);
+            
+            // Chercher le fichier .txt ou .csv extrait
+            const files = fs.readdirSync(outputDir);
+            const extractedFile = files.find(f => 
+                (f.endsWith('.txt') || f.endsWith('.csv')) && 
+                f !== path.basename(inputPath)
+            );
+            
+            if (extractedFile) {
+                const extractedPath = path.join(outputDir, extractedFile);
+                console.log(`   ✅ Fichier extrait : ${extractedFile}`);
+                return extractedPath;
+            } else {
+                throw new Error('Aucun fichier CSV/TXT trouvé dans l\'archive');
+            }
+        } catch (error) {
+            throw new Error(`Échec extraction ZIP : ${error.message}`);
+        }
+    }
+    
+    // GZIP: 1f8b
+    else if (signature.startsWith('1f8b')) {
+        console.log(`   📦 Archive GZIP détectée, décompression...`);
+        const outputPath = inputPath.replace(/\.gz$/, '');
+        
+        return new Promise((resolve, reject) => {
+            const input = fs.createReadStream(inputPath);
+            const output = fs.createWriteStream(outputPath);
+            
+            input.pipe(zlib.createGunzip())
+                .pipe(output)
+                .on('finish', () => {
+                    console.log(`   ✅ Fichier décompressé : ${path.basename(outputPath)}`);
+                    resolve(outputPath);
+                })
+                .on('error', reject);
+        });
+    }
+    
+    // Fichier non compressé
+    else {
+        console.log(`   ✅ Fichier CSV non compressé`);
+        return inputPath;
+    }
 }
 
 // Fonction pour traiter un fichier CSV DVF (avec décompression automatique)
 async function processDVFFile(filePath, year, department) {
     return new Promise(async (resolve, reject) => {
         try {
-            // Les fichiers DVF sont déjà décompressés par le script shell
-            // Pas besoin de décompression ici
+            // Décompresser automatiquement si nécessaire
+            const actualFilePath = await decompressFile(filePath);
             
             const transactions = [];
             let lineCount = 0;
@@ -190,7 +237,7 @@ async function processDVFFile(filePath, year, department) {
             let rejectedReasons = {};
             let columnsPrinted = false;
             
-            fs.createReadStream(filePath)
+            fs.createReadStream(actualFilePath)
                 .pipe(csv())
                 .on('data', (row) => {
                 lineCount++;
@@ -265,9 +312,21 @@ async function processDVFFile(filePath, year, department) {
                     console.log(`   📋 Raisons: ${JSON.stringify(rejectedReasons)}`);
                 }
                 
+                // Nettoyer le fichier temporaire extrait (sauf si c'est le fichier original)
+                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
+                    fs.unlinkSync(actualFilePath);
+                    console.log(`   🗑️ Fichier temporaire supprimé`);
+                }
+                
                 resolve(lineCount - rejectedCount);
             })
-            .on('error', reject);
+            .on('error', (error) => {
+                // Nettoyer en cas d'erreur
+                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
+                    fs.unlinkSync(actualFilePath);
+                }
+                reject(error);
+            });
         } catch (error) {
             reject(error);
         }

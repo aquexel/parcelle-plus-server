@@ -166,14 +166,15 @@ async function processDVFFile(filePath, year, department) {
             .on('data', (row) => {
                 lineCount++;
                 
-                // Vérifications essentielles
+                // Vérifications essentielles (moins strictes)
                 const idMutation = row.id_mutation?.trim();
                 const valeurFonciere = parseFloat(row.valeur_fonciere);
-                const longitude = parseFloat(row.longitude);
-                const latitude = parseFloat(row.latitude);
+                const longitude = parseFloat(row.longitude) || null;
+                const latitude = parseFloat(row.latitude) || null;
                 const idParcelle = row.id_parcelle?.trim();
                 
-                if (!idMutation || valeurFonciere <= 0 || isNaN(longitude) || isNaN(latitude)) {
+                // Accepter les transactions même sans coordonnées GPS
+                if (!idMutation || valeurFonciere <= 0) {
                     return;
                 }
                 

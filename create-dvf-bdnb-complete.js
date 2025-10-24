@@ -8,7 +8,7 @@ const Database = require('better-sqlite3');
 console.log('🚀 === CRÉATION BASE DVF + BDNB COMPLÈTE (JOINTURES PAR ID) ===\n');
 
 // Configuration
-const YEARS = ['2024', '2023', '2022', '2021', '2020', '2019'];
+const YEARS = ['2025', '2024', '2023', '2022', '2021', '2020'];
 const DEPARTMENTS = [
     '01', '02', '03', '04', '05', '06', '07', '08', '09', '10',
     '11', '12', '13', '14', '15', '16', '17', '18', '19', '2A', '2B',
@@ -848,7 +848,14 @@ async function createCompleteDatabase() {
         let yearFiles = 0;
         
         for (const department of DEPARTMENTS) {
-            const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}.csv.gz`;
+            // Gestion spéciale pour 2025 (premier semestre seulement)
+            let url;
+            if (year === '2025') {
+                url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}-s1.csv.gz`;
+            } else {
+                url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}.csv.gz`;
+            }
+            
             const fileName = `dvf_${department}_${year}.csv`;
             const filePath = path.join(DOWNLOAD_DIR, fileName);
             

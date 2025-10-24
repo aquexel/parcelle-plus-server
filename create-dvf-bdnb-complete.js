@@ -69,7 +69,11 @@ db.exec(`
         pourcentage_vitrage REAL,
         presence_piscine INTEGER DEFAULT 0,
         presence_garage INTEGER DEFAULT 0,
-        presence_veranda INTEGER DEFAULT 0
+        presence_veranda INTEGER DEFAULT 0,
+        type_dpe TEXT,
+        dpe_officiel INTEGER DEFAULT 1,
+        surface_habitable_logement REAL,
+        date_etablissement_dpe TEXT
     )
 `);
 
@@ -82,21 +86,22 @@ db.exec(`
     )
 `);
 
-db.exec(`
-    CREATE TABLE IF NOT EXISTS temp_bdnb_dpe (
-        batiment_groupe_id TEXT,
-        identifiant_dpe TEXT,
-        classe_dpe TEXT,
-        orientation_principale TEXT,
-        pourcentage_vitrage REAL,
-        surface_habitable_logement REAL,
-        date_etablissement_dpe TEXT,
-        presence_piscine INTEGER DEFAULT 0,
-        presence_garage INTEGER DEFAULT 0,
-        presence_veranda INTEGER DEFAULT 0,
-        PRIMARY KEY (batiment_groupe_id, identifiant_dpe)
-    )
-`);
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_dpe (
+            batiment_groupe_id TEXT,
+            classe_dpe TEXT,
+            orientation_principale TEXT,
+            pourcentage_vitrage REAL,
+            surface_habitable_logement REAL,
+            date_etablissement_dpe TEXT,
+            presence_piscine INTEGER DEFAULT 0,
+            presence_garage INTEGER DEFAULT 0,
+            presence_veranda INTEGER DEFAULT 0,
+            type_dpe TEXT,
+            dpe_officiel INTEGER DEFAULT 1,
+            PRIMARY KEY (batiment_groupe_id)
+        )
+    `);
 
 db.exec(`
     CREATE TABLE IF NOT EXISTS temp_bdnb_relations (
@@ -220,7 +225,7 @@ async function processDVFFile(filePath, year, department) {
 function insertDVFBatch(transactions) {
     const stmt = db.prepare(`
         INSERT OR REPLACE INTO dvf_bdnb_complete VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
     `);
     
@@ -249,7 +254,11 @@ function insertDVFBatch(transactions) {
                 row.pourcentage_vitrage,
                 0, // presence_piscine
                 0, // presence_garage
-                0  // presence_veranda
+                0, // presence_veranda
+                row.type_dpe,
+                row.dpe_officiel,
+                row.surface_habitable_logement,
+                row.date_etablissement_dpe
             );
         }
     });
@@ -302,10 +311,9 @@ async function loadBDNBData() {
         path.join(BDNB_DIR, 'batiment_groupe_dpe_representatif_logement.csv'),
         'temp_bdnb_dpe',
         {
-            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             process: (row) => {
                 const id = row.batiment_groupe_id?.trim();
-                const identifiantDpe = row.identifiant_dpe?.trim();
                 const dpe = row.classe_bilan_dpe?.trim();
                 
                 const surfNord = parseFloat(row.surface_vitree_nord) || 0;
@@ -336,9 +344,16 @@ async function loadBDNBData() {
                 const presenceGarage = parseInt(row.presence_garage) || 0;
                 const presenceVeranda = parseInt(row.presence_veranda) || 0;
                 
-                if (!id || !identifiantDpe || !dpe || dpe === 'N' || dpe === '') return null;
+                // Vérifier le type de DPE (inclure tous les DPE mais distinguer officiels/non officiels)
+                const typeDpe = row.type_dpe?.trim();
                 
-                return [id, identifiantDpe, dpe, orientation, pourcentageVitrage, surfaceHabitableLogement, dateEtablissementDpe, presencePiscine, presenceGarage, presenceVeranda];
+                // Déterminer si le DPE est officiel
+                const isDpeOfficiel = typeDpe === 'DPE' || 
+                                    !typeDpe; // Si pas de type spécifié, considérer comme officiel
+                
+                if (!id || !dpe || dpe === 'N' || dpe === '') return null;
+                
+                return [id, dpe, orientation, pourcentageVitrage, surfaceHabitableLogement, dateEtablissementDpe, presencePiscine, presenceGarage, presenceVeranda, typeDpe, isDpeOfficiel ? 1 : 0];
             }
         }
     );
@@ -873,6 +888,8 @@ async function createCompleteDatabase() {
             COUNT(CASE WHEN nature_culture = 'terrains a bâtir' THEN 1 END) as terrains_batir,
             COUNT(CASE WHEN batiment_groupe_id IS NOT NULL THEN 1 END) as avec_batiment_id,
             COUNT(CASE WHEN classe_dpe IS NOT NULL THEN 1 END) as avec_dpe,
+            COUNT(CASE WHEN dpe_officiel = 1 THEN 1 END) as dpe_officiels,
+            COUNT(CASE WHEN dpe_officiel = 0 THEN 1 END) as dpe_non_officiels,
             COUNT(CASE WHEN orientation_principale IS NOT NULL THEN 1 END) as avec_orientation,
             COUNT(CASE WHEN pourcentage_vitrage IS NOT NULL THEN 1 END) as avec_vitrage,
             COUNT(CASE WHEN presence_piscine = 1 THEN 1 END) as avec_piscine,
@@ -895,6 +912,8 @@ async function createCompleteDatabase() {
     console.log(`🏞️ Terrains à bâtir : ${stats.terrains_batir.toLocaleString()}`);
     console.log(`🔗 Avec batiment_groupe_id : ${stats.avec_batiment_id.toLocaleString()} (${(stats.avec_batiment_id / stats.total * 100).toFixed(1)}%)`);
     console.log(`🔋 Avec DPE : ${stats.avec_dpe.toLocaleString()} (${(stats.avec_dpe / stats.total * 100).toFixed(1)}%)`);
+    console.log(`   ✅ DPE Officiels : ${stats.dpe_officiels.toLocaleString()} (${(stats.dpe_officiels / stats.total * 100).toFixed(1)}%)`);
+    console.log(`   ⚠️ DPE Non Officiels : ${stats.dpe_non_officiels.toLocaleString()} (${(stats.dpe_non_officiels / stats.total * 100).toFixed(1)}%)`);
     console.log(`🧭 Avec orientation : ${stats.avec_orientation.toLocaleString()} (${(stats.avec_orientation / stats.total * 100).toFixed(1)}%)`);
     console.log(`🪟 Avec vitrage : ${stats.avec_vitrage.toLocaleString()} (${(stats.avec_vitrage / stats.total * 100).toFixed(1)}%)`);
     console.log(`🏊 Avec piscine : ${stats.avec_piscine.toLocaleString()} (${(stats.avec_piscine / stats.total * 100).toFixed(1)}%)`);

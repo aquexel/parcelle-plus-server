@@ -413,6 +413,11 @@ async function processDVFFile(filePath, year, department) {
                 if (transactions.length >= 1000) {
                     insertDVFBatch(transactions);
                     transactions.length = 0;
+                    
+                    // Afficher la progression toutes les 50000 lignes
+                    if (lineCount % 50000 === 0) {
+                        process.stdout.write(`\r   📊 ${lineCount.toLocaleString()} lignes traitées...`);
+                    }
                 }
             })
             .on('end', () => {
@@ -421,6 +426,8 @@ async function processDVFFile(filePath, year, department) {
                     insertDVFBatch(transactions);
                 }
                 
+                // Nettoyer la ligne de progression
+                process.stdout.write('\r                                                          \r');
                 console.log(`   📊 ${lineCount.toLocaleString()} lignes lues`);
                 console.log(`   ✅ ${(lineCount - rejectedCount).toLocaleString()} transactions acceptées`);
                 console.log(`   ❌ ${rejectedCount.toLocaleString()} transactions rejetées`);
@@ -674,6 +681,7 @@ async function loadCSV(csvFile, tableName, processRow, batchSize = 10000) {
     
     let batch = [];
     let totalRows = 0;
+    let lastProgressUpdate = Date.now();
     
     return new Promise((resolve, reject) => {
         const insertStmt = db.prepare(processRow.insertSQL);
@@ -698,6 +706,13 @@ async function loadCSV(csvFile, tableName, processRow, batchSize = 10000) {
                         insertMany(batch);
                         totalRows += batch.length;
                         batch = [];
+                        
+                        // Afficher la progression toutes les secondes
+                        const now = Date.now();
+                        if (now - lastProgressUpdate > 1000) {
+                            process.stdout.write(`\r   📊 ${totalRows.toLocaleString()} lignes chargées...`);
+                            lastProgressUpdate = now;
+                        }
                     }
                 }
             })
@@ -706,7 +721,7 @@ async function loadCSV(csvFile, tableName, processRow, batchSize = 10000) {
                     insertMany(batch);
                     totalRows += batch.length;
                 }
-                console.log(`   ✅ ${totalRows.toLocaleString()} lignes chargées`);
+                process.stdout.write(`\r   ✅ ${totalRows.toLocaleString()} lignes chargées\n`);
                 resolve(totalRows);
             })
             .on('error', reject);

@@ -191,6 +191,21 @@ async function processDVFFile(filePath, year, department) {
                 actualFilePath = decompressedPath;
             }
             
+            // Debug: vérifier le contenu du fichier
+            console.log(`   🔍 Vérification du fichier: ${path.basename(actualFilePath)}`);
+            const fileStats = fs.statSync(actualFilePath);
+            console.log(`   📊 Taille: ${fileStats.size} bytes`);
+            
+            // Lire les premiers bytes pour identifier le format
+            const buffer = fs.readFileSync(actualFilePath, { encoding: null, flag: 'r' });
+            const firstBytes = buffer.slice(0, 10);
+            console.log(`   🔍 Premiers bytes (hex): ${firstBytes.toString('hex')}`);
+            console.log(`   🔍 Premiers bytes (ascii): ${firstBytes.toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
+            
+            // Vérifier si c'est vraiment un fichier CSV
+            const firstLine = fs.readFileSync(actualFilePath, 'utf8').split('\n')[0];
+            console.log(`   🔍 Première ligne: ${firstLine.substring(0, 100)}...`);
+            
             const transactions = [];
             let lineCount = 0;
             let rejectedCount = 0;

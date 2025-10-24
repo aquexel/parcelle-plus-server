@@ -277,9 +277,19 @@ async function processDVFFile(filePath, year, department) {
             let rejectedCount = 0;
             let rejectedReasons = {};
             let columnsPrinted = false;
+            let separator = ','; // Défaut: virgule
+            
+            // Lire la première ligne pour détecter le séparateur
+            const firstLine = fs.readFileSync(actualFilePath, 'utf8').split('\n')[0];
+            if (firstLine.includes('|')) {
+                separator = '|';
+                console.log(`   📋 Format ancien DVF détecté (séparateur: "|")`);
+            } else {
+                console.log(`   📋 Format moderne geo-dvf détecté (séparateur: ",")`);
+            }
             
             fs.createReadStream(actualFilePath)
-                .pipe(csv())
+                .pipe(csv({ separator: separator }))
                 .on('data', (row) => {
                 lineCount++;
                 
@@ -289,12 +299,18 @@ async function processDVFFile(filePath, year, department) {
                     columnsPrinted = true;
                 }
                 
-                // Format geo-dvf officiel (snake_case, nombres sans virgules)
-                const idMutation = row.id_mutation?.trim();
-                const valeurFonciere = parseFloat(row.valeur_fonciere) || 0;
-                const longitude = parseFloat(row.longitude) || null;
-                const latitude = parseFloat(row.latitude) || null;
-                const idParcelle = row.id_parcelle?.trim();
+                // Support des deux formats (ancien et moderne)
+                const idMutation = row.id_mutation?.trim() || row['Identifiant de document']?.trim();
+                let valeurFonciere = parseFloat(row.valeur_fonciere) || 0;
+                
+                // Format ancien: virgules européennes dans les nombres
+                if (!valeurFonciere && row['Valeur fonciere']) {
+                    valeurFonciere = parseFloat(row['Valeur fonciere'].toString().replace(',', '.')) || 0;
+                }
+                
+                const longitude = parseFloat(row.longitude) || parseFloat(row.Longitude) || null;
+                const latitude = parseFloat(row.latitude) || parseFloat(row.Latitude) || null;
+                const idParcelle = row.id_parcelle?.trim() || row['No plan']?.trim();
                 
                 // Accepter les transactions même sans coordonnées GPS
                 if (!idMutation || valeurFonciere <= 0) {
@@ -304,23 +320,31 @@ async function processDVFFile(filePath, year, department) {
                     return;
                 }
                 
-                // Calculer les prix au m²
-                const surfaceBati = parseFloat(row.surface_reelle_bati) || 0;
-                const surfaceTerrain = parseFloat(row.surface_terrain) || 0;
+                // Calculer les prix au m² (support ancien format avec virgules)
+                let surfaceBati = parseFloat(row.surface_reelle_bati) || parseFloat(row['Surface reelle bati']) || 0;
+                if (!surfaceBati && row['Surface reelle bati']) {
+                    surfaceBati = parseFloat(row['Surface reelle bati'].toString().replace(',', '.')) || 0;
+                }
+                
+                let surfaceTerrain = parseFloat(row.surface_terrain) || parseFloat(row['Surface terrain']) || 0;
+                if (!surfaceTerrain && row['Surface terrain']) {
+                    surfaceTerrain = parseFloat(row['Surface terrain'].toString().replace(',', '.')) || 0;
+                }
+                
                 const prixM2Bati = surfaceBati > 0 ? valeurFonciere / surfaceBati : null;
                 const prixM2Terrain = surfaceTerrain > 0 ? valeurFonciere / surfaceTerrain : null;
                 
                 transactions.push({
                     id_mutation: idMutation,
-                    date_mutation: row.date_mutation?.trim(),
+                    date_mutation: row.date_mutation?.trim() || row['Date mutation']?.trim(),
                     valeur_fonciere: valeurFonciere,
-                    code_commune: row.code_commune?.trim(),
-                    nom_commune: row.nom_commune?.trim(),
-                    code_departement: row.code_departement?.trim(),
-                    type_local: row.type_local?.trim(),
+                    code_commune: row.code_commune?.trim() || row['Code commune']?.trim(),
+                    nom_commune: row.nom_commune?.trim() || row['Commune']?.trim(),
+                    code_departement: row.code_departement?.trim() || row['Code departement']?.trim(),
+                    type_local: row.type_local?.trim() || row['Type local']?.trim(),
                     surface_reelle_bati: surfaceBati || null,
-                    nombre_pieces_principales: parseInt(row.nombre_pieces_principales) || null,
-                    nature_culture: row.nature_culture?.trim(),
+                    nombre_pieces_principales: parseInt(row.nombre_pieces_principales) || parseInt(row['Nombre pieces principales']) || null,
+                    nature_culture: row.nature_culture?.trim() || row['Nature culture']?.trim(),
                     surface_terrain: surfaceTerrain || null,
                     longitude: longitude,
                     latitude: latitude,

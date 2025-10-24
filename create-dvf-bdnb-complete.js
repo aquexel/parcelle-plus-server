@@ -215,7 +215,6 @@ async function processDVFFile(filePath, year, department) {
                     insertDVFBatch(transactions);
                 }
                 
-                console.log(`   ✅ ${lineCount.toLocaleString()} lignes traitées`);
                 resolve(lineCount);
             })
             .on('error', reject);

@@ -442,8 +442,8 @@ async function mergeDVFWithBDNB() {
           AND id_parcelle != ''
     `);
     
-    // Étape 1.5: Mettre à jour les coordonnées GPS via batiment_groupe_id
-    console.log('   🌍 Mise à jour des coordonnées GPS via BDNB...');
+    // Étape 1.5: Mettre à jour les coordonnées GPS via batiment_groupe_id (seulement si manquantes)
+    console.log('   🌍 Mise à jour des coordonnées GPS manquantes via BDNB...');
     db.exec(`
         UPDATE dvf_bdnb_complete 
         SET 
@@ -451,16 +451,19 @@ async function mergeDVFWithBDNB() {
                 SELECT bat.longitude 
                 FROM temp_bdnb_batiment bat 
                 WHERE bat.batiment_groupe_id = dvf_bdnb_complete.batiment_groupe_id
+                  AND bat.longitude IS NOT NULL
                 LIMIT 1
             ),
             latitude = (
                 SELECT bat.latitude 
                 FROM temp_bdnb_batiment bat 
                 WHERE bat.batiment_groupe_id = dvf_bdnb_complete.batiment_groupe_id
+                  AND bat.latitude IS NOT NULL
                 LIMIT 1
             )
         WHERE batiment_groupe_id IS NOT NULL 
-          AND (longitude IS NULL OR latitude IS NULL)
+          AND longitude IS NULL 
+          AND latitude IS NULL
     `);
     
     // Étape 2: Mettre à jour les données DPE via batiment_groupe_id

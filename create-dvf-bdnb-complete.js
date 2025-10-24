@@ -181,37 +181,15 @@ async function decompressGzipFile(inputPath, outputPath) {
 async function processDVFFile(filePath, year, department) {
     return new Promise(async (resolve, reject) => {
         try {
-            let actualFilePath = filePath;
-            
-            // Vérifier si le fichier est compressé (.gz)
-            if (filePath.endsWith('.gz')) {
-                console.log(`   📦 Décompression du fichier GZIP...`);
-                const decompressedPath = filePath.replace('.gz', '');
-                await decompressGzipFile(filePath, decompressedPath);
-                actualFilePath = decompressedPath;
-            }
-            
-            // Debug: vérifier le contenu du fichier
-            console.log(`   🔍 Vérification du fichier: ${path.basename(actualFilePath)}`);
-            const fileStats = fs.statSync(actualFilePath);
-            console.log(`   📊 Taille: ${fileStats.size} bytes`);
-            
-            // Lire les premiers bytes pour identifier le format
-            const buffer = fs.readFileSync(actualFilePath, { encoding: null, flag: 'r' });
-            const firstBytes = buffer.slice(0, 10);
-            console.log(`   🔍 Premiers bytes (hex): ${firstBytes.toString('hex')}`);
-            console.log(`   🔍 Premiers bytes (ascii): ${firstBytes.toString('ascii').replace(/[^\x20-\x7E]/g, '.')}`);
-            
-            // Vérifier si c'est vraiment un fichier CSV
-            const firstLine = fs.readFileSync(actualFilePath, 'utf8').split('\n')[0];
-            console.log(`   🔍 Première ligne: ${firstLine.substring(0, 100)}...`);
+            // Les fichiers DVF sont déjà décompressés par le script shell
+            // Pas besoin de décompression ici
             
             const transactions = [];
             let lineCount = 0;
             let rejectedCount = 0;
             let rejectedReasons = {};
             
-            fs.createReadStream(actualFilePath)
+            fs.createReadStream(filePath)
                 .pipe(csv())
                 .on('data', (row) => {
                 lineCount++;
@@ -222,12 +200,6 @@ async function processDVFFile(filePath, year, department) {
                 const longitude = parseFloat(row.longitude) || parseFloat(row.Longitude) || parseFloat(row.LONGITUDE) || null;
                 const latitude = parseFloat(row.latitude) || parseFloat(row.Latitude) || parseFloat(row.LATITUDE) || null;
                 const idParcelle = row.id_parcelle?.trim() || row['Id parcelle']?.trim() || row.ID_PARCELLE?.trim();
-                
-                // Debug: afficher les premières lignes pour voir la structure
-                if (lineCount <= 3) {
-                    console.log(`   🔍 Ligne ${lineCount} - Colonnes disponibles:`, Object.keys(row).slice(0, 10));
-                    console.log(`   🔍 idMutation: "${idMutation}", valeurFonciere: ${valeurFonciere}`);
-                }
                 
                 // Accepter les transactions même sans coordonnées GPS
                 if (!idMutation || valeurFonciere <= 0) {
@@ -286,21 +258,9 @@ async function processDVFFile(filePath, year, department) {
                     console.log(`   📋 Raisons: ${JSON.stringify(rejectedReasons)}`);
                 }
                 
-                // Nettoyer le fichier temporaire décompressé
-                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
-                    fs.unlinkSync(actualFilePath);
-                    console.log(`   🗑️ Fichier temporaire supprimé`);
-                }
-                
                 resolve(lineCount - rejectedCount);
             })
-            .on('error', (error) => {
-                // Nettoyer le fichier temporaire en cas d'erreur
-                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
-                    fs.unlinkSync(actualFilePath);
-                }
-                reject(error);
-            });
+            .on('error', reject);
         } catch (error) {
             reject(error);
         }

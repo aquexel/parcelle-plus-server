@@ -279,8 +279,13 @@ async function processDVFFile(filePath, year, department) {
             let columnsPrinted = false;
             let separator = ','; // Défaut: virgule
             
-            // Lire la première ligne pour détecter le séparateur
-            const firstLine = fs.readFileSync(actualFilePath, 'utf8').split('\n')[0];
+            // Lire seulement les premiers 1000 caractères pour détecter le séparateur
+            const buffer = Buffer.alloc(1000);
+            const fd = fs.openSync(actualFilePath, 'r');
+            fs.readSync(fd, buffer, 0, 1000, 0);
+            fs.closeSync(fd);
+            const firstLine = buffer.toString('utf8').split('\n')[0];
+            
             if (firstLine.includes('|')) {
                 separator = '|';
                 console.log(`   📋 Format ancien DVF détecté (séparateur: "|")`);

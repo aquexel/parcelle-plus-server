@@ -172,23 +172,43 @@ async function decompressFile(inputPath) {
     
     // ZIP: 504b0304
     if (signature.startsWith('504b03')) {
-        console.log(`   📦 Archive ZIP détectée, extraction...`);
+        console.log(`   📦 Archive ZIP détectée, extraction avec Python...`);
         const outputDir = path.dirname(inputPath);
         
         try {
-            // Utiliser unzip pour extraire
-            await execPromise(`unzip -o -q "${inputPath}" -d "${outputDir}"`);
+            // Utiliser Python (généralement disponible sur Ubuntu) pour extraire
+            const pythonScript = `
+import zipfile
+import sys
+import os
+
+zip_path = sys.argv[1]
+output_dir = sys.argv[2]
+
+with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    # Extraire tous les fichiers
+    zip_ref.extractall(output_dir)
+    # Afficher le premier fichier .txt ou .csv
+    for name in zip_ref.namelist():
+        if name.endswith('.txt') or name.endswith('.csv'):
+            print(name)
+            break
+`;
             
-            // Chercher le fichier .txt ou .csv extrait
-            const files = fs.readdirSync(outputDir);
-            const extractedFile = files.find(f => 
-                (f.endsWith('.txt') || f.endsWith('.csv')) && 
-                f !== path.basename(inputPath)
-            );
+            // Écrire le script Python temporaire
+            const scriptPath = path.join(outputDir, 'extract_zip.py');
+            fs.writeFileSync(scriptPath, pythonScript);
             
-            if (extractedFile) {
-                const extractedPath = path.join(outputDir, extractedFile);
-                console.log(`   ✅ Fichier extrait : ${extractedFile}`);
+            // Exécuter le script Python
+            const { stdout } = await execPromise(`python3 "${scriptPath}" "${inputPath}" "${outputDir}"`);
+            const extractedFileName = stdout.trim();
+            
+            // Supprimer le script temporaire
+            fs.unlinkSync(scriptPath);
+            
+            if (extractedFileName) {
+                const extractedPath = path.join(outputDir, extractedFileName);
+                console.log(`   ✅ Fichier extrait : ${extractedFileName}`);
                 return extractedPath;
             } else {
                 throw new Error('Aucun fichier CSV/TXT trouvé dans l\'archive');

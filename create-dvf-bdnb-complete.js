@@ -248,8 +248,29 @@ with zipfile.ZipFile(zip_path, 'r') as zip_ref:
 async function processDVFFile(filePath, year, department) {
     return new Promise(async (resolve, reject) => {
         try {
-            // Les fichiers DVF sont maintenant au format geo-dvf (CSV avec virgules)
-            // Pas besoin de décompression, le script shell s'en charge
+            // Décompresser automatiquement si le fichier est encore compressé
+            let actualFilePath = filePath;
+            
+            // Vérifier si le fichier est compressé en lisant les premiers bytes
+            if (fs.existsSync(filePath)) {
+                const buffer = Buffer.alloc(4);
+                const fd = fs.openSync(filePath, 'r');
+                fs.readSync(fd, buffer, 0, 4, 0);
+                fs.closeSync(fd);
+                
+                const signature = buffer.toString('hex');
+                
+                // ZIP: 504b0304
+                if (signature.startsWith('504b03')) {
+                    console.log(`   📦 Archive ZIP détectée, extraction avec Python...`);
+                    actualFilePath = await decompressFile(filePath);
+                }
+                // GZIP: 1f8b
+                else if (signature.startsWith('1f8b')) {
+                    console.log(`   📦 Archive GZIP détectée, décompression...`);
+                    actualFilePath = await decompressFile(filePath);
+                }
+            }
             
             const transactions = [];
             let lineCount = 0;
@@ -257,7 +278,7 @@ async function processDVFFile(filePath, year, department) {
             let rejectedReasons = {};
             let columnsPrinted = false;
             
-            fs.createReadStream(filePath)
+            fs.createReadStream(actualFilePath)
                 .pipe(csv())
                 .on('data', (row) => {
                 lineCount++;
@@ -332,9 +353,21 @@ async function processDVFFile(filePath, year, department) {
                     console.log(`   📋 Raisons: ${JSON.stringify(rejectedReasons)}`);
                 }
                 
+                // Nettoyer le fichier temporaire extrait (sauf si c'est le fichier original)
+                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
+                    fs.unlinkSync(actualFilePath);
+                    console.log(`   🗑️ Fichier temporaire supprimé`);
+                }
+                
                 resolve(lineCount - rejectedCount);
             })
-            .on('error', reject);
+            .on('error', (error) => {
+                // Nettoyer en cas d'erreur
+                if (actualFilePath !== filePath && fs.existsSync(actualFilePath)) {
+                    fs.unlinkSync(actualFilePath);
+                }
+                reject(error);
+            });
         } catch (error) {
             reject(error);
         }

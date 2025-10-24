@@ -188,11 +188,18 @@ async function processDVFFile(filePath, year, department) {
             let lineCount = 0;
             let rejectedCount = 0;
             let rejectedReasons = {};
+            let columnsPrinted = false;
             
             fs.createReadStream(filePath)
                 .pipe(csv())
                 .on('data', (row) => {
                 lineCount++;
+                
+                // Afficher les noms de colonnes une seule fois
+                if (!columnsPrinted) {
+                    console.log(`   🔍 Colonnes disponibles (${Object.keys(row).length}):`, Object.keys(row).slice(0, 15).join(', '));
+                    columnsPrinted = true;
+                }
                 
                 // Vérifications essentielles (moins strictes)
                 const idMutation = row.id_mutation?.trim() || row['Id mutation']?.trim() || row.ID_MUTATION?.trim();

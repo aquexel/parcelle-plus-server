@@ -848,14 +848,7 @@ async function createCompleteDatabase() {
         let yearFiles = 0;
         
         for (const department of DEPARTMENTS) {
-            // Gestion spéciale pour 2025 (premier semestre seulement)
-            let url;
-            if (year === '2025') {
-                url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}-s1.csv.gz`;
-            } else {
-                url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}.csv.gz`;
-            }
-            
+            const url = `https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/departements/${department}.csv.gz`;
             const fileName = `dvf_${department}_${year}.csv`;
             const filePath = path.join(DOWNLOAD_DIR, fileName);
             

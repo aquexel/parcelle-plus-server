@@ -9,6 +9,9 @@ const { exec } = require('child_process');
 const os = require('os');
 const execPromise = promisify(exec);
 
+// Import de la fonction de conversion Lambert 93 → GPS
+const { lambert93ToGPS, getCenterFromWKT } = require('../lambert-to-gps');
+
 // Configuration parallélisme
 const NUM_CPUS = os.cpus().length;
 const MAX_PARALLEL_DVF = Math.min(NUM_CPUS, 4); // Max 4 fichiers DVF en parallèle
@@ -116,7 +119,9 @@ db.exec(`
         code_commune_insee TEXT,
         libelle_commune_insee TEXT,
         longitude REAL,
-        latitude REAL
+        latitude REAL,
+        geom_groupe TEXT,
+        s_geom_groupe REAL
     )
 `);
 
@@ -133,6 +138,14 @@ db.exec(`
             presence_veranda INTEGER DEFAULT 0,
             type_dpe TEXT,
             dpe_officiel INTEGER DEFAULT 1
+        )
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_parcelle (
+            parcelle_id TEXT PRIMARY KEY,
+            surface_geom_parcelle REAL,
+            geom_parcelle TEXT
         )
     `);
 
@@ -526,16 +539,18 @@ async function loadBDNBData() {
             name: 'bâtiments',
             file: 'batiment_groupe.csv',
             table: 'temp_bdnb_batiment',
-            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?)`,
+            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?)`,
             process: (row) => {
                 const id = row.batiment_groupe_id?.trim();
                 const commune = row.code_commune_insee?.trim();
                 const nomCommune = row.libelle_commune_insee?.trim();
                 const longitude = parseFloat(row.longitude) || null;
                 const latitude = parseFloat(row.latitude) || null;
+                const geomGroupe = row.geom_groupe?.trim() || null;
+                const sGeomGroupe = parseFloat(row.s_geom_groupe) || null;
                 
                 if (!id) return null;
-                return [id, commune, nomCommune, longitude, latitude];
+                return [id, commune, nomCommune, longitude, latitude, geomGroupe, sGeomGroupe];
             }
         },
         {
@@ -574,6 +589,20 @@ async function loadBDNBData() {
                 if (!id || !dpe || dpe === 'N' || dpe === '') return null;
                 
                 return [id, dpe, orientation, pourcentageVitrage, surfaceHabitableLogement, dateEtablissementDpe, presencePiscine, presenceGarage, presenceVeranda, typeDpe, isDpeOfficiel ? 1 : 0];
+            }
+        },
+        {
+            name: 'parcelles',
+            file: 'parcelle.csv',
+            table: 'temp_bdnb_parcelle',
+            insertSQL: `INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?)`,
+            process: (row) => {
+                const parcelleId = row.parcelle_id?.trim();
+                const surfaceGeomParcelle = parseFloat(row.s_geom_parcelle) || null;
+                const geomParcelle = row.geom_parcelle?.trim() || null;
+                
+                if (!parcelleId) return null;
+                return [parcelleId, surfaceGeomParcelle, geomParcelle];
             }
         }
     ];
@@ -753,6 +782,8 @@ async function mergeDVFWithBDNB() {
     
     // Étape 1.5: Mettre à jour les coordonnées GPS via batiment_groupe_id (seulement si manquantes)
     console.log('   🌍 Mise à jour des coordonnées GPS manquantes via BDNB...');
+    
+    // D'abord, essayer avec les coordonnées GPS directes de BDNB
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET 
@@ -775,6 +806,72 @@ async function mergeDVFWithBDNB() {
           AND d.latitude IS NULL
     `);
     
+    // Ensuite, convertir les coordonnées Lambert 93 vers GPS pour les transactions sans GPS
+    console.log('   🔄 Conversion Lambert 93 → GPS pour les transactions sans coordonnées...');
+    
+    const transactionsWithoutGPS = db.prepare(`
+        SELECT id_mutation, batiment_groupe_id, id_parcelle, surface_reelle_bati, type_local, nombre_pieces_principales
+        FROM dvf_bdnb_complete 
+        WHERE longitude IS NULL AND latitude IS NULL
+          AND (
+              -- Seulement si c'est du bâti (maison, appartement, dépendance)
+              surface_reelle_bati IS NOT NULL 
+              OR type_local IS NOT NULL 
+              OR nombre_pieces_principales IS NOT NULL
+          )
+        LIMIT 1000
+    `).all();
+    
+    console.log(`   📍 ${transactionsWithoutGPS.length} transactions bâti sans GPS à traiter`);
+    
+    let convertedCount = 0;
+    
+    for (const transaction of transactionsWithoutGPS) {
+        let gpsCoords = null;
+        
+        // Essayer d'abord avec les coordonnées du bâtiment (un seul point représentatif)
+        if (transaction.batiment_groupe_id) {
+            const batiment = db.prepare(`
+                SELECT geom_groupe 
+                FROM temp_bdnb_batiment 
+                WHERE batiment_groupe_id = ? AND geom_groupe IS NOT NULL
+                LIMIT 1
+            `).get(transaction.batiment_groupe_id);
+            
+            if (batiment && batiment.geom_groupe) {
+                // Prendre le centre de la géométrie (un seul point représentatif)
+                gpsCoords = getCenterFromWKT(batiment.geom_groupe);
+            }
+        }
+        
+        // Si pas de bâtiment, essayer avec la parcelle (un seul point représentatif)
+        if (!gpsCoords && transaction.id_parcelle) {
+            const parcelle = db.prepare(`
+                SELECT geom_parcelle 
+                FROM temp_bdnb_parcelle 
+                WHERE parcelle_id = ? AND geom_parcelle IS NOT NULL
+                LIMIT 1
+            `).get(transaction.id_parcelle);
+            
+            if (parcelle && parcelle.geom_parcelle) {
+                // Prendre le centre de la parcelle (un seul point représentatif)
+                gpsCoords = getCenterFromWKT(parcelle.geom_parcelle);
+            }
+        }
+        
+        // Mettre à jour si on a trouvé des coordonnées
+        if (gpsCoords) {
+            db.prepare(`
+                UPDATE dvf_bdnb_complete 
+                SET longitude = ?, latitude = ?
+                WHERE id_mutation = ?
+            `).run(gpsCoords.longitude, gpsCoords.latitude, transaction.id_mutation);
+            convertedCount++;
+        }
+    }
+    
+    console.log(`   ✅ ${convertedCount} coordonnées converties Lambert 93 → GPS`);
+    
     // Étape 2: Mettre à jour les données DPE via batiment_groupe_id
     // Note: Un bâtiment peut avoir plusieurs DPE (un par logement)
     // On utilise une jointure intelligente par surface + chronologie des ventes
@@ -788,144 +885,144 @@ async function mergeDVFWithBDNB() {
                     SELECT dpe.classe_dpe 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                      AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                       AND (
                           -- DPE avant la vente : toujours valide
-                          dpe.date_etablissement_dpe <= d.date_mutation
+                          dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                           OR
                           -- DPE après la vente : seulement si dans les 6 mois
-                          (dpe.date_etablissement_dpe > d.date_mutation 
-                           AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                          (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
+                           AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                       )
                     ORDER BY 
                       CASE 
                         -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                        WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                        WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
                         THEN -julianday(dpe.date_etablissement_dpe)
                         -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                         ELSE julianday(dpe.date_etablissement_dpe)
                       END,
-                      ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                      ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                     LIMIT 1
                 ),
             orientation_principale = (
                 SELECT dpe.orientation_principale 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             pourcentage_vitrage = (
                 SELECT dpe.pourcentage_vitrage 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             presence_piscine = (
                 SELECT dpe.presence_piscine 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             presence_garage = (
                 SELECT dpe.presence_garage 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             presence_veranda = (
                 SELECT dpe.presence_veranda 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             )
         WHERE d.batiment_groupe_id IS NOT NULL
@@ -942,8 +1039,8 @@ async function mergeDVFWithBDNB() {
                 SELECT dpe.classe_dpe 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
-                ORDER BY ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
+                ORDER BY ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             )
             WHERE d.batiment_groupe_id IS NOT NULL
@@ -963,7 +1060,107 @@ async function mergeDVFWithBDNB() {
         WHERE d.batiment_groupe_id IS NULL
     `);
     
-    // Étape 4: Mettre à jour les données DPE pour le fallback
+    // Étape 4: Enrichissement des surfaces bâti manquantes (APRÈS conversion GPS)
+    console.log('   🏠 Mise à jour des surfaces bâti manquantes...');
+    
+    // Essayer d'abord avec les données DPE (chronologie respectée)
+    db.exec(`
+        UPDATE dvf_bdnb_complete AS d 
+        SET surface_reelle_bati = COALESCE(
+            d.surface_reelle_bati,
+            (
+                SELECT dpe.surface_habitable_logement 
+                FROM temp_bdnb_dpe dpe 
+                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                  AND (
+                      -- DPE établi avant la transaction (bâtiment existait)
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
+                      OR
+                      -- DPE établi après mais dans les 6 mois (bâtiment récent)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
+                  )
+                ORDER BY dpe.date_etablissement_dpe DESC
+                LIMIT 1
+            )
+        )
+        WHERE d.batiment_groupe_id IS NOT NULL 
+          AND d.surface_reelle_bati IS NULL
+          AND (
+              d.type_local IS NOT NULL 
+              OR d.nombre_pieces_principales IS NOT NULL
+              OR d.nature_culture IS NULL  -- Si pas de culture, c'est probablement du bâti
+          )
+    `);
+    
+    // Fallback : essayer avec les données bâtiment BDNB (surface géométrique)
+    console.log('   🔄 Fallback : essai avec surface géométrique BDNB...');
+    db.exec(`
+        UPDATE dvf_bdnb_complete AS d 
+        SET surface_reelle_bati = COALESCE(
+            d.surface_reelle_bati,
+            (
+                SELECT bat.s_geom_groupe 
+                FROM temp_bdnb_batiment bat 
+                WHERE bat.batiment_groupe_id = d.batiment_groupe_id
+                  AND bat.s_geom_groupe IS NOT NULL
+                LIMIT 1
+            )
+        )
+        WHERE d.batiment_groupe_id IS NOT NULL 
+          AND d.surface_reelle_bati IS NULL
+          AND (
+              d.type_local IS NOT NULL 
+              OR d.nombre_pieces_principales IS NOT NULL
+              OR d.nature_culture IS NULL
+          )
+    `);
+    
+    // Étape 5: Enrichissement des surfaces terrain pour les terrains nus
+    console.log('   🌾 Enrichissement des surfaces terrain pour les terrains nus...');
+    db.exec(`
+        UPDATE dvf_bdnb_complete AS d 
+        SET surface_terrain = COALESCE(
+            d.surface_terrain,
+            (
+                SELECT parc.surface_geom_parcelle 
+                FROM temp_bdnb_parcelle parc 
+                WHERE parc.parcelle_id = d.id_parcelle
+            )
+        )
+        WHERE d.batiment_groupe_id IS NULL 
+          AND d.surface_terrain IS NULL
+          AND d.id_parcelle IS NOT NULL
+    `);
+    
+    // Étape 6: Suppression des transactions non enrichissables
+    console.log('   🗑️ Suppression des transactions non enrichissables...');
+    
+    // Supprimer TOUTES les transactions sans GPS (non enrichissables)
+    const deleteStmt = db.prepare(`
+        DELETE FROM dvf_bdnb_complete 
+        WHERE longitude IS NULL 
+          AND latitude IS NULL
+    `);
+    
+    const deletedCount = deleteStmt.run().changes;
+    console.log(`   🗑️ ${deletedCount} transactions supprimées (non enrichissables)`);
+    
+    // Statistiques finales
+    const stats = db.prepare(`
+        SELECT 
+            COUNT(*) as total_transactions,
+            COUNT(CASE WHEN surface_reelle_bati IS NOT NULL THEN 1 END) as with_surface_bati,
+            COUNT(CASE WHEN longitude IS NOT NULL AND latitude IS NOT NULL THEN 1 END) as with_gps
+        FROM dvf_bdnb_complete
+    `).get();
+    
+    console.log(`   📊 Résultats finaux:`);
+    console.log(`      Total transactions: ${stats.total_transactions}`);
+    console.log(`      Avec surface bâti: ${stats.with_surface_bati} (${(stats.with_surface_bati/stats.total_transactions*100).toFixed(1)}%)`);
+    console.log(`      Avec GPS: ${stats.with_gps} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
+    
+    // Étape 7: Mettre à jour les données DPE pour le fallback
     // Note: Même logique que l'étape 2 - jointure intelligente par surface
     console.log('   🔋 Mise à jour des données DPE (fallback avec jointure intelligente)...');
     db.exec(`
@@ -973,144 +1170,144 @@ async function mergeDVFWithBDNB() {
                 SELECT dpe.classe_dpe 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             orientation_principale = (
                 SELECT dpe.orientation_principale 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             pourcentage_vitrage = (
                 SELECT dpe.pourcentage_vitrage 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             presence_piscine = (
                 SELECT dpe.presence_piscine 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             presence_garage = (
                 SELECT dpe.presence_garage 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             ),
             presence_veranda = (
                 SELECT dpe.presence_veranda 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
                   AND (
                       -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
+                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
                       OR
                       -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
+                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
                   )
                 ORDER BY 
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
                     THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
                     ELSE julianday(dpe.date_etablissement_dpe)
                   END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
                 LIMIT 1
             )
         WHERE d.batiment_groupe_id IS NOT NULL 

@@ -10,7 +10,7 @@ const os = require('os');
 const execPromise = promisify(exec);
 
 // Import de la fonction de conversion Lambert 93 → GPS
-const { lambert93ToGPS, getCenterFromWKT } = require('../lambert-to-gps');
+const { lambert93ToGPS, getCenterFromWKT } = require('./lambert-to-gps');
 
 // Configuration parallélisme
 const NUM_CPUS = os.cpus().length;

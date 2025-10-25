@@ -799,9 +799,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -823,9 +823,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -847,9 +847,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -871,9 +871,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -895,9 +895,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -919,9 +919,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -965,9 +965,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -989,9 +989,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -1013,9 +1013,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -1037,9 +1037,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -1061,9 +1061,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1
@@ -1085,9 +1085,9 @@ async function mergeDVFWithBDNB() {
                   CASE 
                     -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
                     WHEN dpe.date_etablissement_dpe > dvf_bdnb_complete.date_mutation 
-                    THEN dpe.date_etablissement_dpe DESC
+                    THEN -julianday(dpe.date_etablissement_dpe)
                     -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE dpe.date_etablissement_dpe ASC
+                    ELSE julianday(dpe.date_etablissement_dpe)
                   END,
                   ABS(dpe.surface_habitable_logement - dvf_bdnb_complete.surface_reelle_bati)
                 LIMIT 1

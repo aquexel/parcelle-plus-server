@@ -66,6 +66,7 @@ else
             "batiment_groupe_dpe_representatif_logement.csv"
             "batiment_groupe_dvf_open_representatif.csv"
             "rel_batiment_groupe_parcelle.csv"
+            "parcelle.csv"
         )
         
         ALL_PRESENT=true
@@ -145,6 +146,7 @@ declare -a FILES=(
     "batiment_groupe_dpe_representatif_logement.csv"
     "batiment_groupe_dvf_open_representatif.csv"
     "rel_batiment_groupe_parcelle.csv"
+    "parcelle.csv"
     "rel_parcelle_sitadel.csv"
     "sitadel.csv"
 )
@@ -230,6 +232,7 @@ REQUIRED_FILES=(
     "batiment_groupe_dpe_representatif_logement.csv"
     "batiment_groupe_dvf_open_representatif.csv"
     "rel_batiment_groupe_parcelle.csv"
+    "parcelle.csv"
 )
 
 MISSING_FILES=()

@@ -12,7 +12,7 @@ const execPromise = promisify(exec);
 // Configuration parallélisme
 const NUM_CPUS = os.cpus().length;
 const MAX_PARALLEL_DVF = Math.min(NUM_CPUS, 4); // Max 4 fichiers DVF en parallèle
-const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 6); // Max 6 fichiers BDNB en parallèle (plus rapide mais plus de RAM)
+const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 4); // Max 4 fichiers BDNB en parallèle (optimal pour 4 processeurs)
 
 console.log(`🖥️  Processeur : ${NUM_CPUS} cœurs disponibles`);
 

@@ -12,7 +12,7 @@ const execPromise = promisify(exec);
 // Configuration parallélisme
 const NUM_CPUS = os.cpus().length;
 const MAX_PARALLEL_DVF = Math.min(NUM_CPUS, 4); // Max 4 fichiers DVF en parallèle
-const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 4); // Max 4 fichiers BDNB en parallèle
+const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 6); // Max 6 fichiers BDNB en parallèle (plus rapide mais plus de RAM)
 
 console.log(`🖥️  Processeur : ${NUM_CPUS} cœurs disponibles`);
 
@@ -670,7 +670,7 @@ async function OLD_loadBDNBData() {
 }
 
 // Fonction pour charger un CSV
-async function loadCSV(csvFile, tableName, processRow, batchSize = 10000) {
+async function loadCSV(csvFile, tableName, processRow, batchSize = 20000) { // Plus gros batches = moins d'overhead
     if (!fs.existsSync(csvFile)) {
         console.log(`⚠️  Fichier manquant : ${csvFile}`);
         return 0;

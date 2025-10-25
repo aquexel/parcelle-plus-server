@@ -7,7 +7,7 @@
 #############################################
 
 PROJECT_DIR="${1:-/opt/parcelle-plus}"
-SKIP_DOWNLOAD="${2:-false}"
+SKIP_DOWNLOAD="${2:-true}"
 LOCAL_MODE="${3:-false}"
 BDNB_URL="https://www.data.gouv.fr/api/1/datasets/r/ad4bb2f6-0f40-46d2-a636-8d2604532f74"
 BDNB_DIR="$PROJECT_DIR/bdnb_data"
@@ -30,7 +30,9 @@ echo "📁 Dossier CSV : $CSV_DIR"
 if [ "$LOCAL_MODE" = "true" ]; then
     echo "🏠 Mode local : Utilisation des CSV fournis"
 elif [ "$SKIP_DOWNLOAD" = "true" ]; then
-    echo "⚡ Mode rapide : Utilisation des CSV existants"
+    echo "⚡ Mode rapide : Utilisation des CSV existants (PAS DE TÉLÉCHARGEMENT)"
+else
+    echo "📥 Mode téléchargement : Téléchargement des données BDNB"
 fi
 echo ""
 
@@ -60,7 +62,7 @@ else
 
     # Vérifier si on peut ignorer le téléchargement
     if [ "$SKIP_DOWNLOAD" = "true" ] && [ -d "$CSV_DIR" ]; then
-        echo "⚡ Mode rapide activé - Vérification des CSV existants..."
+        echo "⚡ Mode rapide activé - Vérification des CSV existants (PAS DE TÉLÉCHARGEMENT)..."
         REQUIRED_FILES=(
             "batiment_groupe.csv"
             "batiment_groupe_dpe_representatif_logement.csv"
@@ -79,6 +81,7 @@ else
         
         if [ "$ALL_PRESENT" = "true" ]; then
             echo "✅ Tous les fichiers CSV sont présents - Téléchargement ignoré"
+            echo "🚫 AUCUN TÉLÉCHARGEMENT - Utilisation des CSV existants"
             echo ""
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "📦 ÉTAPE 2/4 : Extraction (ignorée - CSV présents)"
@@ -90,6 +93,12 @@ else
             goto_step3=true
         else
             echo "⚠️  Certains fichiers CSV manquants - Téléchargement nécessaire"
+            echo "📥 Les fichiers suivants seront téléchargés :"
+            for file in "${REQUIRED_FILES[@]}"; do
+                if [ ! -f "$CSV_DIR/$file" ]; then
+                    echo "   ❌ $file"
+                fi
+            done
             SKIP_DOWNLOAD=false
         fi
     fi
@@ -101,22 +110,39 @@ if [ "$goto_step3" != "true" ]; then
         SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
         echo "   Taille : $SIZE"
     else
-        echo "📥 Téléchargement de toute la France (~35 GB)"
-        echo "⚠️  Cela peut prendre 15-40 minutes"
+        echo "📥 TÉLÉCHARGEMENT DÉSACTIVÉ - Utilisation des CSV existants"
+        echo "🚫 Le script ne téléchargera AUCUNE donnée"
+        echo "📂 Vérification des CSV dans : $CSV_DIR"
         echo ""
         
-        wget --progress=bar:force \
-             -O "$BDNB_ARCHIVE" \
-             "$BDNB_URL"
+        # Vérifier que les CSV existent quand même
+        REQUIRED_FILES=(
+            "batiment_groupe.csv"
+            "batiment_groupe_dpe_representatif_logement.csv"
+            "batiment_groupe_dvf_open_representatif.csv"
+            "rel_batiment_groupe_parcelle.csv"
+            "parcelle.csv"
+        )
         
-        if [ ! -f "$BDNB_ARCHIVE" ]; then
-            echo "❌ Erreur : Téléchargement échoué"
+        ALL_PRESENT=true
+        for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$CSV_DIR/$file" ]; then
+                echo "❌ Fichier manquant : $CSV_DIR/$file"
+                ALL_PRESENT=false
+            else
+                echo "✅ Fichier présent : $file"
+            fi
+        done
+        
+        if [ "$ALL_PRESENT" = "false" ]; then
+            echo ""
+            echo "❌ ERREUR : Des fichiers CSV sont manquants"
+            echo "💡 Solution : Téléchargez manuellement les fichiers manquants ou activez le téléchargement"
             exit 1
         fi
         
-        SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
         echo ""
-        echo "✅ Archive téléchargée : $SIZE"
+        echo "✅ Tous les fichiers CSV sont présents - Pas de téléchargement nécessaire"
     fi
 
     echo ""

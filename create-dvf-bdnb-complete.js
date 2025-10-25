@@ -92,6 +92,7 @@ db.exec(`
         annee_source TEXT,
         prix_m2_bati REAL,
         prix_m2_terrain REAL,
+        id_parcelle TEXT,
         
         -- Données BDNB ajoutées
         batiment_groupe_id TEXT,
@@ -460,7 +461,7 @@ async function processDVFFile(filePath, year, department) {
 function insertDVFBatch(transactions) {
     const stmt = db.prepare(`
         INSERT OR REPLACE INTO dvf_bdnb_complete VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
     `);
     
@@ -483,6 +484,7 @@ function insertDVFBatch(transactions) {
                 row.annee_source,
                 row.prix_m2_bati,
                 row.prix_m2_terrain,
+                row.id_parcelle,
                 row.batiment_groupe_id,
                 row.classe_dpe,
                 row.orientation_principale,

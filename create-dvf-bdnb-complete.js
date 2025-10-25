@@ -132,8 +132,7 @@ db.exec(`
             presence_garage INTEGER DEFAULT 0,
             presence_veranda INTEGER DEFAULT 0,
             type_dpe TEXT,
-            dpe_officiel INTEGER DEFAULT 1,
-            PRIMARY KEY (batiment_groupe_id)
+            dpe_officiel INTEGER DEFAULT 1
         )
     `);
 
@@ -145,13 +144,14 @@ db.exec(`
     )
 `);
 
-// Index pour les performances
+// Index pour les performances (avec gestion des NULL)
 db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_dvf_coords ON dvf_bdnb_complete(longitude, latitude);
-    CREATE INDEX IF NOT EXISTS idx_dvf_commune ON dvf_bdnb_complete(code_commune);
-    CREATE INDEX IF NOT EXISTS idx_dvf_type ON dvf_bdnb_complete(type_local);
-    CREATE INDEX IF NOT EXISTS idx_dvf_annee ON dvf_bdnb_complete(annee_source);
-    CREATE INDEX IF NOT EXISTS idx_dvf_batiment_id ON dvf_bdnb_complete(batiment_groupe_id);
+    CREATE INDEX IF NOT EXISTS idx_dvf_coords ON dvf_bdnb_complete(longitude, latitude) WHERE longitude IS NOT NULL AND latitude IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_dvf_commune ON dvf_bdnb_complete(code_commune) WHERE code_commune IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_dvf_type ON dvf_bdnb_complete(type_local) WHERE type_local IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_dvf_annee ON dvf_bdnb_complete(annee_source) WHERE annee_source IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_dvf_batiment_id ON dvf_bdnb_complete(batiment_groupe_id) WHERE batiment_groupe_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_dvf_date ON dvf_bdnb_complete(date_mutation) WHERE date_mutation IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_relations_parcelle ON temp_bdnb_relations(parcelle_id);
     CREATE INDEX IF NOT EXISTS idx_relations_batiment ON temp_bdnb_relations(batiment_groupe_id);
 `);
@@ -388,7 +388,7 @@ async function processDVFFile(filePath, year, department) {
                 
                 transactions.push({
                     id_mutation: idMutation,
-                    date_mutation: row.date_mutation?.trim() || row['Date mutation']?.trim(),
+                    date_mutation: normalizeDate(row.date_mutation?.trim() || row['Date mutation']?.trim()),
                     valeur_fonciere: valeurFonciere,
                     code_commune: row.code_commune?.trim() || row['Code commune']?.trim(),
                     nom_commune: row.nom_commune?.trim() || row['Commune']?.trim(),
@@ -410,8 +410,8 @@ async function processDVFFile(filePath, year, department) {
                     pourcentage_vitrage: null
                 });
                 
-                // Insérer par batch de 1000
-                if (transactions.length >= 1000) {
+                // Insérer par batch de 500 (réduit pour éviter les erreurs mémoire)
+                if (transactions.length >= 500) {
                     insertDVFBatch(transactions);
                     transactions.length = 0;
                     
@@ -564,7 +564,7 @@ async function loadBDNBData() {
                 
                 const pourcentageVitrage = parseVitragePercentage(row.pourcentage_surface_baie_vitree_exterieur);
                 const surfaceHabitableLogement = parseFloat(row.surface_habitable_logement) || null;
-                const dateEtablissementDpe = row.date_etablissement_dpe?.trim() || null;
+                const dateEtablissementDpe = normalizeDate(row.date_etablissement_dpe?.trim()) || null;
                 const presencePiscine = parseInt(row.presence_piscine) || 0;
                 const presenceGarage = parseInt(row.presence_garage) || 0;
                 const presenceVeranda = parseInt(row.presence_veranda) || 0;
@@ -779,33 +779,35 @@ async function mergeDVFWithBDNB() {
     // Note: Un bâtiment peut avoir plusieurs DPE (un par logement)
     // On utilise une jointure intelligente par surface + chronologie des ventes
     console.log('   🔋 Mise à jour des données DPE (jointure intelligente + chronologie)...');
-    db.exec(`
-        UPDATE dvf_bdnb_complete AS d 
-        SET 
-            classe_dpe = (
-                SELECT dpe.classe_dpe 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= d.date_mutation
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > d.date_mutation 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > d.date_mutation 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
-                LIMIT 1
-            ),
+    
+    try {
+        db.exec(`
+            UPDATE dvf_bdnb_complete AS d 
+            SET 
+                classe_dpe = (
+                    SELECT dpe.classe_dpe 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                      AND (
+                          -- DPE avant la vente : toujours valide
+                          dpe.date_etablissement_dpe <= d.date_mutation
+                          OR
+                          -- DPE après la vente : seulement si dans les 6 mois
+                          (dpe.date_etablissement_dpe > d.date_mutation 
+                           AND julianday(dpe.date_etablissement_dpe) - julianday(d.date_mutation) <= 180)
+                      )
+                    ORDER BY 
+                      CASE 
+                        -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
+                        WHEN dpe.date_etablissement_dpe > d.date_mutation 
+                        THEN -julianday(dpe.date_etablissement_dpe)
+                        -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
+                        ELSE julianday(dpe.date_etablissement_dpe)
+                      END,
+                      ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                    LIMIT 1
+                ),
             orientation_principale = (
                 SELECT dpe.orientation_principale 
                 FROM temp_bdnb_dpe dpe
@@ -928,6 +930,25 @@ async function mergeDVFWithBDNB() {
             )
         WHERE d.batiment_groupe_id IS NOT NULL
     `);
+    
+    } catch (error) {
+        console.log(`   ⚠️ Erreur lors de la mise à jour DPE : ${error.message}`);
+        console.log(`   🔄 Tentative de mise à jour simplifiée...`);
+        
+        // Fallback : mise à jour simplifiée sans chronologie
+        db.exec(`
+            UPDATE dvf_bdnb_complete AS d 
+            SET classe_dpe = (
+                SELECT dpe.classe_dpe 
+                FROM temp_bdnb_dpe dpe
+                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                  AND ABS(dpe.surface_habitable_logement - d.surface_reelle_bati) < 10
+                ORDER BY ABS(dpe.surface_habitable_logement - d.surface_reelle_bati)
+                LIMIT 1
+            )
+            WHERE d.batiment_groupe_id IS NOT NULL
+        `);
+    }
     
     // Étape 3: Fallback via code_commune pour les transactions sans id_parcelle
     console.log('   🏘️ Fallback via code_commune...');
@@ -1100,6 +1121,36 @@ async function mergeDVFWithBDNB() {
     const duration = ((endTime - startTime) / 1000).toFixed(1);
     
     console.log(`   ✅ Fusion terminée en ${duration}s\n`);
+}
+
+// Fonction pour valider et normaliser les dates
+function normalizeDate(dateStr) {
+    if (!dateStr || dateStr === '') return null;
+    
+    // Formats supportés par SQLite julianday()
+    // YYYY-MM-DD, YYYY/MM/DD, DD/MM/YYYY, DD-MM-YYYY
+    const cleaned = dateStr.trim();
+    
+    // Si déjà au format ISO, retourner tel quel
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+        return cleaned;
+    }
+    
+    // Si format DD/MM/YYYY ou DD-MM-YYYY, convertir
+    const match = cleaned.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    if (match) {
+        const [, day, month, year] = match;
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    
+    // Si format YYYY/MM/DD, convertir
+    const match2 = cleaned.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if (match2) {
+        const [, year, month, day] = match2;
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    
+    return null; // Format non reconnu
 }
 
 // Fonctions utilitaires (copiées du script précédent)

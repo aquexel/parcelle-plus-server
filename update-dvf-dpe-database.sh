@@ -104,11 +104,8 @@ else
 fi
 
 if [ "$goto_step3" != "true" ]; then
-    if [ -f "$BDNB_ARCHIVE" ]; then
-        echo "✅ Archive déjà présente"
-        SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
-        echo "   Taille : $SIZE"
-    elif [ "$SKIP_DOWNLOAD" = "false" ]; then
+    # Vérifier si l'archive BDNB existe
+    if [ ! -f "$BDNB_ARCHIVE" ]; then
         echo "📥 Téléchargement de l'archive BDNB..."
         echo "🌐 URL : $BDNB_URL"
         echo ""
@@ -131,39 +128,9 @@ if [ "$goto_step3" != "true" ]; then
             exit 1
         fi
     else
-        echo "📥 TÉLÉCHARGEMENT DÉSACTIVÉ - Vérification des CSV existants"
-        echo "🚫 Le script ne téléchargera AUCUNE donnée"
-        echo "📂 Vérification des CSV dans : $CSV_DIR"
-        echo ""
-        
-        # Vérifier que les CSV existent quand même
-        REQUIRED_FILES=(
-            "batiment_groupe.csv"
-            "batiment_groupe_dpe_representatif_logement.csv"
-            "rel_batiment_groupe_parcelle.csv"
-            "parcelle.csv"
-        )
-        
-        ALL_PRESENT=true
-        for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$CSV_DIR/$file" ]; then
-                echo "❌ Fichier manquant : $CSV_DIR/$file"
-                ALL_PRESENT=false
-            else
-                echo "✅ Fichier présent : $file"
-            fi
-        done
-        
-        if [ "$ALL_PRESENT" = "false" ]; then
-            echo ""
-            echo "❌ ERREUR : Des fichiers CSV sont manquants"
-            echo "💡 Solution : Téléchargez manuellement les fichiers manquants ou activez le téléchargement"
-            echo "   Exécutez : sudo ./update-dvf-dpe-database.sh /opt/parcelle-plus false"
-            exit 1
-        fi
-        
-        echo ""
-        echo "✅ Tous les fichiers CSV sont présents - Pas de téléchargement nécessaire"
+        echo "✅ Archive déjà présente"
+        SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
+        echo "   Taille : $SIZE"
     fi
 fi
 

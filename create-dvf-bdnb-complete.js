@@ -330,7 +330,7 @@ async function processDVFFile(filePath, year, department) {
                     orientation_principale: null,
                     pourcentage_vitrage: null,
                     type_dpe: null,
-                    dpe_officiel: null,
+                    dpe_officiel: 1,
                     surface_habitable_logement: null,
                     date_etablissement_dpe: null
                 });

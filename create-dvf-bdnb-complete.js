@@ -75,99 +75,7 @@ db.pragma('synchronous = NORMAL');
 db.pragma('cache_size = -256000'); // 256 MB cache
 db.pragma('temp_store = MEMORY');
 
-// Table principale DVF + BDNB
-db.exec(`
-    DROP TABLE IF EXISTS dvf_bdnb_complete;
-    CREATE TABLE dvf_bdnb_complete (
-        id_mutation TEXT PRIMARY KEY,
-        date_mutation TEXT,
-        valeur_fonciere REAL,
-        code_commune TEXT,
-        nom_commune TEXT,
-        code_departement TEXT,
-        type_local TEXT,
-        surface_reelle_bati REAL,
-        nombre_pieces_principales INTEGER,
-        nature_culture TEXT,
-        surface_terrain REAL,
-        longitude REAL,
-        latitude REAL,
-        annee_source TEXT,
-        prix_m2_bati REAL,
-        prix_m2_terrain REAL,
-        id_parcelle TEXT,
-        
-        -- Données BDNB ajoutées
-        batiment_groupe_id TEXT,
-        classe_dpe TEXT,
-        orientation_principale TEXT,
-        pourcentage_vitrage REAL,
-        presence_piscine INTEGER DEFAULT 0,
-        presence_garage INTEGER DEFAULT 0,
-        presence_veranda INTEGER DEFAULT 0,
-        type_dpe TEXT,
-        dpe_officiel INTEGER DEFAULT 1,
-        surface_habitable_logement REAL,
-        date_etablissement_dpe TEXT
-    )
-`);
-
-// Tables temporaires BDNB
-db.exec(`
-    CREATE TABLE IF NOT EXISTS temp_bdnb_batiment (
-        batiment_groupe_id TEXT PRIMARY KEY,
-        code_commune_insee TEXT,
-        libelle_commune_insee TEXT,
-        longitude REAL,
-        latitude REAL,
-        geom_groupe TEXT,
-        s_geom_groupe REAL
-    )
-`);
-
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS temp_bdnb_dpe (
-            batiment_groupe_id TEXT,
-            classe_dpe TEXT,
-            orientation_principale TEXT,
-            pourcentage_vitrage REAL,
-            surface_habitable_logement REAL,
-            date_etablissement_dpe TEXT,
-            presence_piscine INTEGER DEFAULT 0,
-            presence_garage INTEGER DEFAULT 0,
-            presence_veranda INTEGER DEFAULT 0,
-            type_dpe TEXT,
-            dpe_officiel INTEGER DEFAULT 1
-        )
-    `);
-
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS temp_bdnb_parcelle (
-            parcelle_id TEXT PRIMARY KEY,
-            surface_geom_parcelle REAL,
-            geom_parcelle TEXT
-        )
-    `);
-
-db.exec(`
-    CREATE TABLE IF NOT EXISTS temp_bdnb_relations (
-        parcelle_id TEXT,
-        batiment_groupe_id TEXT,
-        PRIMARY KEY (parcelle_id, batiment_groupe_id)
-    )
-`);
-
-// Index pour les performances (avec gestion des NULL)
-db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_dvf_coords ON dvf_bdnb_complete(longitude, latitude) WHERE longitude IS NOT NULL AND latitude IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_dvf_commune ON dvf_bdnb_complete(code_commune) WHERE code_commune IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_dvf_type ON dvf_bdnb_complete(type_local) WHERE type_local IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_dvf_annee ON dvf_bdnb_complete(annee_source) WHERE annee_source IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_dvf_batiment_id ON dvf_bdnb_complete(batiment_groupe_id) WHERE batiment_groupe_id IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_dvf_date ON dvf_bdnb_complete(date_mutation) WHERE date_mutation IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_relations_parcelle ON temp_bdnb_relations(parcelle_id);
-    CREATE INDEX IF NOT EXISTS idx_relations_batiment ON temp_bdnb_relations(batiment_groupe_id);
-`);
+// Les tables seront créées dans createCompleteDatabase()
 
 console.log('✅ Base de données créée\n');
 
@@ -763,6 +671,36 @@ async function loadCSV(csvFile, tableName, processRow, batchSize = 20000) { // P
 async function mergeDVFWithBDNB() {
     console.log('🔗 Fusion DVF + BDNB par identifiants...');
     console.log('   ⏳ Jointure en cours (peut prendre quelques minutes)...');
+    
+    // Vérifier que la table dvf_bdnb_complete existe et contient des données
+    try {
+        const count = db.prepare('SELECT COUNT(*) as count FROM dvf_bdnb_complete').get();
+        console.log(`   📊 Table dvf_bdnb_complete: ${count.count} transactions`);
+        
+        if (count.count === 0) {
+            console.log('   ❌ Erreur: La table dvf_bdnb_complete est vide !');
+            return;
+        }
+    } catch (error) {
+        console.log(`   ❌ Erreur: La table dvf_bdnb_complete n'existe pas ou est inaccessible: ${error.message}`);
+        return;
+    }
+    
+    // Vérifier que les tables BDNB temporaires existent
+    try {
+        const relationsCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_relations').get();
+        const dpeCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_dpe').get();
+        const batimentsCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_batiments').get();
+        
+        console.log(`   📊 Tables BDNB: relations=${relationsCount.count}, DPE=${dpeCount.count}, bâtiments=${batimentsCount.count}`);
+        
+        if (relationsCount.count === 0) {
+            console.log('   ⚠️ Aucune relation parcelle-bâtiment trouvée');
+        }
+    } catch (error) {
+        console.log(`   ❌ Erreur: Tables BDNB temporaires non trouvées: ${error.message}`);
+        return;
+    }
     
     const startTime = Date.now();
     
@@ -1429,6 +1367,105 @@ async function createCompleteDatabase() {
     let totalFiles = 0;
     let totalTransactions = 0;
     
+    // Créer la table principale DVF + BDNB dès le début
+    console.log('📊 Création de la table principale...');
+    db.exec(`
+        DROP TABLE IF EXISTS dvf_bdnb_complete;
+        CREATE TABLE dvf_bdnb_complete (
+            id_mutation TEXT PRIMARY KEY,
+            date_mutation TEXT,
+            valeur_fonciere REAL,
+            code_commune TEXT,
+            nom_commune TEXT,
+            code_departement TEXT,
+            type_local TEXT,
+            surface_reelle_bati REAL,
+            nombre_pieces_principales INTEGER,
+            nature_culture TEXT,
+            surface_terrain REAL,
+            longitude REAL,
+            latitude REAL,
+            annee_source TEXT,
+            prix_m2_bati REAL,
+            prix_m2_terrain REAL,
+            id_parcelle TEXT,
+            
+            -- Données BDNB ajoutées
+            batiment_groupe_id TEXT,
+            classe_dpe TEXT,
+            orientation_principale TEXT,
+            pourcentage_vitrage REAL,
+            presence_piscine INTEGER DEFAULT 0,
+            presence_garage INTEGER DEFAULT 0,
+            presence_veranda INTEGER DEFAULT 0,
+            type_dpe TEXT,
+            dpe_officiel INTEGER DEFAULT 1,
+            surface_habitable_logement REAL,
+            date_etablissement_dpe TEXT
+        )
+    `);
+    
+    // Créer les tables temporaires BDNB
+    console.log('📊 Création des tables temporaires BDNB...');
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_batiment (
+            batiment_groupe_id TEXT PRIMARY KEY,
+            code_commune_insee TEXT,
+            libelle_commune_insee TEXT,
+            longitude REAL,
+            latitude REAL,
+            geom_groupe TEXT,
+            s_geom_groupe REAL
+        )
+    `);
+    
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_dpe (
+            batiment_groupe_id TEXT,
+            classe_dpe TEXT,
+            orientation_principale TEXT,
+            pourcentage_vitrage REAL,
+            surface_habitable_logement REAL,
+            date_etablissement_dpe TEXT,
+            presence_piscine INTEGER DEFAULT 0,
+            presence_garage INTEGER DEFAULT 0,
+            presence_veranda INTEGER DEFAULT 0,
+            type_dpe TEXT,
+            dpe_officiel INTEGER DEFAULT 1
+        )
+    `);
+    
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_relations (
+            parcelle_id TEXT,
+            batiment_groupe_id TEXT,
+            PRIMARY KEY (parcelle_id, batiment_groupe_id)
+        )
+    `);
+    
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_parcelle (
+            parcelle_id TEXT PRIMARY KEY,
+            surface_geom_parcelle REAL,
+            geom_parcelle TEXT
+        )
+    `);
+    
+    // Créer les index pour les performances
+    console.log('📊 Création des index...');
+    db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_dvf_coords ON dvf_bdnb_complete(longitude, latitude) WHERE longitude IS NOT NULL AND latitude IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_dvf_commune ON dvf_bdnb_complete(code_commune) WHERE code_commune IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_dvf_type ON dvf_bdnb_complete(type_local) WHERE type_local IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_dvf_annee ON dvf_bdnb_complete(annee_source) WHERE annee_source IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_dvf_batiment_id ON dvf_bdnb_complete(batiment_groupe_id) WHERE batiment_groupe_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_dvf_date ON dvf_bdnb_complete(date_mutation) WHERE date_mutation IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_relations_parcelle ON temp_bdnb_relations(parcelle_id);
+        CREATE INDEX IF NOT EXISTS idx_relations_batiment ON temp_bdnb_relations(batiment_groupe_id);
+    `);
+    
+    console.log('✅ Tables créées\n');
+    
     console.log(`📂 Traitement de ${YEARS.length} fichiers DVF (parallèle: ${MAX_PARALLEL_DVF} fichiers max)\n`);
     
     // Étape 1: Traiter les fichiers DVF en parallèle par batch
@@ -1478,6 +1515,20 @@ async function createCompleteDatabase() {
         // Afficher la progression globale
         showProgress(processedFiles, dvfTasks.length, `(${processedFiles}/${dvfTasks.length} fichiers DVF)`);
         console.log('');
+    }
+    
+    // Vérifier que des transactions DVF ont été chargées
+    try {
+        const dvfCount = db.prepare('SELECT COUNT(*) as count FROM dvf_bdnb_complete').get();
+        console.log(`\n📊 Vérification: ${dvfCount.count.toLocaleString()} transactions DVF dans la base`);
+        
+        if (dvfCount.count === 0) {
+            console.log('❌ ERREUR: Aucune transaction DVF chargée ! Arrêt du processus.');
+            return;
+        }
+    } catch (error) {
+        console.log(`❌ ERREUR: Impossible de vérifier les transactions DVF: ${error.message}`);
+        return;
     }
     
     // Étape 2: Charger les données BDNB

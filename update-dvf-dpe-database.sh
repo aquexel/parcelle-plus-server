@@ -146,23 +146,16 @@ echo "🔍 Vérification des fichiers DVF..."
 DVF_DIR="$PROJECT_DIR/dvf_data"
 mkdir -p "$DVF_DIR"
 
-declare -A DVF_URLS=(
-    ["dvf_2020.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2020/full.csv.gz"
-    ["dvf_2021.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2021/full.csv.gz"
-    ["dvf_2022.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2022/full.csv.gz"
-    ["dvf_2023.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2023/full.csv.gz"
-    ["dvf_2024.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2024/full.csv.gz"
-    ["dvf_2025.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2025/full.csv.gz"
-)
+# Générer automatiquement les années de 2020 à l'année en cours
+CURRENT_YEAR=$(date +%Y)
+declare -A DVF_URLS
+declare -A DVF_YEARS
 
-declare -A DVF_YEARS=(
-    ["dvf_2020.csv"]="2020"
-    ["dvf_2021.csv"]="2021"
-    ["dvf_2022.csv"]="2022"
-    ["dvf_2023.csv"]="2023"
-    ["dvf_2024.csv"]="2024"
-    ["dvf_2025.csv"]="2025"
-)
+for year in $(seq 2020 $CURRENT_YEAR); do
+    file="dvf_${year}.csv"
+    DVF_URLS["$file"]="https://files.data.gouv.fr/geo-dvf/latest/csv/${year}/full.csv.gz"
+    DVF_YEARS["$file"]="$year"
+done
 
 for file in "${!DVF_URLS[@]}"; do
     if [ ! -f "$DVF_DIR/$file" ]; then

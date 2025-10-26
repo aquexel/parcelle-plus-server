@@ -427,6 +427,14 @@ function insertDVFBatch(transactions) {
 // Fonction pour charger les données BDNB
 async function loadBDNBData() {
     console.log(`📊 Chargement des données BDNB (parallèle: ${MAX_PARALLEL_BDNB} fichiers max)...\n`);
+    console.log(`📂 Répertoire BDNB: ${BDNB_DIR}`);
+    
+    // Vérifier si le répertoire BDNB existe
+    if (!fs.existsSync(BDNB_DIR)) {
+        console.log(`⚠️ ERREUR: Le répertoire BDNB n'existe pas: ${BDNB_DIR}`);
+        console.log(`⚠️ Les fichiers CSV BDNB ne peuvent pas être chargés.`);
+        return;
+    }
     
     // Définir les tâches de chargement BDNB
     const bdnbTasks = [
@@ -526,12 +534,16 @@ async function loadBDNBData() {
             batch.map(async task => {
                 console.log(`📂 Chargement ${task.file}...`);
                 const filePath = path.join(BDNB_DIR, task.file);
-                await loadCSV(filePath, task.table, {
+                const rowCount = await loadCSV(filePath, task.table, {
                     insertSQL: task.insertSQL,
                     process: task.process
                 });
-                console.log(`   ✅ ${task.name} chargé`);
-                return task.name;
+                if (rowCount > 0) {
+                    console.log(`   ✅ ${task.name} chargé: ${rowCount.toLocaleString()} lignes`);
+                } else {
+                    console.log(`   ⚠️ ${task.name}: fichier manquant ou vide`);
+                }
+                return { name: task.name, rowCount };
             })
         );
         

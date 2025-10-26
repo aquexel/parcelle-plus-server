@@ -60,38 +60,8 @@ else
 
     mkdir -p "$BDNB_DIR"
     
-    # Vérifier si l'archive BDNB existe, sinon la télécharger
-    if [ ! -f "$BDNB_ARCHIVE" ]; then
-        echo "📥 Téléchargement de l'archive BDNB..."
-        echo "🌐 URL : $BDNB_URL"
-        echo ""
-        
-        # Télécharger l'archive
-        if command -v curl &> /dev/null; then
-            curl -L -o "$BDNB_ARCHIVE" "$BDNB_URL"
-        elif command -v wget &> /dev/null; then
-            wget -O "$BDNB_ARCHIVE" "$BDNB_URL"
-        else
-            echo "❌ ERREUR : curl ou wget requis pour le téléchargement"
-            exit 1
-        fi
-        
-        if [ -f "$BDNB_ARCHIVE" ]; then
-            SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
-            echo "✅ Archive téléchargée ($SIZE)"
-        else
-            echo "❌ ERREUR : Échec du téléchargement"
-            exit 1
-        fi
-    else
-        echo "✅ Archive déjà présente"
-        SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
-        echo "   Taille : $SIZE"
-    fi
-    
     # Vérifier si les CSV existent déjà
     if [ -d "$CSV_DIR" ]; then
-        echo ""
         echo "⚡ Vérification des CSV existants..."
         REQUIRED_FILES=(
             "batiment_groupe.csv"
@@ -111,10 +81,10 @@ else
         if [ "$ALL_PRESENT" = "true" ]; then
             echo "✅ Tous les fichiers CSV sont présents - Utilisation des CSV existants"
             echo ""
-            # Passer directement à l'étape 3
+            # Passer directement à l'étape 3 (pas de téléchargement nécessaire)
             goto_step3=true
         else
-            echo "⚠️  Certains fichiers CSV manquants - Extraction nécessaire"
+            echo "⚠️  Certains fichiers CSV manquants - Téléchargement et extraction nécessaires"
             echo "📥 Les fichiers suivants manquent :"
             for file in "${REQUIRED_FILES[@]}"; do
                 if [ ! -f "$CSV_DIR/$file" ]; then
@@ -124,9 +94,39 @@ else
             echo ""
         fi
     else
+        echo "📁 Le dossier CSV n'existe pas - Téléchargement et extraction nécessaires"
         echo ""
-        echo "📁 Le dossier CSV n'existe pas - Extraction nécessaire"
-        echo ""
+    fi
+    
+    # Télécharger l'archive BDNB seulement si des CSV manquent
+    if [ "$goto_step3" != "true" ]; then
+        if [ ! -f "$BDNB_ARCHIVE" ]; then
+            echo "📥 Téléchargement de l'archive BDNB..."
+            echo "🌐 URL : $BDNB_URL"
+            echo ""
+            
+            # Télécharger l'archive
+            if command -v curl &> /dev/null; then
+                curl -L -o "$BDNB_ARCHIVE" "$BDNB_URL"
+            elif command -v wget &> /dev/null; then
+                wget -O "$BDNB_ARCHIVE" "$BDNB_URL"
+            else
+                echo "❌ ERREUR : curl ou wget requis pour le téléchargement"
+                exit 1
+            fi
+            
+            if [ -f "$BDNB_ARCHIVE" ]; then
+                SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
+                echo "✅ Archive téléchargée ($SIZE)"
+            else
+                echo "❌ ERREUR : Échec du téléchargement"
+                exit 1
+            fi
+        else
+            echo "✅ Archive déjà présente"
+            SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
+            echo "   Taille : $SIZE"
+        fi
     fi
 fi
 

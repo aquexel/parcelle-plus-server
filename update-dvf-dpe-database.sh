@@ -59,48 +59,8 @@ else
     echo ""
 
     mkdir -p "$BDNB_DIR"
-
-    # Vérifier si les CSV existent déjà
-    if [ -d "$CSV_DIR" ]; then
-        echo "⚡ Vérification des CSV existants..."
-        REQUIRED_FILES=(
-            "batiment_groupe.csv"
-            "batiment_groupe_dpe_representatif_logement.csv"
-            "rel_batiment_groupe_parcelle.csv"
-            "parcelle.csv"
-        )
-        
-        ALL_PRESENT=true
-        for file in "${REQUIRED_FILES[@]}"; do
-            if [ ! -f "$CSV_DIR/$file" ]; then
-                ALL_PRESENT=false
-                break
-            fi
-        done
-        
-        if [ "$ALL_PRESENT" = "true" ]; then
-            echo "✅ Tous les fichiers CSV sont présents - Utilisation des CSV existants"
-            echo ""
-            # Passer directement à l'étape 3
-            goto_step3=true
-        else
-            echo "⚠️  Certains fichiers CSV manquants - L'archive sera téléchargée et extraite"
-            echo "📥 Les fichiers suivants manquent :"
-            for file in "${REQUIRED_FILES[@]}"; do
-                if [ ! -f "$CSV_DIR/$file" ]; then
-                    echo "   ❌ $file"
-                fi
-            done
-            echo ""
-        fi
-    else
-        echo "📁 Le dossier CSV n'existe pas - Téléchargement et extraction nécessaires"
-        echo ""
-    fi
-fi
-
-if [ "$goto_step3" != "true" ]; then
-    # Vérifier si l'archive BDNB existe
+    
+    # Vérifier si l'archive BDNB existe, sinon la télécharger
     if [ ! -f "$BDNB_ARCHIVE" ]; then
         echo "📥 Téléchargement de l'archive BDNB..."
         echo "🌐 URL : $BDNB_URL"
@@ -129,8 +89,45 @@ if [ "$goto_step3" != "true" ]; then
         echo "   Taille : $SIZE"
     fi
     
-    # Forcer l'extraction même si l'archive existe déjà
-    SKIP_EXTRACTION=false
+    # Vérifier si les CSV existent déjà
+    if [ -d "$CSV_DIR" ]; then
+        echo ""
+        echo "⚡ Vérification des CSV existants..."
+        REQUIRED_FILES=(
+            "batiment_groupe.csv"
+            "batiment_groupe_dpe_representatif_logement.csv"
+            "rel_batiment_groupe_parcelle.csv"
+            "parcelle.csv"
+        )
+        
+        ALL_PRESENT=true
+        for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$CSV_DIR/$file" ]; then
+                ALL_PRESENT=false
+                break
+            fi
+        done
+        
+        if [ "$ALL_PRESENT" = "true" ]; then
+            echo "✅ Tous les fichiers CSV sont présents - Utilisation des CSV existants"
+            echo ""
+            # Passer directement à l'étape 3
+            goto_step3=true
+        else
+            echo "⚠️  Certains fichiers CSV manquants - Extraction nécessaire"
+            echo "📥 Les fichiers suivants manquent :"
+            for file in "${REQUIRED_FILES[@]}"; do
+                if [ ! -f "$CSV_DIR/$file" ]; then
+                    echo "   ❌ $file"
+                fi
+            done
+            echo ""
+        fi
+    else
+        echo ""
+        echo "📁 Le dossier CSV n'existe pas - Extraction nécessaire"
+        echo ""
+    fi
 fi
 
 echo ""
@@ -282,10 +279,13 @@ REQUIRED_FILES=(
     "batiment_groupe_dpe_representatif_logement.csv"
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
-    "parcelle_sitadel.csv"
 )
 
+# Fichier optionnel
+OPTIONAL_FILE="parcelle_sitadel.csv"
+
 MISSING_FILES=()
+MISSING_OPTIONAL=false
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$CSV_DIR/$file" ]; then
         MISSING_FILES+=("$file")
@@ -295,15 +295,30 @@ for file in "${REQUIRED_FILES[@]}"; do
     fi
 done
 
+# Vérifier le fichier optionnel
+if [ ! -f "$CSV_DIR/$OPTIONAL_FILE" ]; then
+    MISSING_OPTIONAL=true
+    echo "   ⚠️  $OPTIONAL_FILE (optionnel, manquant)"
+else
+    SIZE=$(du -h "$CSV_DIR/$OPTIONAL_FILE" | cut -f1)
+    echo "   ✅ $OPTIONAL_FILE ($SIZE)"
+fi
+
 if [ ${#MISSING_FILES[@]} -gt 0 ]; then
     echo ""
-    echo "❌ Fichiers CSV manquants :"
+    echo "❌ Fichiers CSV obligatoires manquants :"
     for file in "${MISSING_FILES[@]}"; do
         echo "   ❌ $file"
     done
     echo ""
     echo "💡 Solution : Relancez le script pour extraire les fichiers manquants"
     exit 1
+fi
+
+if [ "$MISSING_OPTIONAL" = "true" ]; then
+    echo ""
+    echo "⚠️  Fichier optionnel manquant : $OPTIONAL_FILE"
+    echo "   Le script continuera sans ce fichier"
 fi
 
 echo ""

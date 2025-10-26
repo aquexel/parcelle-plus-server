@@ -328,7 +328,11 @@ async function processDVFFile(filePath, year, department) {
                     batiment_groupe_id: null, // Sera rempli par la jointure BDNB
                     classe_dpe: null,
                     orientation_principale: null,
-                    pourcentage_vitrage: null
+                    pourcentage_vitrage: null,
+                    type_dpe: null,
+                    dpe_officiel: null,
+                    surface_habitable_logement: null,
+                    date_etablissement_dpe: null
                 });
                 
                 // Insérer par batch de 500 (réduit pour éviter les erreurs mémoire)

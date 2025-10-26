@@ -401,7 +401,7 @@ async function loadBDNBData() {
         const stream = fs.createReadStream(task.file);
         
         // Batch pour optimiser les insertions
-        const BATCH_SIZE = 20000;
+        const BATCH_SIZE = 10000;
         let batch = [];
         
         // Préparer les statements une seule fois
@@ -454,7 +454,7 @@ async function loadBDNBData() {
                             batch.push(params);
                             count++;
                             
-                            // Insérer par batch de 20000
+                            // Insérer par batch de 10000
                             if (batch.length >= BATCH_SIZE) {
                                 insertBatch(batch);
                                 batch = [];
@@ -511,7 +511,7 @@ async function loadDVFData() {
         
         let count = 0;
         let linesRead = 0;
-        const BATCH_SIZE = 20000;
+        const BATCH_SIZE = 10000;
         let batch = [];
             
             await new Promise((resolve, reject) => {
@@ -578,7 +578,7 @@ async function loadDVFData() {
                             ]);
                             count++;
                             
-                            // Insérer par batch de 20000
+                            // Insérer par batch de 10000
                             if (batch.length >= BATCH_SIZE) {
                                 insertBatch(batch);
                                 batch = [];

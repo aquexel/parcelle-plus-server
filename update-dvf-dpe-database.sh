@@ -69,6 +69,7 @@ else
             "batiment_groupe_dvf_open_representatif.csv"
             "rel_batiment_groupe_parcelle.csv"
             "parcelle.csv"
+            "parcelle_sitadel.csv"
         )
         
         ALL_PRESENT=true
@@ -122,6 +123,7 @@ if [ "$goto_step3" != "true" ]; then
             "batiment_groupe_dvf_open_representatif.csv"
             "rel_batiment_groupe_parcelle.csv"
             "parcelle.csv"
+            "parcelle_sitadel.csv"
         )
         
         ALL_PRESENT=true
@@ -173,6 +175,7 @@ declare -a FILES=(
     "batiment_groupe_dvf_open_representatif.csv"
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
+    "parcelle_sitadel.csv"
     "rel_parcelle_sitadel.csv"
     "sitadel.csv"
 )
@@ -259,6 +262,7 @@ REQUIRED_FILES=(
     "batiment_groupe_dvf_open_representatif.csv"
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
+    "parcelle_sitadel.csv"
 )
 
 MISSING_FILES=()

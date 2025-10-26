@@ -490,7 +490,7 @@ async function loadDVFData() {
     console.log('📊 Chargement des données DVF...\n');
     
     // Rechercher les fichiers DVF disponibles
-    const dvfFiles = ['dvf_2024.csv', 'dvf_2023.csv', 'dvf_2022.csv', 'dvf_2021.csv', 'dvf_2020.csv'];
+    const dvfFiles = ['dvf_2025.csv', 'dvf_2024.csv', 'dvf_2023.csv', 'dvf_2022.csv', 'dvf_2021.csv', 'dvf_2020.csv'];
     const availableFiles = dvfFiles.filter(file => fs.existsSync(path.join(DVF_DIR, file)));
     
     if (availableFiles.length === 0) {

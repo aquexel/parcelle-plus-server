@@ -152,6 +152,7 @@ declare -A DVF_URLS=(
     ["dvf_2022.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2022/full.csv.gz"
     ["dvf_2023.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2023/full.csv.gz"
     ["dvf_2024.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2024/full.csv.gz"
+    ["dvf_2025.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2025/full.csv.gz"
 )
 
 declare -A DVF_YEARS=(
@@ -160,6 +161,7 @@ declare -A DVF_YEARS=(
     ["dvf_2022.csv"]="2022"
     ["dvf_2023.csv"]="2023"
     ["dvf_2024.csv"]="2024"
+    ["dvf_2025.csv"]="2025"
 )
 
 for file in "${!DVF_URLS[@]}"; do

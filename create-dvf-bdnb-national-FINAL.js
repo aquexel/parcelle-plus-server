@@ -397,9 +397,8 @@ async function loadBDNBData() {
         console.log(`📂 Chargement ${task.name}...`);
         
         let count = 0;
-        const stream = fs.createReadStream(task.file);
-        
         let linesRead = 0;
+        const stream = fs.createReadStream(task.file);
         
         await new Promise((resolve, reject) => {
             stream

@@ -54,6 +54,8 @@ const createBusinessTables = () => {
                     code_insee TEXT,
                     price REAL,
                     status TEXT DEFAULT 'available',
+                    is_public INTEGER DEFAULT 0,
+                    zone_plu TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )

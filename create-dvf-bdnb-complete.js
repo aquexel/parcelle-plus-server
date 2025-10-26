@@ -534,10 +534,7 @@ async function loadBDNBData() {
             batch.map(async task => {
                 console.log(`📂 Chargement ${task.file}...`);
                 const filePath = path.join(BDNB_DIR, task.file);
-                const rowCount = await loadCSV(filePath, task.table, {
-                    insertSQL: task.insertSQL,
-                    process: task.process
-                });
+                const rowCount = await loadCSV(filePath, task.table, task.insertSQL, task.process);
                 if (rowCount > 0) {
                     console.log(`   ✅ ${task.name} chargé: ${rowCount.toLocaleString()} lignes`);
                 } else {
@@ -619,7 +616,7 @@ async function OLD_loadBDNBData() {
 }
 
 // Fonction pour charger un CSV
-async function loadCSV(csvFile, tableName, processRow, batchSize = 20000) { // Plus gros batches = moins d'overhead
+async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize = 20000) { // Plus gros batches = moins d'overhead
     if (!fs.existsSync(csvFile)) {
         console.log(`⚠️  Fichier manquant : ${csvFile}`);
         return 0;
@@ -635,7 +632,7 @@ async function loadCSV(csvFile, tableName, processRow, batchSize = 20000) { // P
     let lastProgressUpdate = Date.now();
     
     return new Promise((resolve, reject) => {
-        const insertStmt = db.prepare(processRow.insertSQL);
+        const insertStmt = db.prepare(insertSQL);
         const insertMany = db.transaction((rows) => {
             for (const row of rows) {
                 try {
@@ -649,7 +646,7 @@ async function loadCSV(csvFile, tableName, processRow, batchSize = 20000) { // P
         fs.createReadStream(csvFile)
             .pipe(csv())
             .on('data', (row) => {
-                const processedRow = processRow.process(row);
+                const processedRow = processRowFunc(row);
                 if (processedRow) {
                     batch.push(processedRow);
                     

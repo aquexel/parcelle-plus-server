@@ -522,7 +522,7 @@ async function loadDVFData() {
             await new Promise((resolve, reject) => {
             const stream = fs.createReadStream(filePath);
             const insertStmt = db.prepare(`
-                INSERT INTO dvf_bdnb_complete (
+                INSERT OR IGNORE INTO dvf_bdnb_complete (
                     id_mutation, date_mutation, valeur_fonciere, code_commune, nom_commune,
                     code_departement, type_local, surface_reelle_bati, nombre_pieces_principales,
                     nature_culture, surface_terrain, longitude, latitude, annee_source,

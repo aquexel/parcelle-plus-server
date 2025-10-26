@@ -144,8 +144,9 @@ if [ "$goto_step3" != "true" ]; then
         echo ""
         echo "✅ Tous les fichiers CSV sont présents - Pas de téléchargement nécessaire"
     fi
+fi
 
-    echo ""
+echo ""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📦 ÉTAPE 2/4 : Extraction

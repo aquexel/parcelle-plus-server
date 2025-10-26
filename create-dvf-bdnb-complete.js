@@ -690,15 +690,16 @@ async function mergeDVFWithBDNB() {
     try {
         const relationsCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_relations').get();
         const dpeCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_dpe').get();
-        const batimentsCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_batiments').get();
+        const batimentsCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_batiment').get();
         
-        console.log(`   📊 Tables BDNB: relations=${relationsCount.count}, DPE=${dpeCount.count}, bâtiments=${batimentsCount.count}`);
+        console.log(`   📊 Tables BDNB: relations=${relationsCount.count.toLocaleString()}, DPE=${dpeCount.count.toLocaleString()}, bâtiments=${batimentsCount.count.toLocaleString()}`);
         
-        if (relationsCount.count === 0) {
-            console.log('   ⚠️ Aucune relation parcelle-bâtiment trouvée');
+        if (relationsCount.count === 0 && dpeCount.count === 0 && batimentsCount.count === 0) {
+            console.log('   ⚠️ Aucune donnée BDNB trouvée - fusion ignorée');
+            return;
         }
     } catch (error) {
-        console.log(`   ❌ Erreur: Tables BDNB temporaires non trouvées: ${error.message}`);
+        console.log(`   ⚠️ Tables BDNB temporaires non trouvées: ${error.message} - fusion ignorée`);
         return;
     }
     
@@ -1534,8 +1535,26 @@ async function createCompleteDatabase() {
     // Étape 2: Charger les données BDNB
     await loadBDNBData();
     
-    // Étape 3: Fusionner DVF + BDNB
-    await mergeDVFWithBDNB();
+    // Vérifier que les tables temporaires ont été créées et contiennent des données
+    try {
+        const relationsCheck = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_relations').get();
+        const batimentsCheck = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_batiment').get();
+        const dpeCheck = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_dpe').get();
+        
+        console.log(`📊 Vérification tables BDNB:`);
+        console.log(`   Relations: ${relationsCheck.count.toLocaleString()}`);
+        console.log(`   Bâtiments: ${batimentsCheck.count.toLocaleString()}`);
+        console.log(`   DPE: ${dpeCheck.count.toLocaleString()}`);
+        
+        if (relationsCheck.count === 0 && batimentsCheck.count === 0 && dpeCheck.count === 0) {
+            console.log('   ⚠️ Aucune donnée BDNB trouvée - le script continuera sans fusion BDNB');
+        } else {
+            // Étape 3: Fusionner DVF + BDNB seulement si des données existent
+            await mergeDVFWithBDNB();
+        }
+    } catch (error) {
+        console.log(`   ⚠️ Aucune table BDNB n'existe - continuation sans fusion BDNB`);
+    }
     
     const endTime = Date.now();
     const duration = ((endTime - startTime) / 1000).toFixed(1);

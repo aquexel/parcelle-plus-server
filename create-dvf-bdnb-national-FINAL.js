@@ -29,8 +29,8 @@ console.log('\n📊 Création de la base de données...');
 // Supprimer l'ancienne base si elle existe
 if (fs.existsSync(DB_FILE)) {
     try {
-        fs.unlinkSync(DB_FILE);
-        console.log('   🗑️ Ancienne base supprimée');
+    fs.unlinkSync(DB_FILE);
+    console.log('   🗑️ Ancienne base supprimée');
     } catch (error) {
         console.log('   ⚠️ Impossible de supprimer l\'ancienne base (peut être verrouillée)');
     }
@@ -177,6 +177,45 @@ function normalizeDate(dateStr) {
     return null; // Format non reconnu
 }
 
+// Fonction pour traiter une ligne DVF
+function processDVFRow(row, year) {
+    const idMutation = row.id_mutation?.trim();
+    const valeurFonciere = parseFloat(row.valeur_fonciere) || 0;
+    
+    if (!idMutation || valeurFonciere <= 0) return null;
+    
+    return {
+        id_mutation: idMutation,
+        date_mutation: normalizeDate(row.date_mutation?.trim()),
+        valeur_fonciere: valeurFonciere,
+        code_commune: row.code_commune?.trim(),
+        nom_commune: row.nom_commune?.trim(),
+        code_departement: row.code_departement?.trim(),
+        type_local: row.type_local?.trim(),
+        surface_reelle_bati: parseFloat(row.surface_reelle_bati) || null,
+        nombre_pieces_principales: parseInt(row.nombre_pieces_principales) || null,
+        nature_culture: row.nature_culture?.trim(),
+        surface_terrain: parseFloat(row.surface_terrain) || null,
+        longitude: parseFloat(row.longitude) || null,
+        latitude: parseFloat(row.latitude) || null,
+        annee_source: year,
+        prix_m2_bati: null,
+        prix_m2_terrain: null,
+        id_parcelle: row.id_parcelle?.trim(),
+        batiment_groupe_id: null,
+        classe_dpe: null,
+        orientation_principale: null,
+        pourcentage_vitrage: null,
+        presence_piscine: 0,
+        presence_garage: 0,
+        presence_veranda: 0,
+        type_dpe: null,
+        dpe_officiel: 1,
+        surface_habitable_logement: null,
+        date_etablissement_dpe: null
+    };
+}
+
 // Fonction pour insérer un batch DVF (IDENTIQUE au script principal)
 function insertDVFBatch(transactions) {
     const stmt = db.prepare(`
@@ -223,9 +262,9 @@ function insertDVFBatch(transactions) {
     insertMany(transactions);
 }
 
-// Fonction pour charger les données BDNB en parallèle avec Worker Threads
+// Fonction pour charger les données BDNB séquentiellement
 async function loadBDNBData() {
-    console.log('📊 Chargement des données BDNB en parallèle...\n');
+    console.log('📊 Chargement des données BDNB...\n');
     
     const tasks = [
         {
@@ -348,9 +387,7 @@ async function loadBDNBData() {
         });
     }
     
-    // Charger les données en parallèle avec Worker Threads
-    const workers = [];
-    
+    // Charger les données séquentiellement
     for (const task of tasks) {
         if (!fs.existsSync(task.file)) {
             console.log(`⚠️ Fichier introuvable : ${task.name}`);
@@ -359,40 +396,84 @@ async function loadBDNBData() {
         
         console.log(`📂 Chargement ${task.name}...`);
         
-        const worker = new Worker(path.join(__dirname, 'load-bdnb-worker.js'), {
-            workerData: {
-                filePath: task.file,
-                tableName: task.tableName,
-                dbFile: DB_FILE,
-                taskType: 'load'
-            }
-        });
+        let count = 0;
+        const stream = fs.createReadStream(task.file);
         
-        worker.on('message', (msg) => {
-            if (msg.type === 'done') {
-                console.log(`   ✅ ${msg.count.toLocaleString()} données chargées`);
-            } else if (msg.type === 'error') {
-                console.error(`   ❌ Erreur: ${msg.error}`);
-            }
-        });
+        let linesRead = 0;
         
-        workers.push(worker);
+        await new Promise((resolve, reject) => {
+            stream
+                .pipe(csv())
+                .on('data', (row) => {
+                    linesRead++;
+                    const processedRow = task.processRow(row);
+                    if (processedRow) {
+                        try {
+                            if (task.tableName === 'temp_bdnb_relations') {
+                                db.prepare(`INSERT OR IGNORE INTO temp_bdnb_relations VALUES (?, ?)`).run(
+                                    processedRow.parcelle_id, 
+                                    processedRow.batiment_groupe_id
+                                );
+                            } else if (task.tableName === 'temp_bdnb_batiment') {
+                                db.prepare(`INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+                                    processedRow.batiment_groupe_id, 
+                                    processedRow.code_commune_insee, 
+                                    processedRow.libelle_commune_insee, 
+                                    processedRow.longitude, 
+                                    processedRow.latitude, 
+                                    processedRow.geom_groupe, 
+                                    processedRow.s_geom_groupe
+                                );
+                            } else if (task.tableName === 'temp_bdnb_dpe') {
+                                db.prepare(`INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+                                    processedRow.batiment_groupe_id, 
+                                    processedRow.classe_dpe, 
+                                    processedRow.orientation_principale, 
+                                    processedRow.pourcentage_vitrage, 
+                                    processedRow.surface_habitable_logement, 
+                                    processedRow.date_etablissement_dpe, 
+                                    processedRow.presence_piscine, 
+                                    processedRow.presence_garage, 
+                                    processedRow.presence_veranda, 
+                                    processedRow.type_dpe, 
+                                    processedRow.dpe_officiel
+                                );
+                            } else if (task.tableName === 'temp_bdnb_parcelle') {
+                                db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?)`).run(
+                                    processedRow.parcelle_id, 
+                                    processedRow.surface_geom_parcelle, 
+                                    processedRow.geom_parcelle
+                                );
+                            } else if (task.tableName === 'temp_parcelle_sitadel') {
+                                db.prepare(`INSERT OR REPLACE INTO temp_parcelle_sitadel VALUES (?, ?, ?)`).run(
+                                    processedRow.parcelle_id, 
+                                    processedRow.indicateur_piscine, 
+                                    processedRow.indicateur_garage
+                                );
+                            }
+                            count++;
+                        } catch (error) {
+                            // Ignorer les erreurs de contrainte
+                        }
+                    }
+                })
+                .on('end', () => {
+                    console.log(`   ✅ ${count.toLocaleString()} données chargées sur ${linesRead.toLocaleString()} lignes lues`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    console.error(`   ❌ Erreur: ${error.message}`);
+                    reject(error);
+                });
+        });
     }
-    
-    // Attendre que tous les workers aient terminé
-    await Promise.all(workers.map(worker => new Promise((resolve, reject) => {
-        worker.on('exit', (code) => {
-            if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
-            else resolve();
-        });
-    })));
     
     console.log('\n✅ Données BDNB chargées\n');
 }
 
-// Fonction pour charger les données DVF en parallèle avec Worker Threads
+// Fonction pour charger les données DVF séquentiellement
 async function loadDVFData() {
-    console.log('📊 Chargement des données DVF en parallèle...\n');
+    console.log('📊 Chargement des données DVF...\n');
     
     // Rechercher les fichiers DVF disponibles
     const dvfFiles = ['dvf_2024.csv', 'dvf_2023.csv', 'dvf_2022.csv', 'dvf_2021.csv', 'dvf_2020.csv'];
@@ -405,43 +486,84 @@ async function loadDVFData() {
     
     console.log(`📋 ${availableFiles.length} fichier(s) DVF trouvé(s)\n`);
     
-    // Charger les fichiers DVF en parallèle avec Worker Threads
-    const workers = [];
-    
+    // Charger les fichiers DVF séquentiellement
     for (const file of availableFiles) {
         const filePath = path.join(DVF_DIR, file);
         const year = file.match(/dvf_(\d{4})\.csv/)?.[1];
         
         if (!year) continue;
         
-        console.log(`📂 Chargement ${file}...`);
+        console.log(`📂 Chargement ${file} (${year})...`);
         
-        const worker = new Worker(path.join(__dirname, 'load-dvf-worker.js'), {
-            workerData: {
-                filePath: filePath,
-                dbFile: DB_FILE,
-                year: year
-            }
+        let count = 0;
+        let linesRead = 0;
+        
+        await new Promise((resolve, reject) => {
+            const stream = fs.createReadStream(filePath);
+            const insertStmt = db.prepare(`
+                INSERT INTO dvf_bdnb_complete (
+                    id_mutation, date_mutation, valeur_fonciere, code_commune, nom_commune,
+                    code_departement, type_local, surface_reelle_bati, nombre_pieces_principales,
+                    nature_culture, surface_terrain, longitude, latitude, annee_source,
+                    prix_m2_bati, prix_m2_terrain, id_parcelle, batiment_groupe_id, classe_dpe,
+                    orientation_principale, pourcentage_vitrage, presence_piscine, presence_garage,
+                    presence_veranda, type_dpe, dpe_officiel, surface_habitable_logement, date_etablissement_dpe
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            
+            stream
+                .pipe(csv())
+                .on('data', (row) => {
+                    linesRead++;
+                    const processedRow = processDVFRow(row, year);
+                    if (processedRow) {
+                        try {
+                            insertStmt.run(
+                                processedRow.id_mutation,
+                                processedRow.date_mutation,
+                                processedRow.valeur_fonciere,
+                                processedRow.code_commune,
+                                processedRow.nom_commune,
+                                processedRow.code_departement,
+                                processedRow.type_local,
+                                processedRow.surface_reelle_bati,
+                                processedRow.nombre_pieces_principales,
+                                processedRow.nature_culture,
+                                processedRow.surface_terrain,
+                                processedRow.longitude,
+                                processedRow.latitude,
+                                processedRow.annee_source,
+                                processedRow.prix_m2_bati,
+                                processedRow.prix_m2_terrain,
+                                processedRow.id_parcelle,
+                                processedRow.batiment_groupe_id,
+                                processedRow.classe_dpe,
+                                processedRow.orientation_principale,
+                                processedRow.pourcentage_vitrage,
+                                processedRow.presence_piscine,
+                                processedRow.presence_garage,
+                                processedRow.presence_veranda,
+                                processedRow.type_dpe,
+                                processedRow.dpe_officiel,
+                                processedRow.surface_habitable_logement,
+                                processedRow.date_etablissement_dpe
+                            );
+                            count++;
+                        } catch (error) {
+                            // Ignorer les erreurs de contrainte
+                        }
+                    }
+                })
+                .on('end', () => {
+                    console.log(`   ✅ ${count.toLocaleString()} transactions chargées sur ${linesRead.toLocaleString()} lignes lues`);
+                    resolve();
+                })
+                .on('error', (error) => {
+                    console.error(`   ❌ Erreur ${year}: ${error.message}`);
+                    reject(error);
+                });
         });
-        
-        worker.on('message', (msg) => {
-            if (msg.type === 'done') {
-                console.log(`   ✅ ${msg.count.toLocaleString()} transactions DVF chargées (${msg.year})`);
-            } else if (msg.type === 'error') {
-                console.error(`   ❌ Erreur ${msg.year}: ${msg.error}`);
-            }
-        });
-        
-        workers.push(worker);
     }
-    
-    // Attendre que tous les workers aient terminé
-    await Promise.all(workers.map(worker => new Promise((resolve, reject) => {
-        worker.on('exit', (code) => {
-            if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
-            else resolve();
-        });
-    })));
     
     console.log('\n✅ Données DVF chargées\n');
 }

@@ -73,8 +73,14 @@ const createBusinessTables = () => {
                     id TEXT PRIMARY KEY,
                     username TEXT UNIQUE NOT NULL,
                     email TEXT UNIQUE,
-                    user_type TEXT DEFAULT 'buyer',
+                    password_hash TEXT NOT NULL,
+                    full_name TEXT,
+                    phone TEXT,
+                    user_type TEXT DEFAULT 'user',
                     device_id TEXT,
+                    avatar_url TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    is_verified INTEGER DEFAULT 0,
                     last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -89,19 +95,20 @@ const createBusinessTables = () => {
 
             // Table des sessions/auth
             businessDb.run(`
-                CREATE TABLE IF NOT EXISTS sessions (
+                CREATE TABLE IF NOT EXISTS user_sessions (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     token TEXT UNIQUE NOT NULL,
                     expires_at DATETIME NOT NULL,
+                    device_info TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             `, (err) => {
                 if (err) {
-                    console.error('❌ Erreur création table sessions:', err);
+                    console.error('❌ Erreur création table user_sessions:', err);
                 } else {
-                    console.log('✅ Table sessions créée (base métier)');
+                    console.log('✅ Table user_sessions créée (base métier)');
                 }
             });
 
@@ -183,8 +190,8 @@ const insertSampleData = () => {
     return new Promise((resolve, reject) => {
         // Utilisateur système dans base métier
         businessDb.run(`
-            INSERT OR IGNORE INTO users (id, username, email, user_type, device_id)
-            VALUES ('system', 'Système', 'system@parcelle.plus', 'system', 'raspberry-pi')
+            INSERT OR IGNORE INTO users (id, username, email, password_hash, user_type, device_id, is_active, is_verified)
+            VALUES ('system', 'Système', 'system@parcelle.plus', '', 'system', 'raspberry-pi', 1, 1)
         `, (err) => {
             if (err) {
                 console.error('❌ Erreur insertion utilisateur système:', err);

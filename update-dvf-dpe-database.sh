@@ -330,31 +330,60 @@ echo "🔍 Vérification des fichiers DVF..."
 DVF_DIR="$PROJECT_DIR/dvf_data"
 mkdir -p "$DVF_DIR"
 
-DVF_FILES=(
-    "dvf_2020.csv"
-    "dvf_2021.csv"
-    "dvf_2022.csv"
-    "dvf_2023.csv"
-    "dvf_2024.csv"
+declare -A DVF_URLS=(
+    ["dvf_2020.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2020/full.csv.gz"
+    ["dvf_2021.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2021/full.csv.gz"
+    ["dvf_2022.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2022/full.csv.gz"
+    ["dvf_2023.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2023/full.csv.gz"
+    ["dvf_2024.csv"]="https://files.data.gouv.fr/geo-dvf/latest/csv/2024/full.csv.gz"
 )
 
-DVF_PRESENT=false
-for file in "${DVF_FILES[@]}"; do
-    if [ -f "$DVF_DIR/$file" ]; then
+declare -A DVF_YEARS=(
+    ["dvf_2020.csv"]="2020"
+    ["dvf_2021.csv"]="2021"
+    ["dvf_2022.csv"]="2022"
+    ["dvf_2023.csv"]="2023"
+    ["dvf_2024.csv"]="2024"
+)
+
+for file in "${!DVF_URLS[@]}"; do
+    if [ ! -f "$DVF_DIR/$file" ]; then
+        echo ""
+        echo "📥 Téléchargement de $file..."
+        YEAR="${DVF_YEARS[$file]}"
+        URL="${DVF_URLS[$file]}"
+        
+        # Télécharger le fichier compressé
+        TEMP_FILE="$DVF_DIR/${file}.gz"
+        if command -v curl &> /dev/null; then
+            curl -L -o "$TEMP_FILE" "$URL"
+        elif command -v wget &> /dev/null; then
+            wget -O "$TEMP_FILE" "$URL"
+        else
+            echo "❌ ERREUR : curl ou wget requis pour le téléchargement"
+            exit 1
+        fi
+        
+        # Décompresser
+        if [ -f "$TEMP_FILE" ]; then
+            echo "   📦 Décompression..."
+            gunzip -c "$TEMP_FILE" > "$DVF_DIR/$file"
+            rm "$TEMP_FILE"
+            SIZE=$(du -h "$DVF_DIR/$file" | cut -f1)
+            echo "   ✅ $file ($SIZE)"
+        else
+            echo "   ❌ Échec du téléchargement de $file"
+        fi
+    else
         SIZE=$(du -h "$DVF_DIR/$file" | cut -f1)
         echo "   ✅ $file ($SIZE)"
-        DVF_PRESENT=true
     fi
 done
 
-if [ "$DVF_PRESENT" = "false" ]; then
+# Vérifier qu'au moins un fichier DVF est présent
+if ! ls "$DVF_DIR"/dvf_*.csv 1> /dev/null 2>&1; then
     echo ""
-    echo "⚠️ Aucun fichier DVF trouvé dans $DVF_DIR"
-    echo "💡 Les fichiers DVF doivent être téléchargés manuellement ou fournis"
-    echo "   Placez les fichiers dans : $DVF_DIR"
-    echo ""
-    echo "   Fichiers attendus : dvf_2020.csv, dvf_2021.csv, dvf_2022.csv, dvf_2023.csv, dvf_2024.csv"
-    echo ""
+    echo "❌ ERREUR : Aucun fichier DVF disponible"
     exit 1
 fi
 

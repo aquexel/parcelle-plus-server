@@ -401,7 +401,7 @@ async function loadBDNBData() {
         const stream = fs.createReadStream(task.file);
         
         // Batch pour optimiser les insertions
-        const BATCH_SIZE = 10000;
+        const BATCH_SIZE = 20000;
         let batch = [];
         
         // Préparer les statements une seule fois
@@ -426,8 +426,8 @@ async function loadBDNBData() {
         
         await new Promise((resolve, reject) => {
             stream
-                .pipe(csv())
-                .on('data', (row) => {
+            .pipe(csv())
+            .on('data', (row) => {
                     linesRead++;
                     
                     // Afficher progression tous les 50 000 lignes (sur la même ligne)
@@ -454,17 +454,17 @@ async function loadBDNBData() {
                             batch.push(params);
                             count++;
                             
-                            // Insérer par batch de 10000
+                            // Insérer par batch de 20000
                             if (batch.length >= BATCH_SIZE) {
                                 insertBatch(batch);
                                 batch = [];
                             }
-                        } catch (error) {
+                    } catch (error) {
                             // Ignorer les erreurs de contrainte
-                        }
                     }
-                })
-                .on('end', () => {
+                }
+            })
+            .on('end', () => {
                     // Insérer les données restantes
                     if (batch.length > 0) {
                         insertBatch(batch);
@@ -473,12 +473,12 @@ async function loadBDNBData() {
                     // Effacer la ligne de progression et afficher le résultat final
                     process.stdout.write('\r' + ' '.repeat(100) + '\r');
                     console.log(`   ✅ ${count.toLocaleString()} données chargées sur ${linesRead.toLocaleString()} lignes lues`);
-                    resolve();
-                })
+                resolve();
+            })
                 .on('error', (error) => {
                     console.error(`   ❌ Erreur: ${error.message}`);
                     reject(error);
-                });
+    });
         });
     }
     
@@ -503,18 +503,18 @@ async function loadDVFData() {
     // Charger les fichiers DVF séquentiellement
     for (const file of availableFiles) {
         const filePath = path.join(DVF_DIR, file);
-        const year = file.match(/dvf_(\d{4})\.csv/)?.[1];
+            const year = file.match(/dvf_(\d{4})\.csv/)?.[1];
         
-        if (!year) continue;
-        
+            if (!year) continue;
+            
         console.log(`📂 Chargement ${file} (${year})...`);
         
         let count = 0;
         let linesRead = 0;
-        const BATCH_SIZE = 10000;
+        const BATCH_SIZE = 20000;
         let batch = [];
-        
-        await new Promise((resolve, reject) => {
+            
+            await new Promise((resolve, reject) => {
             const stream = fs.createReadStream(filePath);
             const insertStmt = db.prepare(`
                 INSERT INTO dvf_bdnb_complete (
@@ -534,8 +534,8 @@ async function loadDVFData() {
             });
             
             stream
-                .pipe(csv())
-                .on('data', (row) => {
+                    .pipe(csv())
+                    .on('data', (row) => {
                     linesRead++;
                     
                     // Afficher progression tous les 50 000 lignes (sur la même ligne)
@@ -578,7 +578,7 @@ async function loadDVFData() {
                             ]);
                             count++;
                             
-                            // Insérer par batch de 10000
+                            // Insérer par batch de 20000
                             if (batch.length >= BATCH_SIZE) {
                                 insertBatch(batch);
                                 batch = [];
@@ -586,9 +586,9 @@ async function loadDVFData() {
                         } catch (error) {
                             // Ignorer les erreurs de contrainte
                         }
-                    }
-                })
-                .on('end', () => {
+                        }
+                    })
+                    .on('end', () => {
                     // Insérer les données restantes
                     if (batch.length > 0) {
                         insertBatch(batch);
@@ -597,13 +597,13 @@ async function loadDVFData() {
                     // Effacer la ligne de progression et afficher le résultat final
                     process.stdout.write('\r' + ' '.repeat(100) + '\r');
                     console.log(`   ✅ ${count.toLocaleString()} transactions chargées sur ${linesRead.toLocaleString()} lignes lues`);
-                    resolve();
-                })
+                        resolve();
+                    })
                 .on('error', (error) => {
                     console.error(`   ❌ Erreur ${year}: ${error.message}`);
                     reject(error);
                 });
-        });
+            });
     }
     
     console.log('\n✅ Données DVF chargées\n');

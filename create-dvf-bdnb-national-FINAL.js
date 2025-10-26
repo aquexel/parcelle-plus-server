@@ -405,6 +405,12 @@ async function loadBDNBData() {
                 .pipe(csv())
                 .on('data', (row) => {
                     linesRead++;
+                    
+                    // Afficher progression tous les 50 000 lignes
+                    if (linesRead % 50000 === 0) {
+                        console.log(`   📊 ${linesRead.toLocaleString()} lignes lues, ${count.toLocaleString()} données chargées...`);
+                    }
+                    
                     const processedRow = task.processRow(row);
                     if (processedRow) {
                         try {
@@ -514,6 +520,12 @@ async function loadDVFData() {
                 .pipe(csv())
                 .on('data', (row) => {
                     linesRead++;
+                    
+                    // Afficher progression tous les 50 000 lignes
+                    if (linesRead % 50000 === 0) {
+                        console.log(`   📊 ${linesRead.toLocaleString()} lignes lues, ${count.toLocaleString()} transactions chargées...`);
+                    }
+                    
                     const processedRow = processDVFRow(row, year);
                     if (processedRow) {
                         try {

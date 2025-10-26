@@ -406,9 +406,9 @@ async function loadBDNBData() {
                 .on('data', (row) => {
                     linesRead++;
                     
-                    // Afficher progression tous les 50 000 lignes
+                    // Afficher progression tous les 50 000 lignes (sur la même ligne)
                     if (linesRead % 50000 === 0) {
-                        console.log(`   📊 ${linesRead.toLocaleString()} lignes lues, ${count.toLocaleString()} données chargées...`);
+                        process.stdout.write(`\r   📊 ${linesRead.toLocaleString()} lignes lues, ${count.toLocaleString()} données chargées...`);
                     }
                     
                     const processedRow = task.processRow(row);
@@ -463,6 +463,8 @@ async function loadBDNBData() {
                     }
                 })
                 .on('end', () => {
+                    // Effacer la ligne de progression et afficher le résultat final
+                    process.stdout.write('\r' + ' '.repeat(100) + '\r');
                     console.log(`   ✅ ${count.toLocaleString()} données chargées sur ${linesRead.toLocaleString()} lignes lues`);
                     resolve();
                 })
@@ -521,9 +523,9 @@ async function loadDVFData() {
                 .on('data', (row) => {
                     linesRead++;
                     
-                    // Afficher progression tous les 50 000 lignes
+                    // Afficher progression tous les 50 000 lignes (sur la même ligne)
                     if (linesRead % 50000 === 0) {
-                        console.log(`   📊 ${linesRead.toLocaleString()} lignes lues, ${count.toLocaleString()} transactions chargées...`);
+                        process.stdout.write(`\r   📊 ${linesRead.toLocaleString()} lignes lues, ${count.toLocaleString()} transactions chargées...`);
                     }
                     
                     const processedRow = processDVFRow(row, year);
@@ -566,6 +568,8 @@ async function loadDVFData() {
                     }
                 })
                 .on('end', () => {
+                    // Effacer la ligne de progression et afficher le résultat final
+                    process.stdout.write('\r' + ' '.repeat(100) + '\r');
                     console.log(`   ✅ ${count.toLocaleString()} transactions chargées sur ${linesRead.toLocaleString()} lignes lues`);
                     resolve();
                 })

@@ -68,7 +68,6 @@ else
             "batiment_groupe_dpe_representatif_logement.csv"
             "rel_batiment_groupe_parcelle.csv"
             "parcelle.csv"
-            "parcelle_sitadel.csv"
         )
         
         ALL_PRESENT=true
@@ -109,8 +108,30 @@ if [ "$goto_step3" != "true" ]; then
         echo "✅ Archive déjà présente"
         SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
         echo "   Taille : $SIZE"
+    elif [ "$SKIP_DOWNLOAD" = "false" ]; then
+        echo "📥 Téléchargement de l'archive BDNB..."
+        echo "🌐 URL : $BDNB_URL"
+        echo ""
+        
+        # Télécharger l'archive
+        if command -v curl &> /dev/null; then
+            curl -L -o "$BDNB_ARCHIVE" "$BDNB_URL"
+        elif command -v wget &> /dev/null; then
+            wget -O "$BDNB_ARCHIVE" "$BDNB_URL"
+        else
+            echo "❌ ERREUR : curl ou wget requis pour le téléchargement"
+            exit 1
+        fi
+        
+        if [ -f "$BDNB_ARCHIVE" ]; then
+            SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
+            echo "✅ Archive téléchargée ($SIZE)"
+        else
+            echo "❌ ERREUR : Échec du téléchargement"
+            exit 1
+        fi
     else
-        echo "📥 TÉLÉCHARGEMENT DÉSACTIVÉ - Utilisation des CSV existants"
+        echo "📥 TÉLÉCHARGEMENT DÉSACTIVÉ - Vérification des CSV existants"
         echo "🚫 Le script ne téléchargera AUCUNE donnée"
         echo "📂 Vérification des CSV dans : $CSV_DIR"
         echo ""
@@ -121,7 +142,6 @@ if [ "$goto_step3" != "true" ]; then
             "batiment_groupe_dpe_representatif_logement.csv"
             "rel_batiment_groupe_parcelle.csv"
             "parcelle.csv"
-            "parcelle_sitadel.csv"
         )
         
         ALL_PRESENT=true
@@ -138,6 +158,7 @@ if [ "$goto_step3" != "true" ]; then
             echo ""
             echo "❌ ERREUR : Des fichiers CSV sont manquants"
             echo "💡 Solution : Téléchargez manuellement les fichiers manquants ou activez le téléchargement"
+            echo "   Exécutez : sudo ./update-dvf-dpe-database.sh /opt/parcelle-plus false"
             exit 1
         fi
         
@@ -173,6 +194,10 @@ declare -a FILES=(
     "batiment_groupe_dpe_representatif_logement.csv"
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
+)
+
+# Fichier optionnel (pas présent dans toutes les archives BDNB)
+declare -a OPTIONAL_FILES=(
     "parcelle_sitadel.csv"
 )
 
@@ -212,6 +237,40 @@ for i in "${!FILES[@]}"; do
 done
 
 echo "📊 Résultat : $EXTRACTED/$TOTAL fichiers extraits"
+echo ""
+
+# Traiter les fichiers optionnels
+echo "📦 Extraction des fichiers optionnels..."
+for i in "${!OPTIONAL_FILES[@]}"; do
+    FILE="${OPTIONAL_FILES[$i]}"
+    NUM=$((i + 1))
+    
+    echo "[$NUM/${#OPTIONAL_FILES[@]}] 📦 $FILE (optionnel)"
+    
+    # Vérifier si le fichier existe déjà
+    if [ -f "$CSV_DIR/$FILE" ]; then
+        SIZE=$(du -h "$CSV_DIR/$FILE" | cut -f1)
+        echo "        ✅ Déjà présent ($SIZE)"
+        ((EXTRACTED++))
+    else
+        # Essayer d'extraire depuis l'archive
+        EXTRACT_OUTPUT=$(cd "$CSV_DIR" && sudo tar -xzf "../bdnb_france.tar.gz" "./csv/$FILE" --strip-components=2 2>&1)
+        EXTRACT_EXIT=$?
+        
+        # Vérifier si extrait
+        if [ -f "$CSV_DIR/$FILE" ]; then
+            SIZE=$(du -h "$CSV_DIR/$FILE" | cut -f1)
+            echo "        ✅ Extrait ($SIZE)"
+            ((EXTRACTED++))
+        else
+            echo "        ⚠️ Non trouvé dans l'archive (ignoré, fichier optionnel)"
+        fi
+    fi
+    
+    echo ""
+done
+
+echo "📊 Résultat : $EXTRACTED fichiers extraits"
 echo ""
 
 if [ $EXTRACTED -eq 0 ]; then

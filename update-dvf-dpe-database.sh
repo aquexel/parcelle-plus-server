@@ -173,8 +173,6 @@ declare -a FILES=(
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
     "parcelle_sitadel.csv"
-    "rel_parcelle_sitadel.csv"
-    "sitadel.csv"
 )
 
 TOTAL=${#FILES[@]}

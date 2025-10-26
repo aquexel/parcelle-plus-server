@@ -60,9 +60,9 @@ else
 
     mkdir -p "$BDNB_DIR"
 
-    # Vérifier si on peut ignorer le téléchargement
-    if [ "$SKIP_DOWNLOAD" = "true" ] && [ -d "$CSV_DIR" ]; then
-        echo "⚡ Mode rapide activé - Vérification des CSV existants (PAS DE TÉLÉCHARGEMENT)..."
+    # Vérifier si les CSV existent déjà
+    if [ -d "$CSV_DIR" ]; then
+        echo "⚡ Vérification des CSV existants..."
         REQUIRED_FILES=(
             "batiment_groupe.csv"
             "batiment_groupe_dpe_representatif_logement.csv"
@@ -79,27 +79,23 @@ else
         done
         
         if [ "$ALL_PRESENT" = "true" ]; then
-            echo "✅ Tous les fichiers CSV sont présents - Téléchargement ignoré"
-            echo "🚫 AUCUN TÉLÉCHARGEMENT - Utilisation des CSV existants"
-            echo ""
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "📦 ÉTAPE 2/4 : Extraction (ignorée - CSV présents)"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo ""
-            echo "✅ Utilisation des CSV existants"
+            echo "✅ Tous les fichiers CSV sont présents - Utilisation des CSV existants"
             echo ""
             # Passer directement à l'étape 3
             goto_step3=true
         else
-            echo "⚠️  Certains fichiers CSV manquants - Téléchargement nécessaire"
-            echo "📥 Les fichiers suivants seront téléchargés :"
+            echo "⚠️  Certains fichiers CSV manquants - L'archive sera téléchargée et extraite"
+            echo "📥 Les fichiers suivants manquent :"
             for file in "${REQUIRED_FILES[@]}"; do
                 if [ ! -f "$CSV_DIR/$file" ]; then
                     echo "   ❌ $file"
                 fi
             done
-            SKIP_DOWNLOAD=false
+            echo ""
         fi
+    else
+        echo "📁 Le dossier CSV n'existe pas - Téléchargement et extraction nécessaires"
+        echo ""
     fi
 fi
 
@@ -132,6 +128,9 @@ if [ "$goto_step3" != "true" ]; then
         SIZE=$(du -h "$BDNB_ARCHIVE" | cut -f1)
         echo "   Taille : $SIZE"
     fi
+    
+    # Forcer l'extraction même si l'archive existe déjà
+    SKIP_EXTRACTION=false
 fi
 
 echo ""
@@ -314,22 +313,16 @@ echo ""
 echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 
-# Chercher le script corrigé (priorité au script corrigé)
-if [ -f "$PROJECT_DIR/create-database-corrected.js" ]; then
-    SCRIPT_PATH="$PROJECT_DIR/create-database-corrected.js"
-    echo "✅ Utilisation du script corrigé : create-database-corrected.js"
-elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-database-corrected.js" ]; then
-    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-database-corrected.js"
-    echo "✅ Utilisation du script corrigé : create-database-corrected.js"
-elif [ -f "$PROJECT_DIR/create-dvf-dpe-annexes-db-enhanced.js" ]; then
-    SCRIPT_PATH="$PROJECT_DIR/create-dvf-dpe-annexes-db-enhanced.js"
-    echo "⚠️  Utilisation de l'ancien script (create-dvf-dpe-annexes-db-enhanced.js)"
-elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-enhanced.js" ]; then
-    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-dpe-annexes-db-enhanced.js"
-    echo "⚠️  Utilisation de l'ancien script (create-dvf-dpe-annexes-db-enhanced.js)"
+# Chercher le script de création de base DVF+BDNB
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-national-FINAL.js" ]; then
+    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-national-FINAL.js"
+    echo "✅ Utilisation du script : create-dvf-bdnb-national-FINAL.js"
+elif [ -f "$PROJECT_DIR/create-dvf-bdnb-national-FINAL.js" ]; then
+    SCRIPT_PATH="$PROJECT_DIR/create-dvf-bdnb-national-FINAL.js"
+    echo "✅ Utilisation du script : create-dvf-bdnb-national-FINAL.js"
 else
     echo "❌ Aucun script de création de base trouvé"
-    echo "   Cherché : create-database-corrected.js ou create-dvf-dpe-annexes-db-enhanced.js"
+    echo "   Cherché : create-dvf-bdnb-national-FINAL.js"
     exit 1
 fi
 
@@ -337,7 +330,11 @@ echo "🚀 Lancement du script : $SCRIPT_PATH"
 echo "📂 Avec les CSV de : $CSV_DIR"
 echo ""
 
-NODE_OPTIONS="--max-old-space-size=4096" node "$SCRIPT_PATH" "$CSV_DIR"
+# Convertir le chemin CSV en chemin absolu si nécessaire
+CSV_DIR_ABS=$(cd "$CSV_DIR" && pwd)
+DVF_DIR_ABS=$(cd "$PROJECT_DIR/dvf_data" 2>/dev/null && pwd || echo "$PROJECT_DIR/dvf_data")
+
+NODE_OPTIONS="--max-old-space-size=4096" node "$SCRIPT_PATH" "$CSV_DIR_ABS" "$DVF_DIR_ABS"
 
 if [ $? -ne 0 ]; then
     echo ""

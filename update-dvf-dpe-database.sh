@@ -325,6 +325,40 @@ echo ""
 echo "✅ Tous les fichiers CSV sont présents"
 echo ""
 
+# Vérifier les fichiers DVF
+echo "🔍 Vérification des fichiers DVF..."
+DVF_DIR="$PROJECT_DIR/dvf_data"
+mkdir -p "$DVF_DIR"
+
+DVF_FILES=(
+    "dvf_2020.csv"
+    "dvf_2021.csv"
+    "dvf_2022.csv"
+    "dvf_2023.csv"
+    "dvf_2024.csv"
+)
+
+DVF_PRESENT=false
+for file in "${DVF_FILES[@]}"; do
+    if [ -f "$DVF_DIR/$file" ]; then
+        SIZE=$(du -h "$DVF_DIR/$file" | cut -f1)
+        echo "   ✅ $file ($SIZE)"
+        DVF_PRESENT=true
+    fi
+done
+
+if [ "$DVF_PRESENT" = "false" ]; then
+    echo ""
+    echo "⚠️ Aucun fichier DVF trouvé dans $DVF_DIR"
+    echo "💡 Les fichiers DVF doivent être téléchargés manuellement ou fournis"
+    echo "   Placez les fichiers dans : $DVF_DIR"
+    echo ""
+    echo "   Fichiers attendus : dvf_2020.csv, dvf_2021.csv, dvf_2022.csv, dvf_2023.csv, dvf_2024.csv"
+    echo ""
+    exit 1
+fi
+
+echo ""
 echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 

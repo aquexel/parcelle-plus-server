@@ -400,6 +400,30 @@ async function loadBDNBData() {
         let linesRead = 0;
         const stream = fs.createReadStream(task.file);
         
+        // Batch pour optimiser les insertions
+        const BATCH_SIZE = 10000;
+        let batch = [];
+        
+        // Préparer les statements une seule fois
+        let insertStmt;
+        if (task.tableName === 'temp_bdnb_relations') {
+            insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_relations VALUES (?, ?)`);
+        } else if (task.tableName === 'temp_bdnb_batiment') {
+            insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        } else if (task.tableName === 'temp_bdnb_dpe') {
+            insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        } else if (task.tableName === 'temp_bdnb_parcelle') {
+            insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?)`);
+        } else if (task.tableName === 'temp_parcelle_sitadel') {
+            insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_parcelle_sitadel VALUES (?, ?, ?)`);
+        }
+        
+        const insertBatch = db.transaction((items) => {
+            for (const item of items) {
+                insertStmt.run(...item);
+            }
+        });
+        
         await new Promise((resolve, reject) => {
             stream
                 .pipe(csv())
@@ -414,55 +438,38 @@ async function loadBDNBData() {
                     const processedRow = task.processRow(row);
                     if (processedRow) {
                         try {
+                            let params;
                             if (task.tableName === 'temp_bdnb_relations') {
-                                db.prepare(`INSERT OR IGNORE INTO temp_bdnb_relations VALUES (?, ?)`).run(
-                                    processedRow.parcelle_id, 
-                                    processedRow.batiment_groupe_id
-                                );
+                                params = [processedRow.parcelle_id, processedRow.batiment_groupe_id];
                             } else if (task.tableName === 'temp_bdnb_batiment') {
-                                db.prepare(`INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-                                    processedRow.batiment_groupe_id, 
-                                    processedRow.code_commune_insee, 
-                                    processedRow.libelle_commune_insee, 
-                                    processedRow.longitude, 
-                                    processedRow.latitude, 
-                                    processedRow.geom_groupe, 
-                                    processedRow.s_geom_groupe
-                                );
+                                params = [processedRow.batiment_groupe_id, processedRow.code_commune_insee, processedRow.libelle_commune_insee, processedRow.longitude, processedRow.latitude, processedRow.geom_groupe, processedRow.s_geom_groupe];
                             } else if (task.tableName === 'temp_bdnb_dpe') {
-                                db.prepare(`INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-                                    processedRow.batiment_groupe_id, 
-                                    processedRow.classe_dpe, 
-                                    processedRow.orientation_principale, 
-                                    processedRow.pourcentage_vitrage, 
-                                    processedRow.surface_habitable_logement, 
-                                    processedRow.date_etablissement_dpe, 
-                                    processedRow.presence_piscine, 
-                                    processedRow.presence_garage, 
-                                    processedRow.presence_veranda, 
-                                    processedRow.type_dpe, 
-                                    processedRow.dpe_officiel
-                                );
+                                params = [processedRow.batiment_groupe_id, processedRow.classe_dpe, processedRow.orientation_principale, processedRow.pourcentage_vitrage, processedRow.surface_habitable_logement, processedRow.date_etablissement_dpe, processedRow.presence_piscine, processedRow.presence_garage, processedRow.presence_veranda, processedRow.type_dpe, processedRow.dpe_officiel];
                             } else if (task.tableName === 'temp_bdnb_parcelle') {
-                                db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?)`).run(
-                                    processedRow.parcelle_id, 
-                                    processedRow.surface_geom_parcelle, 
-                                    processedRow.geom_parcelle
-                                );
+                                params = [processedRow.parcelle_id, processedRow.surface_geom_parcelle, processedRow.geom_parcelle];
                             } else if (task.tableName === 'temp_parcelle_sitadel') {
-                                db.prepare(`INSERT OR REPLACE INTO temp_parcelle_sitadel VALUES (?, ?, ?)`).run(
-                                    processedRow.parcelle_id, 
-                                    processedRow.indicateur_piscine, 
-                                    processedRow.indicateur_garage
-                                );
+                                params = [processedRow.parcelle_id, processedRow.indicateur_piscine, processedRow.indicateur_garage];
                             }
+                            
+                            batch.push(params);
                             count++;
+                            
+                            // Insérer par batch de 10000
+                            if (batch.length >= BATCH_SIZE) {
+                                insertBatch(batch);
+                                batch = [];
+                            }
                         } catch (error) {
                             // Ignorer les erreurs de contrainte
                         }
                     }
                 })
                 .on('end', () => {
+                    // Insérer les données restantes
+                    if (batch.length > 0) {
+                        insertBatch(batch);
+                    }
+                    
                     // Effacer la ligne de progression et afficher le résultat final
                     process.stdout.write('\r' + ' '.repeat(100) + '\r');
                     console.log(`   ✅ ${count.toLocaleString()} données chargées sur ${linesRead.toLocaleString()} lignes lues`);
@@ -504,6 +511,8 @@ async function loadDVFData() {
         
         let count = 0;
         let linesRead = 0;
+        const BATCH_SIZE = 10000;
+        let batch = [];
         
         await new Promise((resolve, reject) => {
             const stream = fs.createReadStream(filePath);
@@ -518,6 +527,12 @@ async function loadDVFData() {
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
+            const insertBatch = db.transaction((items) => {
+                for (const item of items) {
+                    insertStmt.run(...item);
+                }
+            });
+            
             stream
                 .pipe(csv())
                 .on('data', (row) => {
@@ -531,7 +546,7 @@ async function loadDVFData() {
                     const processedRow = processDVFRow(row, year);
                     if (processedRow) {
                         try {
-                            insertStmt.run(
+                            batch.push([
                                 processedRow.id_mutation,
                                 processedRow.date_mutation,
                                 processedRow.valeur_fonciere,
@@ -560,14 +575,25 @@ async function loadDVFData() {
                                 processedRow.dpe_officiel,
                                 processedRow.surface_habitable_logement,
                                 processedRow.date_etablissement_dpe
-                            );
+                            ]);
                             count++;
+                            
+                            // Insérer par batch de 10000
+                            if (batch.length >= BATCH_SIZE) {
+                                insertBatch(batch);
+                                batch = [];
+                            }
                         } catch (error) {
                             // Ignorer les erreurs de contrainte
                         }
                     }
                 })
                 .on('end', () => {
+                    // Insérer les données restantes
+                    if (batch.length > 0) {
+                        insertBatch(batch);
+                    }
+                    
                     // Effacer la ligne de progression et afficher le résultat final
                     process.stdout.write('\r' + ' '.repeat(100) + '\r');
                     console.log(`   ✅ ${count.toLocaleString()} transactions chargées sur ${linesRead.toLocaleString()} lignes lues`);

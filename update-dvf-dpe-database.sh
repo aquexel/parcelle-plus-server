@@ -66,7 +66,6 @@ else
         REQUIRED_FILES=(
             "batiment_groupe.csv"
             "batiment_groupe_dpe_representatif_logement.csv"
-            "batiment_groupe_dvf_open_representatif.csv"
             "rel_batiment_groupe_parcelle.csv"
             "parcelle.csv"
             "parcelle_sitadel.csv"
@@ -120,7 +119,6 @@ if [ "$goto_step3" != "true" ]; then
         REQUIRED_FILES=(
             "batiment_groupe.csv"
             "batiment_groupe_dpe_representatif_logement.csv"
-            "batiment_groupe_dvf_open_representatif.csv"
             "rel_batiment_groupe_parcelle.csv"
             "parcelle.csv"
             "parcelle_sitadel.csv"
@@ -172,7 +170,6 @@ fi
 declare -a FILES=(
     "batiment_groupe.csv"
     "batiment_groupe_dpe_representatif_logement.csv"
-    "batiment_groupe_dvf_open_representatif.csv"
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
     "parcelle_sitadel.csv"
@@ -259,7 +256,6 @@ echo "🔍 Vérification des fichiers CSV nécessaires..."
 REQUIRED_FILES=(
     "batiment_groupe.csv"
     "batiment_groupe_dpe_representatif_logement.csv"
-    "batiment_groupe_dvf_open_representatif.csv"
     "rel_batiment_groupe_parcelle.csv"
     "parcelle.csv"
     "parcelle_sitadel.csv"

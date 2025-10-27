@@ -143,6 +143,10 @@ db.exec(`
     CREATE INDEX IF NOT EXISTS idx_dvf_date ON dvf_bdnb_complete(date_mutation) WHERE date_mutation IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_relations_parcelle ON temp_bdnb_relations(parcelle_id);
     CREATE INDEX IF NOT EXISTS idx_relations_batiment ON temp_bdnb_relations(batiment_groupe_id);
+    CREATE INDEX IF NOT EXISTS idx_dpe_batiment ON temp_bdnb_dpe(batiment_groupe_id);
+    CREATE INDEX IF NOT EXISTS idx_batiment_id ON temp_bdnb_batiment(batiment_groupe_id);
+    CREATE INDEX IF NOT EXISTS idx_parcelle_id ON temp_bdnb_parcelle(parcelle_id);
+    CREATE INDEX IF NOT EXISTS idx_sitadel_parcelle ON temp_parcelle_sitadel(parcelle_id);
 `);
 
 console.log('✅ Base de données créée\n');

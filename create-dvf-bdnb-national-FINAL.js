@@ -48,6 +48,7 @@ db.exec(`
     DROP TABLE IF EXISTS dvf_bdnb_complete;
     CREATE TABLE dvf_bdnb_complete (
         id_mutation TEXT,
+        row_id INTEGER PRIMARY KEY AUTOINCREMENT,
         date_mutation TEXT,
         valeur_fonciere REAL,
         code_commune TEXT,

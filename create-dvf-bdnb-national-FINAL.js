@@ -251,7 +251,6 @@ function insertDVFBatch(transactions) {
                 row.pourcentage_vitrage,
                 0, // presence_piscine
                 0, // presence_garage
-                0, // presence_veranda
                 row.type_dpe,
                 row.dpe_officiel,
                 row.surface_habitable_logement,
@@ -321,7 +320,6 @@ async function loadBDNBData() {
                 const dateEtablissementDpe = normalizeDate(row.date_etablissement_dpe?.trim()) || null;
                 const presencePiscine = parseInt(row.presence_piscine) || 0;
                 const presenceGarage = parseInt(row.presence_garage) || 0;
-                const presenceVeranda = parseInt(row.presence_veranda) || 0;
                 const typeDpe = row.type_dpe?.trim();
                 const isDpeOfficiel = typeDpe === 'DPE' || !typeDpe;
                 
@@ -335,7 +333,6 @@ async function loadBDNBData() {
                         date_etablissement_dpe: dateEtablissementDpe,
                         presence_piscine: presencePiscine,
                         presence_garage: presenceGarage,
-                        presence_veranda: presenceVeranda,
                         type_dpe: typeDpe,
                         dpe_officiel: isDpeOfficiel ? 1 : 0
                     };
@@ -445,7 +442,7 @@ async function loadBDNBData() {
                             } else if (task.tableName === 'temp_bdnb_batiment') {
                                 params = [processedRow.batiment_groupe_id, processedRow.code_commune_insee, processedRow.libelle_commune_insee, processedRow.longitude, processedRow.latitude, processedRow.geom_groupe, processedRow.s_geom_groupe];
                             } else if (task.tableName === 'temp_bdnb_dpe') {
-                                params = [processedRow.batiment_groupe_id, processedRow.classe_dpe, processedRow.orientation_principale, processedRow.pourcentage_vitrage, processedRow.surface_habitable_logement, processedRow.date_etablissement_dpe, processedRow.presence_piscine, processedRow.presence_garage, processedRow.presence_veranda, processedRow.type_dpe, processedRow.dpe_officiel];
+                                params = [processedRow.batiment_groupe_id, processedRow.classe_dpe, processedRow.orientation_principale, processedRow.pourcentage_vitrage, processedRow.surface_habitable_logement, processedRow.date_etablissement_dpe, processedRow.presence_piscine, processedRow.presence_garage, processedRow.type_dpe, processedRow.dpe_officiel];
                             } else if (task.tableName === 'temp_bdnb_parcelle') {
                                 params = [processedRow.parcelle_id, processedRow.surface_geom_parcelle, processedRow.geom_parcelle];
                             } else if (task.tableName === 'temp_parcelle_sitadel') {
@@ -529,8 +526,8 @@ async function loadDVFData() {
                     nature_culture, surface_terrain, longitude, latitude, annee_source,
                     prix_m2_bati, prix_m2_terrain, id_parcelle, batiment_groupe_id, classe_dpe,
                     orientation_principale, pourcentage_vitrage, presence_piscine, presence_garage,
-                    presence_veranda, type_dpe, dpe_officiel, surface_habitable_logement, date_etablissement_dpe
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    type_dpe, dpe_officiel, surface_habitable_logement, date_etablissement_dpe
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             const insertBatch = db.transaction((items) => {
@@ -576,7 +573,6 @@ async function loadDVFData() {
                                 processedRow.pourcentage_vitrage,
                                 processedRow.presence_piscine,
                                 processedRow.presence_garage,
-                                processedRow.presence_veranda,
                                 processedRow.type_dpe,
                                 processedRow.dpe_officiel,
                                 processedRow.surface_habitable_logement,
@@ -917,14 +913,6 @@ async function testJoin() {
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
-                presence_veranda = (
-                    SELECT dpe.presence_veranda 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.presence_veranda IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                ),
                 type_dpe = (
                     SELECT dpe.type_dpe 
                     FROM temp_bdnb_dpe dpe
@@ -983,7 +971,6 @@ function showStats() {
             COUNT(CASE WHEN pourcentage_vitrage IS NOT NULL THEN 1 END) as avec_vitrage,
             COUNT(CASE WHEN presence_piscine = 1 THEN 1 END) as avec_piscine,
             COUNT(CASE WHEN presence_garage = 1 THEN 1 END) as avec_garage,
-            COUNT(CASE WHEN presence_veranda = 1 THEN 1 END) as avec_veranda,
             COUNT(CASE WHEN longitude IS NOT NULL AND latitude IS NOT NULL THEN 1 END) as avec_coords,
             COUNT(CASE WHEN surface_reelle_bati IS NOT NULL THEN 1 END) as avec_surface_bati,
             COUNT(CASE WHEN type_local = 'Maison' THEN 1 END) as maisons,

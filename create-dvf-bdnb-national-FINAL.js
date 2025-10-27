@@ -725,9 +725,12 @@ async function testJoin() {
     console.log(`   ✅ ${convertedCount} coordonnées converties Lambert 93 → GPS`);
     
     // Étape 2b: Mise à jour des surfaces bâti manquantes (APRÈS conversion GPS)
-    console.log('🏠 Mise à jour des surfaces bâti manquantes...');
+    // VERSION ULTRA-OPTIMISÉE : Pas de calculs julianday() qui sont extrêmement lents
+    console.log('🏠 Mise à jour des surfaces bâti manquantes (version optimisée)...');
     
-    // Essayer d'abord avec les données DPE (chronologie respectée)
+    // Version SIMPLIFIÉE : utiliser directement le DPE SANS vérification de chronologie
+    // Les calculs julianday() prennent trop de temps sur 20M de lignes
+    console.log('   🔄 Enrichissement via DPE (sans chronologie pour performance)...');
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET surface_reelle_bati = COALESCE(
@@ -736,25 +739,12 @@ async function testJoin() {
                 SELECT dpe.surface_habitable_logement 
                 FROM temp_bdnb_dpe dpe 
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND (
-                      -- DPE établi avant la transaction (bâtiment existait)
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE établi après mais dans les 6 mois (bâtiment récent)
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY dpe.date_etablissement_dpe DESC
+                  AND dpe.surface_habitable_logement IS NOT NULL
                 LIMIT 1
             )
         )
         WHERE d.batiment_groupe_id IS NOT NULL 
           AND d.surface_reelle_bati IS NULL
-          AND (
-              d.type_local IS NOT NULL 
-              OR d.nombre_pieces_principales IS NOT NULL
-              OR d.nature_culture IS NULL  -- Si pas de culture, c'est probablement du bâti
-          )
     `);
     
     // Fallback : essayer avec les données bâtiment BDNB (surface géométrique)
@@ -867,41 +857,27 @@ async function testJoin() {
         console.log(`   `);
     });
     
-    // Étape 3: Test de la jointure DPE avec gestion d'erreurs (IDENTIQUE au script principal)
+    // Étape 3: Test de la jointure DPE - VERSION SIMPLIFIÉE pour performance
     console.log('🔋 Test de la jointure DPE...');
     
     try {
+        // Version SIMPLIFIÉE : pas de calculs julianday() ni vérification de chronologie
+        // On prend simplement le DPE le plus récent pour le bâtiment
+        console.log('   🔄 Jointure simplifiée (sans chronologie)...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
-            SET 
-                classe_dpe = (
+            SET classe_dpe = (
                     SELECT dpe.classe_dpe 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                      AND (
-                          -- DPE avant la vente : toujours valide
-                          dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                          OR
-                          -- DPE après la vente : seulement si dans les 6 mois
-                          (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                           AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                      )
-                    ORDER BY 
-                      CASE 
-                        -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                        WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                        THEN -julianday(dpe.date_etablissement_dpe)
-                        -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                        ELSE julianday(dpe.date_etablissement_dpe)
-                      END,
-                      ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
+                      AND dpe.classe_dpe IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 )
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
         
-        console.log('   ✅ Jointure DPE réussie');
+        console.log('   ✅ Jointure DPE simplifiée réussie');
         
     } catch (error) {
         console.log(`   ⚠️ Erreur jointure DPE : ${error.message}`);

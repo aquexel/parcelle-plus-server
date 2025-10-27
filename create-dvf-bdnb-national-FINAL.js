@@ -861,13 +861,13 @@ async function testJoin() {
         console.log(`   `);
     });
     
-    // Étape 3: Test de la jointure DPE - VERSION SIMPLIFIÉE pour performance
+    // Étape 3: Test de la jointure DPE - VERSION OPTIMISÉE avec chronologie simplifiée
     console.log('🔋 Test de la jointure DPE...');
     
     try {
-        // Version SIMPLIFIÉE : pas de calculs julianday() ni vérification de chronologie
-        // On prend simplement le DPE le plus récent pour le bâtiment
-        console.log('   🔄 Jointure simplifiée (sans chronologie)...');
+        // Version OPTIMISÉE : vérification de chronologie MAIS simplifiée (pas de julianday)
+        // On prend le DPE le plus récent mais seulement s'il est dans un délai raisonnable
+        console.log('   🔄 Jointure avec chronologie simplifiée...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
             SET classe_dpe = (
@@ -875,6 +875,12 @@ async function testJoin() {
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
                       AND dpe.classe_dpe IS NOT NULL
+                      -- Chronologie simplifiée : DPE avant la vente OU dans les 2 ans après
+                      AND (
+                          dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
+                          OR
+                          dpe.date_etablissement_dpe <= date(COALESCE(d.date_mutation, d.annee_source || '-12-31'), '+2 years')
+                      )
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 )
@@ -883,7 +889,7 @@ async function testJoin() {
         
         console.log('   ✅ Jointure DPE classe réussie');
         
-        // Jointure des autres colonnes DPE (orientation, vitrage, etc.)
+        // Jointure des autres colonnes DPE (orientation, vitrage, etc.) avec même filtre chronologique
         console.log('   🔄 Enrichissement des autres champs DPE...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
@@ -893,6 +899,11 @@ async function testJoin() {
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
                       AND dpe.orientation_principale IS NOT NULL
+                      AND (
+                          dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
+                          OR
+                          dpe.date_etablissement_dpe <= date(COALESCE(d.date_mutation, d.annee_source || '-12-31'), '+2 years')
+                      )
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),

@@ -881,75 +881,18 @@ async function testJoin() {
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
         
-        console.log('   ✅ Jointure DPE simplifiée réussie');
+        console.log('   ✅ Jointure DPE classe réussie');
         
-    } catch (error) {
-        console.log(`   ⚠️ Erreur jointure DPE : ${error.message}`);
-        
-        // Analyser les données problématiques
-        console.log('   🔍 Analyse des données problématiques...');
-        
-        // Trouver des transactions avec des valeurs NULL - TOUTES les infos DVF
-        const problematicTransactions = db.prepare(`
-            SELECT 
-                id_mutation, date_mutation, valeur_fonciere, code_commune, nom_commune,
-                code_departement, type_local, surface_reelle_bati, nombre_pieces_principales,
-                nature_culture, surface_terrain, longitude, latitude, annee_source,
-                prix_m2_bati, prix_m2_terrain, id_parcelle, batiment_groupe_id
-            FROM dvf_bdnb_complete 
-            WHERE batiment_groupe_id IS NOT NULL 
-              AND (date_mutation IS NULL OR surface_reelle_bati IS NULL)
-            LIMIT 3
-        `).all();
-        
-        console.log(`   📊 ${problematicTransactions.length} transactions problématiques trouvées :`);
-        problematicTransactions.forEach((tx, i) => {
-            console.log(`   ${i+1}. === TRANSACTION DVF COMPLÈTE ===`);
-            console.log(`      🆔 ID: ${tx.id_mutation}`);
-            console.log(`      📅 Date: ${tx.date_mutation || 'NULL'} | Année: ${tx.annee_source}`);
-            console.log(`      💰 Prix: ${tx.valeur_fonciere || 'NULL'}€ | Prix/m²: ${tx.prix_m2_bati || 'NULL'}€`);
-            console.log(`      🏠 Type: ${tx.type_local || 'NULL'} | Pièces: ${tx.nombre_pieces_principales || 'NULL'}`);
-            console.log(`      📐 Surface bâti: ${tx.surface_reelle_bati || 'NULL'}m² | Surface terrain: ${tx.surface_terrain || 'NULL'}m²`);
-            console.log(`      📍 Commune: ${tx.nom_commune || 'NULL'} (${tx.code_commune || 'NULL'}) | Département: ${tx.code_departement || 'NULL'}`);
-            console.log(`      🌍 GPS: ${tx.longitude || 'NULL'}, ${tx.latitude || 'NULL'}`);
-            console.log(`      🏗️ Parcelle: ${tx.id_parcelle || 'NULL'} | Bâtiment: ${tx.batiment_groupe_id || 'NULL'}`);
-            console.log(`      🌾 Culture: ${tx.nature_culture || 'NULL'}`);
-            console.log(`   `);
-        });
-        
-        // Trouver des DPE correspondants
-        if (problematicTransactions.length > 0) {
-            const batimentId = problematicTransactions[0].batiment_groupe_id;
-            const correspondingDPE = db.prepare(`
-                SELECT batiment_groupe_id, classe_dpe, surface_habitable_logement, date_etablissement_dpe
-                FROM temp_bdnb_dpe 
-                WHERE batiment_groupe_id = ?
-                LIMIT 3
-            `).all(batimentId);
-            
-            console.log(`   🏠 DPE correspondants pour bâtiment ${batimentId} :`);
-            correspondingDPE.forEach((dpe, i) => {
-                console.log(`   ${i+1}. Classe: ${dpe.classe_dpe} | Surface: ${dpe.surface_habitable_logement} | Date: ${dpe.date_etablissement_dpe}`);
-            });
-        }
-        
-        console.log('   🔄 Tentative de jointure simplifiée...');
-        
-        // Fallback simplifié (sans contrainte de surface) - TOUTES les colonnes DPE
+        // Jointure des autres colonnes DPE (orientation, vitrage, etc.)
+        console.log('   🔄 Enrichissement des autres champs DPE...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
             SET 
-                classe_dpe = (
-                    SELECT dpe.classe_dpe 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                ),
                 orientation_principale = (
                     SELECT dpe.orientation_principale 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.orientation_principale IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -957,6 +900,7 @@ async function testJoin() {
                     SELECT dpe.pourcentage_vitrage 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.pourcentage_vitrage IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -964,6 +908,7 @@ async function testJoin() {
                     SELECT dpe.presence_piscine 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_piscine IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -971,6 +916,7 @@ async function testJoin() {
                     SELECT dpe.presence_garage 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_garage IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -978,6 +924,7 @@ async function testJoin() {
                     SELECT dpe.presence_veranda 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_veranda IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -985,6 +932,7 @@ async function testJoin() {
                     SELECT dpe.type_dpe 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.type_dpe IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -992,6 +940,7 @@ async function testJoin() {
                     SELECT dpe.dpe_officiel 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.dpe_officiel IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -999,6 +948,7 @@ async function testJoin() {
                     SELECT dpe.surface_habitable_logement 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.surface_habitable_logement IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
@@ -1006,13 +956,18 @@ async function testJoin() {
                     SELECT dpe.date_etablissement_dpe 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.date_etablissement_dpe IS NOT NULL
                     ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 )
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
         
-        console.log('   ✅ Jointure DPE simplifiée réussie');
+        console.log('   ✅ Enrichissement DPE complet');
+        
+    } catch (error) {
+        console.log(`   ⚠️ Erreur jointure DPE : ${error.message}`);
+        console.log('   ⚠️ Jointure DPE échouée mais le script continue');
     }
     
     console.log('\n✅ Tests de jointure terminés\n');

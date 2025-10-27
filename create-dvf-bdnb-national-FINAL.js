@@ -47,7 +47,7 @@ db.pragma('temp_store = MEMORY');
 db.exec(`
     DROP TABLE IF EXISTS dvf_bdnb_complete;
     CREATE TABLE dvf_bdnb_complete (
-        id_mutation TEXT PRIMARY KEY,
+        id_mutation TEXT,
         date_mutation TEXT,
         valeur_fonciere REAL,
         code_commune TEXT,
@@ -72,7 +72,6 @@ db.exec(`
         pourcentage_vitrage REAL,
         presence_piscine INTEGER DEFAULT 0,
         presence_garage INTEGER DEFAULT 0,
-        presence_veranda INTEGER DEFAULT 0,
         type_dpe TEXT,
         dpe_officiel INTEGER DEFAULT 1,
         surface_habitable_logement REAL,
@@ -103,7 +102,6 @@ db.exec(`
         date_etablissement_dpe TEXT,
         presence_piscine INTEGER DEFAULT 0,
         presence_garage INTEGER DEFAULT 0,
-        presence_veranda INTEGER DEFAULT 0,
         type_dpe TEXT,
         dpe_officiel INTEGER DEFAULT 1
     )
@@ -212,7 +210,6 @@ function processDVFRow(row, year) {
         pourcentage_vitrage: null,
         presence_piscine: 0,
         presence_garage: 0,
-        presence_veranda: 0,
         type_dpe: null,
         dpe_officiel: 1,
         surface_habitable_logement: null,
@@ -526,7 +523,7 @@ async function loadDVFData() {
             await new Promise((resolve, reject) => {
             const stream = fs.createReadStream(filePath);
             const insertStmt = db.prepare(`
-                INSERT OR REPLACE INTO dvf_bdnb_complete (
+                INSERT INTO dvf_bdnb_complete (
                     id_mutation, date_mutation, valeur_fonciere, code_commune, nom_commune,
                     code_departement, type_local, surface_reelle_bati, nombre_pieces_principales,
                     nature_culture, surface_terrain, longitude, latitude, annee_source,

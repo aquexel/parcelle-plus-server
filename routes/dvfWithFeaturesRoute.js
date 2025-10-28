@@ -8,7 +8,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'database', 'dvf_avec_dpe_et_annexes.db');
+const DB_PATH = path.join(__dirname, '..', 'database', 'dvf_bdnb_complete.db');
 
 /**
  * Calcule la distance entre deux points GPS (formule de Haversine)
@@ -45,7 +45,6 @@ module.exports = (req, res) => {
         const classeDPE = req.query.classe_dpe ? req.query.classe_dpe.split(',') : null;
         const avecPiscine = req.query.avec_piscine ? parseInt(req.query.avec_piscine) : null;
         const avecGarage = req.query.avec_garage ? parseInt(req.query.avec_garage) : null;
-        const avecVeranda = req.query.avec_veranda ? parseInt(req.query.avec_veranda) : null;
         const limit = parseInt(req.query.limit) || 100;
         
         // Validation
@@ -89,10 +88,9 @@ module.exports = (req, res) => {
                 id_mutation,
                 valeur_fonciere,
                 date_mutation,
-                surface_bati_maison,
-                surface_bati_appartement,
+                surface_reelle_bati,
                 surface_terrain,
-                nb_pieces,
+                nombre_pieces_principales,
                 latitude,
                 longitude,
                 code_departement,
@@ -100,11 +98,10 @@ module.exports = (req, res) => {
                 classe_dpe,
                 presence_piscine,
                 presence_garage,
-                presence_veranda,
-                type_bien,
+                type_local as type_bien,
                 prix_m2_bati,
                 prix_m2_terrain
-            FROM dvf_avec_dpe_et_annexes
+            FROM dvf_bdnb_complete
             WHERE latitude BETWEEN ? AND ?
               AND longitude BETWEEN ? AND ?
               AND date_mutation >= ?
@@ -115,17 +112,17 @@ module.exports = (req, res) => {
         
         // Filtres optionnels
         if (typeBien) {
-            query += ` AND type_bien = ?`;
+            query += ` AND type_local = ?`;
             params.push(typeBien);
         }
         
         if (minSurface !== null) {
-            query += ` AND (surface_bati_maison + surface_bati_appartement) >= ?`;
+            query += ` AND surface_reelle_bati >= ?`;
             params.push(minSurface);
         }
         
         if (maxSurface !== null) {
-            query += ` AND (surface_bati_maison + surface_bati_appartement) <= ?`;
+            query += ` AND surface_reelle_bati <= ?`;
             params.push(maxSurface);
         }
         
@@ -145,11 +142,6 @@ module.exports = (req, res) => {
             params.push(avecGarage);
         }
         
-        if (avecVeranda !== null) {
-            query += ` AND presence_veranda = ?`;
-            params.push(avecVeranda);
-        }
-        
         query += ` LIMIT ?`;
         params.push(limit * 2); // Récupérer plus pour filtrer par distance ensuite
         
@@ -161,8 +153,13 @@ module.exports = (req, res) => {
         const transactions = rows
             .map(row => {
                 const distance = calculateDistance(lat, lon, row.latitude, row.longitude);
+                // Mapper les champs pour compatibilité avec l'application Android
+                const surfaceBati = row.surface_reelle_bati || 0;
                 return {
                     ...row,
+                    nb_pieces: row.nombre_pieces_principales,
+                    surface_bati_maison: row.type_bien === 'Maison' ? surfaceBati : 0,
+                    surface_bati_appartement: row.type_bien === 'Appartement' ? surfaceBati : 0,
                     distance_meters: Math.round(distance)
                 };
             })
@@ -176,7 +173,7 @@ module.exports = (req, res) => {
             .filter(p => p !== null && p > 0);
         
         const surfacesBati = transactions
-            .map(t => (t.surface_bati_maison || 0) + (t.surface_bati_appartement || 0))
+            .map(t => t.surface_reelle_bati || 0)
             .filter(s => s > 0);
         
         const statistics = {
@@ -191,8 +188,7 @@ module.exports = (req, res) => {
                 : null,
             count_with_dpe: transactions.filter(t => t.classe_dpe !== null).length,
             count_with_piscine: transactions.filter(t => t.presence_piscine === 1).length,
-            count_with_garage: transactions.filter(t => t.presence_garage === 1).length,
-            count_with_veranda: transactions.filter(t => t.presence_veranda === 1).length
+            count_with_garage: transactions.filter(t => t.presence_garage === 1).length
         };
         
         db.close();
@@ -209,8 +205,7 @@ module.exports = (req, res) => {
                 max_surface: maxSurface,
                 classe_dpe: classeDPE,
                 avec_piscine: avecPiscine,
-                avec_garage: avecGarage,
-                avec_veranda: avecVeranda
+                avec_garage: avecGarage
             },
             transactions,
             statistics

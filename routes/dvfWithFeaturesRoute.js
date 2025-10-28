@@ -99,6 +99,8 @@ module.exports = (req, res) => {
                 presence_piscine,
                 presence_garage,
                 type_local as type_bien,
+                orientation_principale,
+                pourcentage_vitrage,
                 CASE 
                     WHEN prix_m2_bati IS NOT NULL THEN prix_m2_bati
                     WHEN surface_reelle_bati > 0 THEN valeur_fonciere / surface_reelle_bati

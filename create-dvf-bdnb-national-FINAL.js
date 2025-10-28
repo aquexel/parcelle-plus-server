@@ -120,7 +120,8 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS temp_bdnb_parcelle (
         parcelle_id TEXT PRIMARY KEY,
         surface_geom_parcelle REAL,
-        geom_parcelle TEXT
+        longitude REAL,
+        latitude REAL
     )
 `);
 
@@ -350,12 +351,17 @@ async function loadBDNBData() {
                 const surfaceGeomParcelle = parseFloat(row.s_geom_parcelle) || null;
                 const geomParcelle = row.geom_parcelle?.trim() || null;
                 
-                if (parcelleId) {
-                    return {
-                        parcelle_id: parcelleId,
-                        surface_geom_parcelle: surfaceGeomParcelle,
-                        geom_parcelle: geomParcelle
-                    };
+                if (parcelleId && geomParcelle) {
+                    // Calculer le centre directement pour éviter de stocker le MULTIPOLYGON complet
+                    const center = getCenterFromWKT(geomParcelle);
+                    if (center) {
+                        return {
+                            parcelle_id: parcelleId,
+                            surface_geom_parcelle: surfaceGeomParcelle,
+                            longitude: center.longitude,
+                            latitude: center.latitude
+                        };
+                    }
                 }
                 return null;
             }
@@ -412,7 +418,7 @@ async function loadBDNBData() {
         } else if (task.tableName === 'temp_bdnb_dpe') {
             insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         } else if (task.tableName === 'temp_bdnb_parcelle') {
-            insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?)`);
+            insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?, ?)`);
         } else if (task.tableName === 'temp_parcelle_sitadel') {
             insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_parcelle_sitadel VALUES (?, ?, ?)`);
         }
@@ -445,7 +451,7 @@ async function loadBDNBData() {
                             } else if (task.tableName === 'temp_bdnb_dpe') {
                                 params = [processedRow.batiment_groupe_id, processedRow.classe_dpe, processedRow.orientation_principale, processedRow.pourcentage_vitrage, processedRow.surface_habitable_logement, processedRow.date_etablissement_dpe, processedRow.presence_piscine, processedRow.presence_garage, processedRow.type_dpe, processedRow.dpe_officiel];
                             } else if (task.tableName === 'temp_bdnb_parcelle') {
-                                params = [processedRow.parcelle_id, processedRow.surface_geom_parcelle, processedRow.geom_parcelle];
+                                params = [processedRow.parcelle_id, processedRow.surface_geom_parcelle, processedRow.longitude, processedRow.latitude];
                             } else if (task.tableName === 'temp_parcelle_sitadel') {
                                 params = [processedRow.parcelle_id, processedRow.indicateur_piscine, processedRow.indicateur_garage];
                             }
@@ -697,15 +703,18 @@ async function testJoin() {
         // Si pas de bâtiment, essayer avec la parcelle (un seul point représentatif)
         if (!gpsCoords && transaction.id_parcelle) {
             const parcelle = db.prepare(`
-                SELECT geom_parcelle 
+                SELECT longitude, latitude 
                 FROM temp_bdnb_parcelle 
-                WHERE parcelle_id = ? AND geom_parcelle IS NOT NULL
+                WHERE parcelle_id = ? AND longitude IS NOT NULL AND latitude IS NOT NULL
                 LIMIT 1
             `).get(transaction.id_parcelle);
             
-            if (parcelle && parcelle.geom_parcelle) {
-                // Prendre le centre de la parcelle (un seul point représentatif)
-                gpsCoords = getCenterFromWKT(parcelle.geom_parcelle);
+            if (parcelle && parcelle.longitude && parcelle.latitude) {
+                // Coordonnées GPS déjà calculées (centre de la parcelle)
+                gpsCoords = {
+                    longitude: parcelle.longitude,
+                    latitude: parcelle.latitude
+                };
             }
         }
         

@@ -1005,7 +1005,6 @@ function showStats() {
     console.log(`   🪟 Vitrage : ${stats.avec_vitrage.toLocaleString()} (${(stats.avec_vitrage / stats.total_transactions * 100).toFixed(1)}%)`);
     console.log(`   🏊 Piscine : ${stats.avec_piscine.toLocaleString()} (${(stats.avec_piscine / stats.total_transactions * 100).toFixed(1)}%)`);
     console.log(`   🚗 Garage : ${stats.avec_garage.toLocaleString()} (${(stats.avec_garage / stats.total_transactions * 100).toFixed(1)}%)`);
-    console.log(`   🏠 Véranda : ${stats.avec_veranda.toLocaleString()} (${(stats.avec_veranda / stats.total_transactions * 100).toFixed(1)}%)`);
     
     console.log(`\n🏘️ Répartition par type de bien :`);
     console.log(`   🏠 Maisons : ${stats.maisons.toLocaleString()}`);

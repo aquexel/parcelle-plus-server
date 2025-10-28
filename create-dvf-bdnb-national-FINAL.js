@@ -722,6 +722,11 @@ async function testJoin() {
     
     console.log(`   ✅ ${convertedCount} coordonnées converties Lambert 93 → GPS`);
     
+    // Supprimer la table temp_bdnb_parcelle pour libérer de l'espace (12GB)
+    console.log('🗑️  Suppression de temp_bdnb_parcelle pour libérer de l\'espace...');
+    db.exec('DROP TABLE IF EXISTS temp_bdnb_parcelle');
+    console.log('   ✅ Table temp_bdnb_parcelle supprimée');
+    
     // Étape 2b: Mise à jour des surfaces bâti manquantes (APRÈS conversion GPS)
     // VERSION ULTRA-OPTIMISÉE : Pas de calculs julianday() qui sont extrêmement lents
     console.log('🏠 Mise à jour des surfaces bâti manquantes (version optimisée)...');
@@ -1013,6 +1018,19 @@ function showStats() {
     console.log(`   🏢 Bâtiments : ${bdnbStats.batiments.toLocaleString()}`);
     console.log(`   🔋 DPE : ${bdnbStats.dpe.toLocaleString()}`);
     
+    // Supprimer toutes les tables temporaires BDNB pour libérer de l'espace
+    console.log('\n🗑️  Suppression des tables temporaires BDNB...');
+    db.exec('DROP TABLE IF EXISTS temp_bdnb_relations');
+    db.exec('DROP TABLE IF EXISTS temp_bdnb_batiment');
+    db.exec('DROP TABLE IF EXISTS temp_bdnb_dpe');
+    db.exec('DROP TABLE IF EXISTS temp_parcelle_sitadel');
+    console.log('   ✅ Tables temporaires supprimées\n');
+    
+    // Compression SQLite avec VACUUM
+    console.log('🗜️  Compression de la base de données...');
+    db.exec('VACUUM');
+    console.log('   ✅ Base compressée');
+    
     const dbStats = fs.statSync(DB_FILE);
     const sizeMB = (dbStats.size / 1024 / 1024).toFixed(1);
     console.log(`\n💾 Base créée : ${sizeMB} MB`);
@@ -1036,6 +1054,11 @@ async function runTest() {
         
         const endTime = Date.now();
         const duration = ((endTime - startTime) / 1000).toFixed(1);
+        
+        // Compresser la base SQLite pour libérer de l'espace
+        console.log('🗜️  Compression de la base SQLite...');
+        db.exec('VACUUM');
+        console.log('✅ Base compressée\n');
         
         console.log(`🎉 === TEST TERMINÉ ===`);
         console.log(`⏱️ Durée : ${duration}s`);

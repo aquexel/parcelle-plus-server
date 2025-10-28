@@ -99,7 +99,11 @@ module.exports = (req, res) => {
                 presence_piscine,
                 presence_garage,
                 type_local as type_bien,
-                prix_m2_bati,
+                CASE 
+                    WHEN prix_m2_bati IS NOT NULL THEN prix_m2_bati
+                    WHEN surface_reelle_bati > 0 THEN valeur_fonciere / surface_reelle_bati
+                    ELSE NULL
+                END as prix_m2_bati,
                 prix_m2_terrain
             FROM dvf_bdnb_complete
             WHERE latitude BETWEEN ? AND ?

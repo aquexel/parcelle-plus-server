@@ -731,10 +731,9 @@ async function testJoin() {
     
     console.log(`   ✅ ${convertedCount} coordonnées converties Lambert 93 → GPS`);
     
-    // Supprimer la table temp_bdnb_parcelle pour libérer de l'espace (12GB)
-    console.log('🗑️  Suppression de temp_bdnb_parcelle pour libérer de l\'espace...');
-    db.exec('DROP TABLE IF EXISTS temp_bdnb_parcelle');
-    console.log('   ✅ Table temp_bdnb_parcelle supprimée');
+    // Note: temp_bdnb_parcelle est maintenant beaucoup plus légère (~200MB) car elle contient
+    // seulement le centre (longitude, latitude) au lieu du MULTIPOLYGON complet (12GB)
+    // On garde donc les tables temporaires car le risque d'espace disque est minimal
     
     // Étape 2b: Mise à jour des surfaces bâti manquantes (APRÈS conversion GPS)
     // VERSION ULTRA-OPTIMISÉE : Pas de calculs julianday() qui sont extrêmement lents
@@ -1027,13 +1026,8 @@ function showStats() {
     console.log(`   🏢 Bâtiments : ${bdnbStats.batiments.toLocaleString()}`);
     console.log(`   🔋 DPE : ${bdnbStats.dpe.toLocaleString()}`);
     
-    // Supprimer toutes les tables temporaires BDNB pour libérer de l'espace
-    console.log('\n🗑️  Suppression des tables temporaires BDNB...');
-    db.exec('DROP TABLE IF EXISTS temp_bdnb_relations');
-    db.exec('DROP TABLE IF EXISTS temp_bdnb_batiment');
-    db.exec('DROP TABLE IF EXISTS temp_bdnb_dpe');
-    db.exec('DROP TABLE IF EXISTS temp_parcelle_sitadel');
-    console.log('   ✅ Tables temporaires supprimées\n');
+    // Note: Les tables temporaires ne sont plus supprimées car temp_bdnb_parcelle
+    // est maintenant très légère (~200MB au lieu de 12GB). Conservées pour analyse/debug.
     
     // Compression SQLite avec VACUUM
     console.log('🗜️  Compression de la base de données...');

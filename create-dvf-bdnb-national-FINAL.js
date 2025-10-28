@@ -410,7 +410,7 @@ async function loadBDNBData() {
         } else if (task.tableName === 'temp_bdnb_batiment') {
             insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?)`);
         } else if (task.tableName === 'temp_bdnb_dpe') {
-            insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+            insertStmt = db.prepare(`INSERT OR IGNORE INTO temp_bdnb_dpe VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         } else if (task.tableName === 'temp_bdnb_parcelle') {
             insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?)`);
         } else if (task.tableName === 'temp_parcelle_sitadel') {

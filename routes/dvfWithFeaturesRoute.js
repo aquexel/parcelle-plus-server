@@ -112,8 +112,10 @@ module.exports = (req, res) => {
         
         // Filtres optionnels
         if (typeBien) {
+            // Convertir en format attendu par la base (première lettre en majuscule)
+            const typeBienFormatted = typeBien.charAt(0).toUpperCase() + typeBien.slice(1).toLowerCase();
             query += ` AND type_local = ?`;
-            params.push(typeBien);
+            params.push(typeBienFormatted);
         }
         
         if (minSurface !== null) {

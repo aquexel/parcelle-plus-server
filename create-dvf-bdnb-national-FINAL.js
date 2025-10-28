@@ -1029,10 +1029,8 @@ function showStats() {
     // Note: Les tables temporaires ne sont plus supprimées car temp_bdnb_parcelle
     // est maintenant très légère (~200MB au lieu de 12GB). Conservées pour analyse/debug.
     
-    // Compression SQLite avec VACUUM
-    console.log('🗜️  Compression de la base de données...');
-    db.exec('VACUUM');
-    console.log('   ✅ Base compressée');
+    // Compression VACUUM retirée pour accélérer le processus
+    // La base SQLite se compacte automatiquement au besoin
     
     const dbStats = fs.statSync(DB_FILE);
     const sizeMB = (dbStats.size / 1024 / 1024).toFixed(1);

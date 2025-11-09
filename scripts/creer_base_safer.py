@@ -27,8 +27,8 @@ from requests import Response
 from urllib.parse import quote
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "safer_prices.db"
+BASE_DIR = Path(__file__).resolve().parent.parent  # Remonter d'un niveau pour aller dans raspberry-pi-server
+DB_PATH = BASE_DIR / "database" / "safer_prices.db"
 
 BASE_TERRE_URL = "https://www.le-prix-des-terres.fr/carte/terre"
 BASE_FORET_URL = "https://www.le-prix-des-terres.fr/carte/foret"
@@ -431,22 +431,41 @@ def collecter_donnees_forets(
                 continue
 
             if len(matches) > 1:
-                # Ambiguïté rare : on journalise mais on associe toutes les communes concernées
+                # Ambiguïté : plusieurs communes avec le même nom mais codes différents
+                # On attribue le prix/ha à toutes car ce sont des communes différentes
                 print(
-                    f"      [ATTENTION] Ambiguïté pour {nom_commune} ({code_commune}) : {len(matches)} communes"
+                    f"      [INFO] Ambiguïté pour {nom_commune} ({code_commune}) : {len(matches)} communes - attribution du prix à toutes"
                 )
+                # Ne pas limiter : attribuer le prix à toutes les communes matchées
 
             for code_insee in matches:
-                donnees[code_insee] = {
-                    "code_insee": code_insee,
-                    "region_forestiere": nom_region,
-                    "prix_foret_ha": prix_foret,
-                    "annee_foret": annee,
-                    "nombre_ventes_foret": parse_int(
-                        commune.get("datas", {}).get("nombre_ventes")
-                    ),
-                    "source_foret_url": construire_url_foret(nom_region),
-                }
+                # Ne pas écraser les données existantes si elles sont déjà présentes
+                # (une commune peut apparaître dans plusieurs régions forestières)
+                if code_insee not in donnees:
+                    donnees[code_insee] = {
+                        "code_insee": code_insee,
+                        "region_forestiere": nom_region,
+                        "prix_foret_ha": prix_foret,
+                        "annee_foret": annee,
+                        "nombre_ventes_foret": parse_int(
+                            commune.get("datas", {}).get("nombre_ventes")
+                        ),
+                        "source_foret_url": construire_url_foret(nom_region),
+                    }
+                else:
+                    # Si la commune existe déjà, mettre à jour seulement si les données sont meilleures
+                    # (année plus récente ou prix non nul si l'ancien était nul)
+                    existing = donnees[code_insee]
+                    if (prix_foret is not None and 
+                        (existing.get("prix_foret_ha") is None or 
+                         (annee is not None and existing.get("annee_foret") is not None and annee > existing.get("annee_foret")))):
+                        existing["region_forestiere"] = nom_region
+                        existing["prix_foret_ha"] = prix_foret
+                        existing["annee_foret"] = annee
+                        existing["nombre_ventes_foret"] = parse_int(
+                            commune.get("datas", {}).get("nombre_ventes")
+                        )
+                        existing["source_foret_url"] = construire_url_foret(nom_region)
 
         time.sleep(0.5)
 
@@ -513,11 +532,24 @@ def fusionner_donnees(
     return fusion
 
 
-def creer_base_sqlite(donnees: Sequence[Dict], manquantes_forets: Sequence[Dict]) -> None:
+def creer_base_sqlite(donnees: Sequence[Dict], manquantes_forets: Sequence[Dict]) -> List[Dict]:
+    # S'assurer que le répertoire parent existe
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    
     if DB_PATH.exists():
         DB_PATH.unlink()
 
-    conn = sqlite3.connect(str(DB_PATH))
+    print(f"\n📦 Création de la base de données: {DB_PATH}")
+    print(f"   Répertoire parent: {DB_PATH.parent}")
+    print(f"   Répertoire existe: {DB_PATH.parent.exists()}")
+    
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+    except sqlite3.Error as e:
+        print(f"❌ Erreur lors de l'ouverture de la base de données: {e}")
+        print(f"   Chemin absolu: {DB_PATH.resolve()}")
+        raise
+    
     try:
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute(
@@ -553,6 +585,29 @@ def creer_base_sqlite(donnees: Sequence[Dict], manquantes_forets: Sequence[Dict]
         )
 
         now_iso = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+        # Préparer les données pour l'insertion en évitant les doublons de code_insee
+        # (peut arriver avec les ambiguïtés de communes)
+        donnees_a_inserer = {}
+        doublons_count = 0
+        for donnee in donnees:
+            code_insee = donnee.get("code_insee")
+            if not code_insee:
+                continue
+            # Si le code_insee existe déjà, fusionner les données (priorité aux données existantes)
+            if code_insee in donnees_a_inserer:
+                doublons_count += 1
+                # Fusionner : garder les données existantes et ajouter les nouvelles si manquantes
+                existing = donnees_a_inserer[code_insee]
+                for key, value in donnee.items():
+                    if key not in existing or existing[key] is None:
+                        existing[key] = value
+            else:
+                donnees_a_inserer[code_insee] = donnee.copy()
+        
+        if doublons_count > 0:
+            print(f"⚠️ {doublons_count} doublons de code_insee fusionnés")
+        print(f"📊 Insertion de {len(donnees_a_inserer):,} communes (après déduplication)")
 
         with conn:
             conn.executemany(
@@ -598,7 +653,7 @@ def creer_base_sqlite(donnees: Sequence[Dict], manquantes_forets: Sequence[Dict]
                         **donnee,
                         "created_at": now_iso,
                     }
-                    for donnee in donnees
+                    for donnee in donnees_a_inserer.values()
                 ],
             )
 
@@ -609,7 +664,7 @@ def creer_base_sqlite(donnees: Sequence[Dict], manquantes_forets: Sequence[Dict]
 
             conn.execute(
                 "INSERT INTO meta (cle, valeur) VALUES (?, ?)",
-                ("total_communes", str(len(donnees))),
+                ("total_communes", str(len(donnees_a_inserer))),
             )
 
             conn.execute(
@@ -626,6 +681,9 @@ def creer_base_sqlite(donnees: Sequence[Dict], manquantes_forets: Sequence[Dict]
         conn.commit()
     finally:
         conn.close()
+    
+    # Retourner les données dédupliquées pour le bilan
+    return list(donnees_a_inserer.values())
 
 
 def afficher_bilan(donnees: Sequence[Dict]) -> None:
@@ -647,8 +705,8 @@ def main() -> None:
     forets, manquantes_forets = collecter_donnees_forets(index_code_nom, index_nom)
 
     donnees = fusionner_donnees(terres, forets, manquantes_forets)
-    creer_base_sqlite(donnees, manquantes_forets)
-    afficher_bilan(donnees)
+    donnees_dedupliquees = creer_base_sqlite(donnees, manquantes_forets)
+    afficher_bilan(donnees_dedupliquees)
 
     duree = int(time.time() - debut)
     print(f"Durée totale : {duree // 60} min {duree % 60} s")

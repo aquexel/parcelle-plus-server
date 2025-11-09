@@ -8,7 +8,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'scripts', 'safer_prices.db');
+const DB_PATH = path.join(__dirname, '..', 'database', 'safer_prices.db');
 
 /**
  * Route principale

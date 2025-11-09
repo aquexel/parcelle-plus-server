@@ -1183,6 +1183,13 @@ app.get('/api/health', (req, res) => {
 const dvfWithFeaturesRoute = require('./routes/dvfWithFeaturesRoute');
 app.get('/api/dvf/search-with-features', dvfWithFeaturesRoute);
 
+// Route Terrains à Bâtir avec filtre viabilisation
+const terrainsBatirRoute = require('./routes/terrainsBatirRoute');
+app.get('/api/terrains-batir/search', terrainsBatirRoute);
+
+const saferRoute = require('./routes/saferRoute');
+app.get('/api/safer/prix', saferRoute);
+
 // Gestion des erreurs
 app.use((err, req, res, next) => {
     console.error('❌ Erreur serveur:', err);

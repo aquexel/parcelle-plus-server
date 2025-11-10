@@ -523,12 +523,12 @@ async function telechargerDVFAnnee(annee) {
             url = `https://data.cquest.org/dgfip_dvf/${dossier}/valeursfoncieres-${annee}${extension}`;
         }
         
-        const makeRequest = (requestUrl, isRetry = false) => {
+        const makeRequest = (requestUrl) => {
             https.get(requestUrl, (response) => {
                 if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
                     const redirectUrl = response.headers.location;
                     console.log(`   ↪️  Redirection vers: ${redirectUrl}`);
-                    return makeRequest(redirectUrl, isRetry);
+                    return makeRequest(redirectUrl);
                 }
                 
                 if (response.statusCode !== 200) {

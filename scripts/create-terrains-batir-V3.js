@@ -1,0 +1,1570 @@
+#!/usr/bin/env node
+
+/**
+ * 🏗️ CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 (AMÉLIORÉE)
+ * 
+ * Logique validée par recoupement PA + DFI + DVF + PC :
+ * 1. Charger PA depuis Liste-des-permis-damenager.2025-10.csv (tous départements)
+ * 2. Charger TOUTES les transactions DVF (terrains à bâtir, bâti, tout type)
+ * 3. Pour chaque PA, identifier les parcelles FILLES via DFI (64.5% des PA ont des filles)
+ * 4. ÉTAPE 1 - ACHAT LOTISSEUR (NON-VIABILISÉ) :
+ *    - Chercher transactions DVF avec ≥2 parcelles filles du PA
+ *    - Date : ±2 ans autour du PA
+ *    - Surface : ±10% de la superficie du PA
+ *    - Prendre la PREMIÈRE chronologiquement
+ * 5. ÉTAPE 2 - LOTS VENDUS (VIABILISÉS) :
+ *    - Toutes les autres transactions sur parcelles filles
+ *    - SANS filtre de date, surface, ou nombre de parcelles
+ * 6. Attribution type usage via PC depuis Liste autorisations
+ *    - Filtres PC : NATURE_PROJET_COMPLETEE='1' (nouvelle construction)
+ *                   DESTINATION_PRINCIPALE='1' (logements)
+ *                   TYPE_PRINCIP_LOGTS_CREES IN ('1','2') (individuel)
+ *                   NB_LGT_COL_CREES=0 (pas de collectif)
+ * 7. FILTRE FINAL : Ne garder que les terrains viabilisés avec PC habitation INDIVIDUELLE
+ *    - Supprime : sans PC nouvelle construction habitation individuelle
+ *    - Supprime : bâti existant (surface_reelle_bati > 0)
+ *    - Conserve : TOUS les achats lotisseurs (on ne sait pas l'usage ni le bâti avant)
+ * 
+ * Base finale : UNIQUEMENT habitation individuelle NOUVELLE construction (sans bâti existant)
+ * Couverture estimée : 70-75% des PA avec parcelles filles
+ */
+
+const fs = require('fs');
+const path = require('path');
+const csv = require('csv-parser');
+const Database = require('better-sqlite3');
+
+let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
+const LISTE_PA_FILE = path.join(__dirname, '..', '..', 'Liste-des-permis-damenager.2025-10.csv');
+// Plus de filtre département - France entière
+const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)
+
+console.log('🏗️  === CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 ===\n');
+
+// ===== DÉBUT DU SCRIPT =====
+
+// Les fichiers DVF sont téléchargés par le script principal (create-terrains-batir-complet.js)
+console.log('📊 Démarrage de la création de la base...\n');
+demarrerCreationBase();
+
+function demarrerCreationBase() {
+// Supprimer ancienne base (gérer les erreurs de verrouillage)
+let dbExisteAvecDFI = false;
+if (fs.existsSync(DB_FILE)) {
+    // Vérifier si la base contient déjà la table DFI
+    try {
+        const dbTemp = new Database(DB_FILE);
+        const tables = dbTemp.prepare(`
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='dfi_lotissements'
+        `).all();
+        dbTemp.close();
+        if (tables.length > 0) {
+            dbExisteAvecDFI = true;
+            console.log('ℹ️  Base existante avec table DFI détectée, suppression uniquement de la table terrains_batir\n');
+        } else {
+            fs.unlinkSync(DB_FILE);
+            console.log('🗑️  Ancienne base supprimée\n');
+        }
+    } catch (err) {
+        if (err.code === 'EBUSY') {
+            console.log('⚠️  Base verrouillée, création d\'une nouvelle version temporaire...\n');
+            // Créer une version temporaire avec timestamp
+            DB_FILE = DB_FILE.replace('.db', `_${Date.now()}.db`);
+        } else {
+            throw err;
+        }
+    }
+}
+
+// Créer ou ouvrir la base
+const db = new Database(DB_FILE);
+db.pragma('journal_mode = WAL');
+
+// Créer la structure de terrains_batir_temp (table temporaire pour le matching)
+db.exec(`
+    DROP TABLE IF EXISTS terrains_batir_temp;
+    DROP TABLE IF EXISTS terrains_batir;
+    CREATE TABLE terrains_batir_temp (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_parcelle TEXT,
+        id_mutation TEXT,
+        valeur_fonciere REAL,
+        surface_totale REAL,
+        surface_reelle_bati REAL,
+        prix_m2 REAL,
+        date_mutation TEXT,
+        latitude REAL,
+        longitude REAL,
+        code_departement TEXT,
+        code_commune TEXT,
+        nom_commune TEXT,
+        section_cadastrale TEXT,
+        est_terrain_viabilise INTEGER DEFAULT 0,
+        id_pa TEXT,
+        parcelle_suffixe TEXT
+    );
+    
+    -- INDEX OPTIMISÉS POUR RECHERCHE PAR COMMUNE
+    CREATE INDEX IF NOT EXISTS idx_temp_commune_section ON terrains_batir_temp(code_commune, section_cadastrale);
+    CREATE INDEX IF NOT EXISTS idx_temp_commune_suffixe ON terrains_batir_temp(code_commune, parcelle_suffixe);
+    CREATE INDEX IF NOT EXISTS idx_temp_commune_mutation ON terrains_batir_temp(code_commune, id_mutation);
+    CREATE INDEX IF NOT EXISTS idx_temp_commune_section_suffixe ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe);
+    CREATE INDEX IF NOT EXISTS idx_temp_parcelle ON terrains_batir_temp(id_parcelle);
+    CREATE INDEX IF NOT EXISTS idx_temp_mutation ON terrains_batir_temp(id_mutation);
+    CREATE INDEX IF NOT EXISTS idx_temp_pa ON terrains_batir_temp(id_pa);
+`);
+
+// Créer la table DFI si elle n'existe pas
+db.exec(`
+    CREATE TABLE IF NOT EXISTS dfi_lotissements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_dfi TEXT NOT NULL,
+        code_departement TEXT,
+        code_commune TEXT,
+        nature_dfi TEXT,
+        date_validation TEXT,
+        parcelles_meres TEXT,
+        parcelles_filles TEXT,
+        UNIQUE(id_dfi, code_departement, code_commune)
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_dfi_commune ON dfi_lotissements(code_commune);
+    CREATE INDEX IF NOT EXISTS idx_dfi_meres ON dfi_lotissements(parcelles_meres);
+    CREATE INDEX IF NOT EXISTS idx_dfi_filles ON dfi_lotissements(parcelles_filles);
+`);
+
+if (!dbExisteAvecDFI) {
+    console.log('⚠️  Table DFI créée mais vide. Lancez d\'abord: node charger-dfi-dans-db.js\n');
+} else {
+    // Vérifier que la table DFI contient des données
+    const countDFI = db.prepare('SELECT COUNT(*) as nb FROM dfi_lotissements').get();
+    if (countDFI.nb === 0) {
+        console.log('⚠️  Table DFI vide. Lancez: node charger-dfi-dans-db.js\n');
+    } else {
+        console.log(`✅ Table DFI trouvée avec ${countDFI.nb} enregistrements`);
+        
+        // Créer une table DFI temporaire INDEXÉE par commune
+        console.log('⚡ Création table DFI temporaire indexée par commune...');
+        db.exec(`
+            DROP TABLE IF EXISTS dfi_indexed;
+            CREATE TEMP TABLE dfi_indexed AS
+            SELECT 
+                id_dfi,
+                code_departement,
+                code_commune,
+                nature_dfi,
+                date_validation,
+                parcelles_meres,
+                parcelles_filles
+            FROM dfi_lotissements;
+            
+            CREATE INDEX idx_dfi_idx_commune ON dfi_indexed(code_commune);
+            CREATE INDEX idx_dfi_idx_meres ON dfi_indexed(parcelles_meres);
+            CREATE INDEX idx_dfi_idx_filles ON dfi_indexed(parcelles_filles);
+        `);
+        console.log('✅ Table DFI indexée créée\n');
+    }
+}
+
+console.log('✅ Table terrains_batir créée\n');
+
+// Fonction pour extraire section cadastrale
+function extraireSection(idParcelle) {
+    if (!idParcelle) return null;
+    // Format ancien (2014-2019, 2024-2025) : 5 chiffres + "000" + section (lettres) + numéro
+    // Exemple: 01426000ZC0122
+    let match = idParcelle.match(/\d{5}000([A-Z]+)\d+/);
+    if (match) return match[1];
+    
+    // Format moderne (2020-2023) : 5 chiffres + 3 chiffres (préfixe) + section (2 caractères) + numéro
+    // Exemple: 01426312ZC0122
+    match = idParcelle.match(/\d{5}\d{3}([A-Z]{2})\d{4}/);
+    if (match) return match[1];
+    
+    // Essayer aussi avec section de 1 caractère dans le format moderne
+    match = idParcelle.match(/\d{5}\d{3}([A-Z])\d{4}/);
+    if (match) return match[1];
+    
+    return null;
+}
+
+// Fonction pour normaliser parcelle
+function normaliserParcelle(comm, section, numero) {
+    if (!comm || !section || !numero) return null;
+    // Supprimer le "p" à la fin du numéro s'il existe (parcelle provisoire, ex: "72p")
+    const numeroClean = String(numero).replace(/p$/i, '').trim();
+    const commPadded = String(comm).padStart(5, '0');
+    const numPadded = String(numeroClean).padStart(4, '0');
+    return `${commPadded}000${section}${numPadded}`;
+}
+
+// Fonction pour extraire le centroïde depuis une géométrie WKT MULTIPOLYGON
+// Format: MULTIPOLYGON (((x1 y1, x2 y2, ...)))
+// Les coordonnées sont en Lambert 93 (EPSG:2154)
+function extraireCentroideLambert(wkt) {
+    if (!wkt || typeof wkt !== 'string') return null;
+    
+    // Extraire toutes les coordonnées du MULTIPOLYGON
+    const coordMatch = wkt.match(/\(\(\(([^)]+)\)\)/);
+    if (!coordMatch) return null;
+    
+    const coordsStr = coordMatch[1];
+    const points = coordsStr.split(',').map(p => {
+        const parts = p.trim().split(/\s+/);
+        if (parts.length >= 2) {
+            return {
+                x: parseFloat(parts[0]),
+                y: parseFloat(parts[1])
+            };
+        }
+        return null;
+    }).filter(p => p !== null);
+    
+    if (points.length === 0) return null;
+    
+    // Calculer le centroïde (moyenne des coordonnées)
+    const centroid = {
+        x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
+        y: points.reduce((sum, p) => sum + p.y, 0) / points.length
+    };
+    
+    return centroid;
+}
+
+// Fonction pour convertir Lambert 93 vers WGS84 (latitude/longitude)
+// Lambert 93: EPSG:2154, WGS84: EPSG:4326
+// Formule approximative simplifiée pour la France métropolitaine
+function lambert93ToWGS84(x, y) {
+    // Formule de transformation Lambert 93 vers WGS84
+    // Approximation valide pour la France
+    const a = 6378137.0; // Demi-grand axe ellipsoïde WGS84
+    const e = 0.081819191; // Première excentricité
+    const n = 0.7256077650;
+    const c = 11754255.426;
+    const xs = 700000.0;
+    const ys = 12655612.0499;
+    const lon0 = 0.0523598776; // 3° en radians
+    
+    const xLambert = x - xs;
+    const yLambert = y - ys;
+    const r = Math.sqrt(xLambert * xLambert + yLambert * yLambert);
+    const gamma = Math.atan(xLambert / -yLambert);
+    const latIso = -1.0 / n * Math.log(Math.abs(r / c));
+    
+    let lat = latIso;
+    for (let i = 0; i < 6; i++) {
+        const eSinLat = e * Math.sin(lat);
+        lat = latIso + eSinLat * Math.log((1 + Math.sin(lat)) / (1 - eSinLat)) / 2.0;
+    }
+    
+    const lon = lon0 + gamma / n;
+    
+    return {
+        latitude: lat * 180 / Math.PI,
+        longitude: lon * 180 / Math.PI
+    };
+}
+
+// Fonction pour attribuer le type d'usage (habitation/commercial) via les PC
+function attribuerTypeUsage(db) {
+    return new Promise((resolve, reject) => {
+        // Ajouter la colonne type_usage si elle n'existe pas
+        try {
+            db.exec(`
+                ALTER TABLE terrains_batir 
+                ADD COLUMN type_usage TEXT DEFAULT NULL
+            `);
+            console.log('   ✅ Colonne type_usage ajoutée\n');
+        } catch (err) {
+            if (err.message.includes('duplicate column')) {
+                // Colonne existe déjà, c'est bon
+            } else {
+                console.log(`   ⚠️  Erreur colonne type_usage: ${err.message}\n`);
+            }
+        }
+        
+        const LISTE_AUTORISATIONS_FILE = path.join(__dirname, '..', '..', 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
+        
+        if (!fs.existsSync(LISTE_AUTORISATIONS_FILE)) {
+            console.log('   ⚠️  Fichier Liste autorisations non trouvé, attribution type ignorée\n');
+            resolve();
+            return;
+        }
+        
+        console.log('   📂 Chargement des PC depuis Liste autorisations (nouvelle construction habitation individuelle)...');
+        
+        // Charger les PC avec leurs parcelles directement depuis le fichier Liste autorisations
+        const pcParParcelle = new Map(); // parcelleDFI → PC info
+        let countPC = 0;
+        let countFiltres = 0;
+        
+        fs.createReadStream(LISTE_AUTORISATIONS_FILE)
+            .pipe(csv({ separator: ';', skipLinesWithError: true }))
+            .on('data', (row) => {
+                const dept = row.DEP_CODE || row.DEP || '';
+                const typeDau = row.TYPE_DAU || '';
+                const numDau = row.NUM_DAU || '';
+                
+                // France entière - pas de filtre département
+                if (typeDau !== 'PC' || !numDau) return;
+                
+                // FILTRES POUR NOUVELLE CONSTRUCTION HABITATION INDIVIDUELLE
+                const natureProjet = row.NATURE_PROJET_COMPLETEE || row.NATURE_PROJET_DECLAREE || '';
+                const destination = row.DESTINATION_PRINCIPALE || '';
+                const typePrincipal = row.TYPE_PRINCIP_LOGTS_CREES || '';
+                const nbLogInd = parseInt(row.NB_LGT_IND_CREES || row.NB_LGT_INDIV_PURS || row.NB_LGT_INDIV_GROUPES || 0);
+                const nbLogCol = parseInt(row.NB_LGT_COL_CREES || row.NB_LGT_COL_HORS_RES || 0);
+                
+                // Filtre 1 : Nouvelle construction UNIQUEMENT
+                if (natureProjet !== '1') {
+                    countFiltres++;
+                    return;
+                }
+                
+                // Filtre 2 : Destination LOGEMENTS (pas non résidentiel)
+                if (destination !== '1') {
+                    countFiltres++;
+                    return;
+                }
+                
+                // Filtre 3 : Type INDIVIDUEL (1 = un logement individuel, 2 = plusieurs logements individuels)
+                // Exclure : 3 = collectif, 4 = résidence
+                if (typePrincipal !== '1' && typePrincipal !== '2') {
+                    countFiltres++;
+                    return;
+                }
+                
+                // Filtre 4 : Au moins 1 logement individuel créé ET pas de collectif
+                if (nbLogInd === 0 || nbLogCol > 0) {
+                    countFiltres++;
+                    return;
+                }
+                
+                // ✅ Ce PC est valide : Nouvelle construction d'habitation individuelle
+                countPC++;
+                
+                // Extraire les parcelles associées à ce PC
+                const commune = row.COMM || '';
+                for (let i = 1; i <= 3; i++) {
+                    const section = row[`SEC_CADASTRE${i}`] || '';
+                    const numero = row[`NUM_CADASTRE${i}`] || '';
+                    
+                    if (section && numero) {
+                        const numeroClean = numero.replace(/p$/i, '').trim();
+                        const numeroInt = parseInt(numeroClean, 10);
+                        const parcelleDFI = `${section}${numeroInt}`;
+                        
+                        // Stocker aussi le format complet pour correspondance
+                        const numPadded = numeroClean.padStart(4, '0');
+                        const parcelleId = `${commune}000${section}${numPadded}`;
+                        
+                        if (!pcParParcelle.has(parcelleDFI)) {
+                            pcParParcelle.set(parcelleDFI, {
+                                pcs: [],
+                                fullId: parcelleId,
+                                commune: commune
+                            });
+                        }
+                        pcParParcelle.get(parcelleDFI).pcs.push(numDau);
+                    }
+                }
+            })
+            .on('end', () => {
+                console.log(`   ✅ ${countPC} PC nouvelle construction habitation individuelle (${countFiltres} PC exclus par filtres)`);
+                console.log(`   ✅ ${pcParParcelle.size} parcelles distinctes avec PC\n`);
+                associerPC();
+            })
+            .on('error', reject);
+        
+        function associerPC() {
+            console.log('   🔗 Association des PC aux parcelles filles viabilisées...');
+            
+            // Récupérer les parcelles filles viabilisées (lots vendus)
+            const parcellesFillesViabilisees = db.prepare(`
+                SELECT DISTINCT 
+                    id_pa,
+                    id_parcelle
+                FROM terrains_batir_temp_temp
+                WHERE id_pa IS NOT NULL AND est_terrain_viabilise = 1
+            `).all();
+            
+            const updateStmt = db.prepare(`
+                UPDATE terrains_batir
+                SET type_usage = ?
+                WHERE id_parcelle = ?
+            `);
+            
+            let totalAssocies = 0;
+            let habitationCount = 0;
+            
+            for (const parcelleFille of parcellesFillesViabilisees) {
+                // Extraire format DFI depuis id_parcelle (ex: 40001000AM0168 → AM168)
+                const match = parcelleFille.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
+                if (!match) continue;
+                
+                const section = match[1];
+                const numero = parseInt(match[2], 10);
+                const parcelleDFI = `${section}${numero}`;
+                
+                // Chercher si cette parcelle a un PC nouvelle construction habitation individuelle
+                const pcInfo = pcParParcelle.get(parcelleDFI);
+                
+                if (pcInfo && pcInfo.pcs.length > 0) {
+                    // ✅ Cette parcelle fille a un PC nouvelle construction habitation individuelle
+                    // Mettre à jour toutes les transactions pour cette parcelle
+                    const transactions = db.prepare(`
+                        SELECT DISTINCT id_parcelle
+                        FROM terrains_batir_temp
+                        WHERE id_parcelle = ? AND id_pa = ?
+                    `).all(parcelleFille.id_parcelle, parcelleFille.id_pa);
+                    
+                    for (const tx of transactions) {
+                        updateStmt.run('habitation', tx.id_parcelle);
+                        totalAssocies++;
+                        habitationCount++;
+                    }
+                }
+            }
+            
+            console.log(`   ✅ ${totalAssocies} parcelles filles mises à jour avec type_usage`);
+            console.log(`      - Habitation individuelle nouvelle construction : ${habitationCount}\n`);
+            
+            // Propager le type depuis les parcelles filles vers les parcelles mères du même PA
+            console.log('   🔗 Propagation du type depuis parcelles filles vers parcelles mères...');
+            
+            const paAvecType = db.prepare(`
+                SELECT DISTINCT 
+                    id_pa,
+                    type_usage
+                FROM terrains_batir_temp
+                WHERE id_pa IS NOT NULL 
+                    AND est_terrain_viabilise = 1
+                    AND type_usage IS NOT NULL
+            `).all();
+            
+            const updateMeresStmt = db.prepare(`
+                UPDATE terrains_batir
+                SET type_usage = ?
+                WHERE id_pa = ?
+                    AND est_terrain_viabilise = 0
+                    AND type_usage IS NULL
+            `);
+            
+            let countMeresUpdated = 0;
+            for (const pa of paAvecType) {
+                const updated = updateMeresStmt.run(pa.type_usage, pa.id_pa);
+                if (updated.changes > 0) {
+                    countMeresUpdated += updated.changes;
+                }
+            }
+            
+            console.log(`   ✅ ${countMeresUpdated} transactions non-viabilisées mises à jour avec type depuis parcelles filles\n`);
+            
+            resolve();
+        }
+    });
+}
+
+// Fonction pour enrichir les coordonnées manquantes depuis les parcelles cadastrales
+function enrichirCoordonnees(db) {
+    return new Promise((resolve, reject) => {
+        // BDNB France entière - fichier parcelle.csv dans bdnb_data/csv
+        const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
+        
+        if (!fs.existsSync(PARCELLE_FILE)) {
+            console.log('   ⚠️  Fichier parcelle.csv non trouvé, enrichissement coordonnées ignoré\n');
+            resolve();
+            return;
+        }
+        
+        console.log('   📂 Chargement des parcelles avec coordonnées...');
+        
+        // Créer une map parcelle_id → {latitude, longitude}
+        const parcelleCoords = new Map();
+        let countLoaded = 0;
+        let countWithGeom = 0;
+        
+        fs.createReadStream(PARCELLE_FILE)
+            .pipe(csv())
+            .on('data', (row) => {
+                const parcelleId = row.parcelle_id;
+                const geom = row.geom_parcelle;
+                
+                if (parcelleId && geom) {
+                    const centroid = extraireCentroideLambert(geom);
+                    if (centroid) {
+                        const wgs84 = lambert93ToWGS84(centroid.x, centroid.y);
+                        parcelleCoords.set(parcelleId, {
+                            latitude: wgs84.latitude,
+                            longitude: wgs84.longitude
+                        });
+                        countWithGeom++;
+                    }
+                }
+                countLoaded++;
+                
+                if (countLoaded % 50000 === 0) {
+                    process.stdout.write(`   ${countLoaded} parcelles chargées...\r`);
+                }
+            })
+            .on('end', () => {
+                console.log(`\n   ✅ ${countLoaded} parcelles chargées, ${countWithGeom} avec géométrie\n`);
+                
+                console.log('   🔗 Enrichissement des coordonnées manquantes...');
+                
+                // Récupérer les transactions sans coordonnées
+                const transactionsSansCoords = db.prepare(`
+                    SELECT DISTINCT id_parcelle
+                    FROM terrains_batir_temp
+                    WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                        AND id_parcelle IS NOT NULL
+                `).all();
+                
+                console.log(`   ${transactionsSansCoords.length} transactions sans coordonnées trouvées`);
+                
+                const updateStmt = db.prepare(`
+                    UPDATE terrains_batir_temp
+                    SET latitude = ?, longitude = ?
+                    WHERE id_parcelle = ?
+                        AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                `);
+                
+                let countUpdated = 0;
+                let countNotFound = 0;
+                
+                // Charger les relations DFI BIDIRECTIONNELLES
+                console.log('   📂 Chargement des relations DFI (bidirectionnelles)...');
+                const dfiMereVersFilles = new Map(); // parcelle_mere → [parcelles_filles]
+                const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
+                
+                try {
+                    const lotissements = db.prepare(`
+                        SELECT parcelles_meres, parcelles_filles
+                        FROM dfi_lotissements
+                        WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
+                    `).all();
+                    
+                    lotissements.forEach(lot => {
+                        const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
+                        const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
+                        
+                        meres.forEach(mere => {
+                            // Relation mère → filles
+                            if (!dfiMereVersFilles.has(mere)) {
+                                dfiMereVersFilles.set(mere, []);
+                            }
+                            filles.forEach(fille => {
+                                if (!dfiMereVersFilles.get(mere).includes(fille)) {
+                                    dfiMereVersFilles.get(mere).push(fille);
+                                }
+                                // Relation inverse fille → mère
+                                dfiFilleVersMere.set(fille, mere);
+                            });
+                        });
+                    });
+                    console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
+                } catch (err) {
+                    console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
+                }
+                
+                let countViaFilles = 0;
+                let countViaMere = 0;
+                
+                for (const tx of transactionsSansCoords) {
+                    let coords = parcelleCoords.get(tx.id_parcelle);
+                    
+                    if (!coords) {
+                        // Extraire section et numéro de la parcelle (format: 400260000A0715 → A715)
+                        const match = tx.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
+                        if (match) {
+                            const section = match[1];
+                            const numero = String(parseInt(match[2], 10));
+                            const parcelleFormat = `${section}${numero}`;
+                            const codeCommune = tx.id_parcelle.substring(0, 5);
+                            
+                            // STRATÉGIE 1 : Si c'est une parcelle MÈRE, chercher via ses FILLES
+                            const parcellesFilles = dfiMereVersFilles.get(parcelleFormat) || [];
+                            if (parcellesFilles.length > 0) {
+                                const coordsFilles = [];
+                                
+                                for (const filleDFI of parcellesFilles) {
+                                    const matchFille = filleDFI.match(/^([A-Z]+)(\d+)$/);
+                                    if (matchFille) {
+                                        const sectionFille = matchFille[1];
+                                        const numeroFille = matchFille[2].padStart(4, '0');
+                                        const parcelleFilleId = `${codeCommune}000${sectionFille}${numeroFille}`;
+                                        
+                                        const coordFille = parcelleCoords.get(parcelleFilleId);
+                                        if (coordFille && coordFille.latitude && coordFille.longitude) {
+                                            coordsFilles.push(coordFille);
+                                        }
+                                    }
+                                }
+                                
+                                // Calculer le centroïde moyen des parcelles filles
+                                if (coordsFilles.length > 0) {
+                                    const latMoyenne = coordsFilles.reduce((sum, c) => sum + c.latitude, 0) / coordsFilles.length;
+                                    const lonMoyenne = coordsFilles.reduce((sum, c) => sum + c.longitude, 0) / coordsFilles.length;
+                                    coords = {
+                                        latitude: latMoyenne,
+                                        longitude: lonMoyenne
+                                    };
+                                    countViaFilles++;
+                                }
+                            }
+                            
+                            // STRATÉGIE 2 : Si c'est une parcelle FILLE, chercher via sa MÈRE
+                            if (!coords) {
+                                const parcelleMere = dfiFilleVersMere.get(parcelleFormat);
+                                if (parcelleMere) {
+                                    const matchMere = parcelleMere.match(/^([A-Z]+)(\d+)$/);
+                                    if (matchMere) {
+                                        const sectionMere = matchMere[1];
+                                        const numeroMere = matchMere[2].padStart(4, '0');
+                                        const parcelleMereId = `${codeCommune}000${sectionMere}${numeroMere}`;
+                                        
+                                        const coordMere = parcelleCoords.get(parcelleMereId);
+                                        if (coordMere && coordMere.latitude && coordMere.longitude) {
+                                            coords = coordMere;
+                                            countViaMere++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (coords && coords.latitude && coords.longitude) {
+                        updateStmt.run(coords.latitude, coords.longitude, tx.id_parcelle);
+                        countUpdated++;
+                    } else {
+                        countNotFound++;
+                    }
+                    
+                    if ((countUpdated + countNotFound) % 10000 === 0) {
+                        process.stdout.write(`   ${countUpdated + countNotFound}/${transactionsSansCoords.length} vérifiées...\r`);
+                    }
+                }
+                
+                console.log(`\n   ✅ ${countUpdated} transactions enrichies avec coordonnées`);
+                console.log(`      - Directement depuis parcelle.csv: ${countUpdated - countViaFilles - countViaMere}`);
+                console.log(`      - Via parcelles filles (mère → filles): ${countViaFilles}`);
+                console.log(`      - Via parcelle mère (fille → mère): ${countViaMere}`);
+                console.log(`   ${countNotFound} parcelles non trouvées\n`);
+                
+                resolve();
+            })
+            .on('error', reject);
+    });
+}
+
+// Fonction pour détecter automatiquement le séparateur d'un fichier CSV
+function detecterSeparateur(filePath) {
+    try {
+        const firstLine = fs.readFileSync(filePath, 'utf8').split('\n')[0];
+        const countPipe = (firstLine.match(/\|/g) || []).length;
+        const countComma = (firstLine.match(/,/g) || []).length;
+        
+        // Si le pipe apparaît plus souvent, c'est probablement le séparateur
+        if (countPipe > countComma && countPipe > 5) {
+            return '|';
+        }
+        // Si la virgule apparaît plus souvent, c'est probablement le séparateur
+        if (countComma > countPipe && countComma > 5) {
+            return ',';
+        }
+        // Par défaut, utiliser le pipe (format historique DVF)
+        return '|';
+    } catch (err) {
+        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: |`);
+        return '|';
+    }
+}
+
+// Fonction pour charger tous les CSV depuis dvf_data/
+function chargerTousLesCSV(db, insertStmt) {
+    return new Promise((resolve, reject) => {
+        const dvfDir = path.join(__dirname, '..', 'dvf_data');
+        if (!fs.existsSync(dvfDir)) {
+            console.log('   ❌ Dossier dvf_data non trouvé !\n');
+            reject(new Error('Dossier dvf_data non trouvé'));
+            return;
+        }
+        
+        const fichiers = fs.readdirSync(dvfDir)
+            .filter(f => {
+                // Accepter tous les fichiers dvf_YYYY.csv (France entière)
+                return f.startsWith('dvf_') && f.endsWith('.csv');
+            })
+            .map(f => {
+                // Extraire l'année du nom de fichier (format: dvf_2014.csv)
+                const year = parseInt(f.match(/dvf_(\d{4})/)?.[1] || '0');
+                
+                return {
+                    path: path.join(dvfDir, f),
+                    name: f,
+                    isGz: false,
+                    year: year
+                };
+            })
+            .filter(f => f.year >= 2014 && f.year <= 2025) // 2014-2025
+            .sort((a, b) => a.year - b.year); // Trier par année croissante
+        
+        if (fichiers.length === 0) {
+            console.log('   ❌ Aucun fichier CSV trouvé (2014-2025)\n');
+            reject(new Error('Aucun fichier CSV trouvé'));
+            return;
+        }
+        
+        console.log(`   📂 ${fichiers.length} fichier(s) CSV trouvé(s)\n`);
+        
+        let totalInserted = 0;
+        
+        // Traiter les fichiers SÉQUENTIELLEMENT (un par un) pour éviter les blocages
+        async function traiterFichierSequentiel(index) {
+            if (index >= fichiers.length) {
+                resolve(totalInserted);
+                return;
+            }
+            
+            const { path: filePath, name, year } = fichiers[index];
+            console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
+            
+            // Détecter automatiquement le séparateur en analysant la première ligne
+            const separator = detecterSeparateur(filePath);
+            console.log(`      🔍 Séparateur détecté: "${separator}"`);
+            
+            const stream = fs.createReadStream(filePath);
+            
+            let count = 0;
+            let lastLog = Date.now();
+            
+            stream
+                .pipe(csv({ separator, skipLinesWithError: true }))
+                .on('data', (row) => {
+                    // Format DVF uniformisé : tous les fichiers sont maintenant normalisés
+                    // Colonnes en minuscules avec underscores (ex: "code_departement", "valeur_fonciere")
+                    
+                    // Utiliser uniquement les noms de colonnes normalisés
+                    const codeDept = row.code_departement || '';
+                    const valeurFonciereStr = row.valeur_fonciere || '0';
+                    const surfaceTerrain = parseFloat(row.surface_terrain || 0);
+                    const surfaceBati = parseFloat(row.surface_reelle_bati || 0);
+                    const typeLocal = row.type_local || '';
+                    const dateMutationRaw = row.date_mutation || '';
+                    const idMutationRaw = row.id_mutation || row.no_disposition || '';
+                    
+                    // Construire id_parcelle si elle n'existe pas
+                    let idParcelle = row.id_parcelle || '';
+                    if (!idParcelle) {
+                        // Construire depuis les colonnes normalisées
+                        const dept = (row.code_departement || '').trim().padStart(2, '0');
+                        const comm = (row.code_commune || '').trim().padStart(3, '0');
+                        const prefixeSectionRaw = (row.prefixe_section || row.prefixe_de_section || '').trim();
+                        const prefixeSection = prefixeSectionRaw ? prefixeSectionRaw.padStart(3, '0') : '000';
+                        const sectionRaw = (row.section || '').trim();
+                        const noPlan = (row.numero_plan || row.no_plan || '').trim().padStart(4, '0');
+                        
+                        if (dept && dept.length === 2 && comm && comm.length === 3 && sectionRaw && noPlan && noPlan.length === 4) {
+                            // Normaliser la section (1-2 caractères, peut être alphanumérique)
+                            let sectionNorm = sectionRaw.toUpperCase();
+                            if (sectionNorm.length === 1) {
+                                sectionNorm = '0' + sectionNorm;
+                            } else if (sectionNorm.length === 0) {
+                                return; // Skip si pas de section
+                            }
+                            // S'assurer que la section fait 2 caractères
+                            sectionNorm = sectionNorm.padStart(2, '0').substring(0, 2);
+                            idParcelle = dept + comm + prefixeSection + sectionNorm + noPlan;
+                        }
+                    }
+                    
+                    if (!idParcelle || idParcelle.length < 10) return;
+                    
+                    // France entière - pas de filtre département
+                    
+                    // Parser valeur foncière (format français avec virgule)
+                    const valeurFonciere = parseFloat(valeurFonciereStr.toString().replace(/\s/g, '').replace(',', '.'));
+                    
+                    if (valeurFonciere <= 0) return;
+                    
+                    const section = extraireSection(idParcelle);
+                    if (!section) return; // Skip si on ne peut pas extraire la section
+                    
+                    const prixM2 = surfaceTerrain > 0 ? valeurFonciere / surfaceTerrain : 0;
+                    
+                    // Date mutation (format unifié : dd/mm/yyyy)
+                    let dateMutation = dateMutationRaw;
+                    if (dateMutation && dateMutation.includes('/')) {
+                        const parts = dateMutation.split('/');
+                        if (parts.length === 3) {
+                            dateMutation = `${parts[2]}-${parts[1]}-${parts[0]}`; // yyyy-mm-dd
+                        }
+                    }
+                    
+                    // ID mutation
+                    let idMutation = idMutationRaw || '';
+                    if (!idMutation) {
+                        // Créer un identifiant basé sur date + prix + section cadastrale
+                        const dateForId = dateMutation || '';
+                        const prixForId = Math.round(valeurFonciere);
+                        const sectionForId = section || '';
+                        const dateNorm = dateForId.substring(0, 10); // yyyy-mm-dd
+                        
+                        if (!dateNorm || dateNorm.length < 10) {
+                            idMutation = `DVF_UNKNOWN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                        } else {
+                            const parcellePrefix = idParcelle.substring(0, 12);
+                            idMutation = `DVF_${dateNorm}_${prixForId}_${sectionForId}_${parcellePrefix}`.replace(/[^A-Z0-9_-]/g, '');
+                        }
+                    }
+                    
+                    // Adresse (format normalisé)
+                    const adresseNomVoie = (row.adresse_nom_voie || row.voie || '').trim();
+                    const adresseNumero = (row.adresse_numero || row.no_voie || '').trim();
+                    const adresseSuffixe = (row.adresse_suffixe || row.btq || '').trim();
+                    const nomCommune = row.nom_commune || row.commune || '';
+                    
+                    // Coordonnées GPS depuis la DVF (colonnes lat/lon ou latitude/longitude)
+                    const latitude = parseFloat(row.lat || row.latitude || 0) || null;
+                    const longitude = parseFloat(row.lon || row.longitude || 0) || null;
+                    
+                    // Précalculer le suffixe parcelle et code commune (optimisation)
+                    const parcelleSuffixe = idParcelle.length >= 6 ? idParcelle.substring(5) : null;
+                    const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
+                    
+                    try {
+                        insertStmt.run(
+                            idParcelle,
+                            idMutation,
+                            valeurFonciere,
+                            surfaceTerrain,
+                            surfaceBati,
+                            prixM2,
+                            dateMutation,
+                            latitude,
+                            longitude,
+                            codeDept,
+                            codeCommune,
+                            nomCommune,
+                            section,
+                            parcelleSuffixe
+                        );
+                        count++;
+                        
+                        // Log de progression toutes les 10 secondes
+                        if (Date.now() - lastLog > 10000) {
+                            console.log(`      → ${count} lignes traitées...`);
+                            lastLog = Date.now();
+                        }
+                    } catch (err) {
+                        // Ignorer les doublons ou erreurs
+                    }
+                })
+                .on('end', () => {
+                    console.log(`      ✅ ${count} transactions insérées depuis ${name}\n`);
+                    totalInserted += count;
+                    // Passer au fichier suivant
+                    traiterFichierSequentiel(index + 1);
+                })
+                .on('error', (err) => {
+                    console.error(`      ❌ Erreur sur ${name}: ${err.message}\n`);
+                    // Continuer quand même avec le fichier suivant
+                    traiterFichierSequentiel(index + 1);
+                });
+        }
+        
+        // Démarrer le traitement séquentiel avec le premier fichier
+        traiterFichierSequentiel(0);
+    });
+}
+
+// ÉTAPE 1 : Charger TOUTE la DVF dans une table temporaire indexée
+console.log('📊 ÉTAPE 1 : Création table temporaire DVF indexée...\n');
+
+db.exec(`
+    DROP TABLE IF EXISTS dvf_temp_indexed;
+    CREATE TEMP TABLE dvf_temp_indexed (
+        id_parcelle TEXT,
+        id_mutation TEXT,
+        valeur_fonciere REAL,
+        surface_totale REAL,
+        surface_reelle_bati REAL,
+        prix_m2 REAL,
+        date_mutation TEXT,
+        latitude REAL,
+        longitude REAL,
+        code_departement TEXT,
+        code_commune TEXT,
+        nom_commune TEXT,
+        section_cadastrale TEXT,
+        parcelle_suffixe TEXT
+    );
+`);
+
+const insertDvfTemp = db.prepare(`
+    INSERT INTO dvf_temp_indexed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
+    console.log(`✅ ${totalInserted} transactions DVF chargées\n`);
+    
+    // Créer les index APRÈS le chargement (beaucoup plus rapide)
+    console.log('⚡ Création des index optimisés sur DVF...');
+    db.exec(`
+        CREATE INDEX idx_dvf_commune ON dvf_temp_indexed(code_commune);
+        CREATE INDEX idx_dvf_commune_section ON dvf_temp_indexed(code_commune, section_cadastrale);
+        CREATE INDEX idx_dvf_commune_suffixe ON dvf_temp_indexed(code_commune, parcelle_suffixe);
+        CREATE INDEX idx_dvf_commune_section_suffixe ON dvf_temp_indexed(code_commune, section_cadastrale, parcelle_suffixe);
+        CREATE INDEX idx_dvf_mutation ON dvf_temp_indexed(id_mutation);
+        CREATE INDEX idx_dvf_parcelle ON dvf_temp_indexed(id_parcelle);
+    `);
+    console.log('✅ Index créés\n');
+    
+    // Copier seulement les données nécessaires dans terrains_batir_temp
+    console.log('📊 ÉTAPE 1.5 : Copie des données dans la table de travail...');
+    db.exec(`
+        INSERT INTO terrains_batir_temp (
+            id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+            date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
+            section_cadastrale, est_terrain_viabilise, id_pa,
+            parcelle_suffixe
+        )
+        SELECT 
+            id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+            date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
+            section_cadastrale, 0, NULL,
+            parcelle_suffixe
+        FROM dvf_temp_indexed;
+    `);
+    console.log(`✅ Données copiées\n`);
+
+    // ÉTAPE 2 : Créer vue agrégée par id_mutation
+    // Pour 2014-2018 : agrégation par date + prix + section (id_mutation créé artificiellement)
+    // Pour 2020+ : agrégation par id_mutation réel
+    // Les PA sont toujours dans la même commune et section, donc on peut simplifier
+    console.log('📊 ÉTAPE 2 : Création vue agrégée par mutation...');
+    
+    // Créer d'abord une vue intermédiaire pour dédupliquer les parcelles par mutation
+    // Si une parcelle apparaît plusieurs fois dans la même mutation, prendre MAX() des valeurs
+    db.exec(`
+    DROP VIEW IF EXISTS terrains_batir_deduplique;
+    CREATE VIEW terrains_batir_deduplique AS
+    SELECT 
+        id_parcelle,
+        id_mutation,
+        MAX(valeur_fonciere) as valeur_fonciere,
+        MAX(surface_totale) as surface_totale,
+        MIN(date_mutation) as date_mutation,
+        code_departement,
+        MAX(nom_commune) as nom_commune,
+        MAX(section_cadastrale) as section_cadastrale,
+        SUBSTR(id_parcelle, 1, 5) as code_commune
+    FROM terrains_batir_temp
+    WHERE id_parcelle IS NOT NULL
+    GROUP BY id_parcelle, id_mutation, code_departement
+    `);
+    
+    // Créer la vue finale agrégée depuis la vue dédupliquée
+    db.exec(`
+    DROP VIEW IF EXISTS mutations_aggregees;
+    CREATE VIEW mutations_aggregees AS
+    SELECT 
+        id_mutation,
+        SUM(surface_totale) as surface_totale_aggregee,
+        -- Si même date et même prix, utiliser MAX (prix unique de la transaction)
+        -- Les surfaces sont additionnées, mais pas les prix (si identiques)
+        MAX(valeur_fonciere) as valeur_totale,
+        MIN(date_mutation) as date_mutation,
+        code_departement,
+        MIN(nom_commune) as nom_commune,
+        MIN(section_cadastrale) as section_cadastrale,
+        MIN(code_commune) as code_commune
+    FROM terrains_batir_deduplique
+    GROUP BY id_mutation, code_departement
+    `);
+    console.log('✅ Vue créée\n');
+
+    // ÉTAPE 3 : Charger les PA
+    console.log('📊 ÉTAPE 3 : Chargement de la liste des PA...');
+    const paList = [];
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(LISTE_PA_FILE)
+        .pipe(csv({ separator: ';', skipLines: 1, skipLinesWithError: true }))
+        .on('data', (row) => {
+            // Après skipLines: 1, csv-parser utilise la 2ème ligne d'en-tête (codes courts)
+            // France entière - pas de filtre département
+            
+            const numPA = row.NUM_PA;
+            const dateAuth = row.DATE_REELLE_AUTORISATION;
+            const comm = row.COMM;
+            const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
+            const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
+            const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
+            
+            // Combiner lieu-dit et adresse pour la recherche
+            const adresseCombinée = [lieuDit, adresseVoie].filter(a => a && a.length > 0).join(' ');
+            
+            if (!numPA || !dateAuth) return;
+            
+            // Extraire sections et parcelles
+            const sections = new Set();
+            const parcelles = [];
+            
+            const sec1 = row.SEC_CADASTRE1?.trim();
+            const num1 = row.NUM_CADASTRE1?.trim();
+            const sec2 = row.SEC_CADASTRE2?.trim();
+            const num2 = row.NUM_CADASTRE2?.trim();
+            const sec3 = row.SEC_CADASTRE3?.trim();
+            const num3 = row.NUM_CADASTRE3?.trim();
+            
+            // Accepter les numéros avec ou sans "p" à la fin (ex: "72" ou "72p")
+            if (sec1 && num1 && /^[A-Z]{1,3}$/.test(sec1) && /^\d+p?$/i.test(num1)) {
+                sections.add(sec1);
+                const parcelleId = normaliserParcelle(comm, sec1, num1);
+                if (parcelleId) parcelles.push(parcelleId);
+            }
+            if (sec2 && num2 && /^[A-Z]{1,3}$/.test(sec2) && /^\d+p?$/i.test(num2)) {
+                sections.add(sec2);
+                const parcelleId = normaliserParcelle(comm, sec2, num2);
+                if (parcelleId) parcelles.push(parcelleId);
+            }
+            if (sec3 && num3 && /^[A-Z]{1,3}$/.test(sec3) && /^\d+p?$/i.test(num3)) {
+                sections.add(sec3);
+                const parcelleId = normaliserParcelle(comm, sec3, num3);
+                if (parcelleId) parcelles.push(parcelleId);
+            }
+            
+            if (sections.size > 0) {
+                // Convertir date de "01/04/2022" vers "2022-04-01"
+            let dateAuthFormatee = dateAuth;
+            if (dateAuth && dateAuth.includes('/')) {
+                const parts = dateAuth.split('/');
+                if (parts.length === 3) {
+                    dateAuthFormatee = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                }
+            }
+            
+            // Normaliser le code commune (ajouter padding si nécessaire)
+            const commNormalise = comm && comm.length < 5 ? comm.padStart(5, '0') : comm;
+            
+            paList.push({
+                    numPA: numPA,
+                    dateAuth: dateAuthFormatee,
+                    comm: commNormalise,
+                    superficie: superficie,
+                    sections: Array.from(sections),
+                    parcelles: parcelles,
+                    lieuDit: lieuDit,
+                    adresseVoie: adresseVoie,
+                    adresseCombinée: adresseCombinée
+                });
+            }
+        })
+        .on('end', resolve)
+        .on('error', reject);
+    }).then(() => {
+        console.log(`✅ ${paList.length} PA chargés\n`);
+        
+        // OPTIMISATION 4 : Précalculer le nombre de parcelles par mutation
+        console.log('⚡ Optimisation : Précalcul du nombre de parcelles par mutation...');
+        db.exec(`
+            DROP TABLE IF EXISTS mutation_parcelle_counts;
+            CREATE TEMP TABLE mutation_parcelle_counts AS
+            SELECT 
+                id_mutation,
+                COUNT(DISTINCT id_parcelle) as nb_parcelles_total,
+                code_departement,
+                code_commune,
+                section_cadastrale
+            FROM terrains_batir_temp
+            GROUP BY id_mutation, code_departement, code_commune, section_cadastrale;
+            
+            CREATE INDEX idx_mutation_counts ON mutation_parcelle_counts(id_mutation);
+            CREATE INDEX idx_mutation_counts_commune ON mutation_parcelle_counts(code_commune, section_cadastrale);
+        `);
+        console.log('✅ Comptage précalculé\n');
+        
+        // OPTIMISATION 3 : Créer une table des mutations déjà attribuées
+        console.log('⚡ Optimisation : Table des mutations déjà attribuées...');
+        db.exec(`
+            DROP TABLE IF EXISTS mutations_attribuees;
+            CREATE TEMP TABLE mutations_attribuees AS
+            SELECT DISTINCT id_mutation
+            FROM terrains_batir_temp
+            WHERE id_pa IS NOT NULL;
+            
+            CREATE UNIQUE INDEX idx_mutations_attribuees ON mutations_attribuees(id_mutation);
+        `);
+        console.log('✅ Table d\'exclusion créée\n');
+        
+        // OPTIMISATION 5 : BATCH PROCESSING - Regrouper les PA par commune/section
+        console.log('⚡ Optimisation : Regroupement des PA par commune/section...');
+        const paByCommuneSection = new Map();
+        for (const pa of paList) {
+            for (const section of pa.sections) {
+                const key = `${pa.comm}_${section}`;
+                if (!paByCommuneSection.has(key)) {
+                    paByCommuneSection.set(key, []);
+                }
+                paByCommuneSection.get(key).push(pa);
+            }
+        }
+        console.log(`✅ ${paByCommuneSection.size} groupes commune/section créés\n`);
+        
+        // ========== ÉTAPE 4 : VERSION 3 - OPTIMISATION SQL RADICALE ==========
+        // Au lieu de boucler sur chaque PA → on fait TOUT en SQL massivement
+        // Gain estimé : ~10-30x plus rapide (de 2-5 minutes à 10-20 secondes)
+        console.log('📊 ÉTAPE 4 : Association PA-DVF par SQL massif (V3)...\n');
+        
+        // SOUS-ÉTAPE 4.1 : Créer table temporaire des parcelles PA
+        console.log('⚡ 4.1 - Explosion des parcelles PA...');
+        db.exec(`
+            DROP TABLE IF EXISTS pa_parcelles_temp;
+            CREATE TEMP TABLE pa_parcelles_temp (
+                num_pa TEXT,
+                code_commune_dfi TEXT,
+                code_commune_dvf TEXT,
+                section TEXT,
+                parcelle_normalisee TEXT,
+                superficie REAL,
+                date_auth TEXT
+            );
+            CREATE INDEX idx_pa_parcelles_commune ON pa_parcelles_temp(code_commune_dfi, parcelle_normalisee);
+            CREATE INDEX idx_pa_parcelles_section ON pa_parcelles_temp(code_commune_dvf, section);
+        `);
+        
+        // Insérer toutes les parcelles PA en masse
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        const insertManyPA = db.transaction(() => {
+            for (const pa of paList) {
+                if (!pa.parcelles || pa.parcelles.length === 0) continue;
+                
+                const codeCommuneDVF = String(pa.comm).padStart(5, '0');
+                const codeCommuneDFI = codeCommuneDVF.substring(codeCommuneDVF.length - 3);
+                
+                for (const parcelle of pa.parcelles) {
+                    const parcelleStr = String(parcelle).trim().toUpperCase();
+                    // Extraire section + numéro : "40088000BL0056" → "BL56"
+                    const match = parcelleStr.match(/([A-Z]{1,2})(\d+p?)$/i);
+                    if (match) {
+                        const [, section, numero] = match;
+                        const numeroClean = String(parseInt(numero.replace(/p$/i, ''), 10));
+                        const parcelleNormalisee = section + numeroClean;
+                        
+                        for (const sect of pa.sections) {
+                            insertPA.run(
+                                pa.numPA,
+                                codeCommuneDFI,
+                                codeCommuneDVF,
+                                sect,
+                                parcelleNormalisee,
+                                pa.superficie,
+                                pa.dateAuth
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        insertManyPA();
+        const nbPA = db.prepare(`SELECT COUNT(DISTINCT num_pa) as nb FROM pa_parcelles_temp`).get().nb;
+        console.log(`✅ ${nbPA} PA avec parcelles explosées\n`);
+        
+        // SOUS-ÉTAPE 4.2 : Chercher parcelles mères dans DVF (ACHAT AVANT DIVISION)
+        console.log('⚡ 4.2 - Recherche achats lotisseurs sur parcelles mères...');
+        db.exec(`
+            DROP TABLE IF EXISTS achats_lotisseurs_meres;
+            CREATE TEMP TABLE achats_lotisseurs_meres AS
+            SELECT DISTINCT
+                p.num_pa,
+                t.id_mutation,
+                m.date_mutation,
+                p.date_auth,
+                p.superficie,
+                m.surface_totale_aggregee,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p.num_pa 
+                    ORDER BY m.date_mutation ASC
+                ) as rang
+            FROM pa_parcelles_temp p
+            INNER JOIN terrains_batir_temp t ON 
+                t.code_commune = p.code_commune_dvf
+                AND t.section_cadastrale = p.section
+                AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
+            INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
+            WHERE m.date_mutation BETWEEN 
+                  DATE(p.date_auth, '-2 years') AND 
+                  DATE(p.date_auth, '+2 years')
+            GROUP BY p.num_pa, t.id_mutation, m.date_mutation, p.date_auth, p.superficie, m.surface_totale_aggregee
+        `);
+        
+        // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
+        const nbAchatsMeres = db.prepare(`
+            UPDATE terrains_batir_temp
+            SET est_terrain_viabilise = 0,
+                id_pa = (
+                    SELECT num_pa 
+                    FROM achats_lotisseurs_meres a 
+                    WHERE a.id_mutation = terrains_batir_temp.id_mutation
+                      AND a.rang = 1
+                    LIMIT 1
+                )
+            WHERE id_mutation IN (
+                SELECT id_mutation FROM achats_lotisseurs_meres WHERE rang = 1
+            )
+        `).run().changes;
+        console.log(`✅ ${nbAchatsMeres} transactions mères trouvées\n`);
+        
+        // SOUS-ÉTAPE 4.3 : Associer PA → DFI → Parcelles filles (pour PA sans transaction mère)
+        console.log('⚡ 4.3 - Association PA → DFI → Parcelles filles...');
+        
+        // Fonction JavaScript pour exploser les parcelles filles (DFI utilise ";" comme séparateur)
+        // On va charger les DFI et créer une table d'association
+        db.exec(`
+            DROP TABLE IF EXISTS pa_filles_temp;
+            CREATE TEMP TABLE pa_filles_temp (
+                num_pa TEXT,
+                code_commune_dvf TEXT,
+                section TEXT,
+                parcelle_fille TEXT,
+                parcelle_fille_suffixe TEXT,
+                superficie REAL,
+                date_auth TEXT
+            );
+        `);
+        
+        console.log('   📂 Chargement relations DFI...');
+        const dfiData = db.prepare(`
+            SELECT code_commune, parcelles_meres, parcelles_filles
+            FROM dfi_indexed
+            WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
+        `).all();
+        
+        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        const insertFillesTransaction = db.transaction(() => {
+            let countAssociations = 0;
+            for (const pa of paList) {
+                // Vérifier si ce PA a déjà une transaction mère
+                const aMere = db.prepare(`
+                    SELECT 1 FROM achats_lotisseurs_meres WHERE num_pa = ? AND rang = 1
+                `).get(pa.numPA);
+                
+                if (aMere) continue; // Skip si déjà traité sur parcelle mère
+                
+                const codeCommuneDVF = String(pa.comm).padStart(5, '0');
+                const codeCommuneDFI = codeCommuneDVF.substring(codeCommuneDVF.length - 3);
+                
+                // Pour chaque parcelle du PA
+                for (const parcelle of pa.parcelles || []) {
+                    const parcelleStr = String(parcelle).trim().toUpperCase();
+                    const match = parcelleStr.match(/([A-Z]{1,2})(\d+p?)$/i);
+                    if (!match) continue;
+                    
+                    const [, section, numero] = match;
+                    const numeroClean = String(parseInt(numero.replace(/p$/i, ''), 10));
+                    const parcelleNormalisee = section + numeroClean;
+                    
+                    // Chercher dans DFI
+                    for (const dfi of dfiData) {
+                        if (dfi.code_commune !== codeCommuneDFI) continue;
+                        
+                        const meres = (dfi.parcelles_meres || '').split(/[;,\s]+/).map(p => p.trim()).filter(p => p);
+                        const filles = (dfi.parcelles_filles || '').split(/[;,\s]+/).map(p => p.trim()).filter(p => p);
+                        
+                        // Si la parcelle PA est une parcelle mère dans ce DFI
+                        if (meres.includes(parcelleNormalisee)) {
+                            // Ajouter toutes les parcelles filles
+                            for (const fille of filles) {
+                                const matchFille = fille.match(/^([A-Z]+)(\d+)$/);
+                                if (matchFille) {
+                                    const [, sectionFille, numeroFille] = matchFille;
+                                    const numeroPad = numeroFille.padStart(4, '0');
+                                    const parcelleSuffixe = `000${sectionFille}${numeroPad}`;
+                                    
+                                    insertFille.run(
+                                        pa.numPA,
+                                        codeCommuneDVF,
+                                        sectionFille,
+                                        fille,
+                                        parcelleSuffixe,
+                                        pa.superficie,
+                                        pa.dateAuth
+                                    );
+                                    countAssociations++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            console.log(`   ✅ ${countAssociations} associations PA → filles créées`);
+        });
+        insertFillesTransaction();
+        
+        // Créer des index sur pa_filles_temp pour accélérer les jointures
+        db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_pa_filles_commune_section_suffixe 
+            ON pa_filles_temp(code_commune_dvf, section, parcelle_fille_suffixe);
+        `);
+        console.log(`✅ Parcelles filles associées\n`);
+        
+        // SOUS-ÉTAPE 4.3.5 : Enrichir les superficies depuis parcelle.csv si nulles
+        console.log('⚡ 4.3.5 - Enrichissement des superficies depuis parcelle.csv...');
+        const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
+        
+        return new Promise((resolve) => {
+            if (fs.existsSync(PARCELLE_FILE)) {
+                // Créer une table temporaire avec les superficies depuis parcelle.csv
+                db.exec(`
+                    DROP TABLE IF EXISTS parcelle_superficies;
+                    CREATE TEMP TABLE parcelle_superficies (
+                        id_parcelle TEXT PRIMARY KEY,
+                        superficie REAL
+                    );
+                `);
+                
+                const insertSuperficie = db.prepare(`INSERT OR REPLACE INTO parcelle_superficies VALUES (?, ?)`);
+                let countSuperficies = 0;
+                
+                fs.createReadStream(PARCELLE_FILE)
+                    .pipe(csv())
+                    .on('data', (row) => {
+                        const idParcelle = row.parcelle_id || row.id_parcelle;
+                        const superficie = parseFloat(row.superficie || row.surface || row.surface_terrain || 0);
+                        if (idParcelle && superficie > 0) {
+                            insertSuperficie.run(idParcelle, superficie);
+                            countSuperficies++;
+                        }
+                    })
+                    .on('end', () => {
+                        console.log(`   ✅ ${countSuperficies} superficies chargées depuis parcelle.csv`);
+                        
+                        // Mettre à jour pa_filles_temp avec les superficies enrichies
+                        db.exec(`
+                            UPDATE pa_filles_temp
+                            SET superficie = COALESCE(
+                                NULLIF(pa_filles_temp.superficie, 0),
+                                (SELECT superficie FROM parcelle_superficies ps 
+                                 WHERE ps.id_parcelle = (
+                                     pa_filles_temp.code_commune_dvf || 
+                                     pa_filles_temp.section || 
+                                     pa_filles_temp.parcelle_fille_suffixe
+                                 ))
+                            )
+                            WHERE superficie IS NULL OR superficie = 0;
+                        `);
+                        
+                        const countEnrichies = db.prepare(`
+                            SELECT COUNT(*) as cnt FROM pa_filles_temp 
+                            WHERE superficie IS NOT NULL AND superficie > 0
+                        `).get().cnt;
+                        console.log(`   ✅ ${countEnrichies} parcelles avec superficie après enrichissement\n`);
+                        resolve();
+                    })
+                    .on('error', (err) => {
+                        console.log(`   ⚠️  Erreur lecture parcelle.csv: ${err.message}\n`);
+                        resolve();
+                    });
+            } else {
+                console.log(`   ⚠️  Fichier parcelle.csv non trouvé (${PARCELLE_FILE}), enrichissement ignoré\n`);
+                resolve();
+            }
+        }).then(() => {
+        // SOUS-ÉTAPE 4.4 : Trouver achats lotisseurs sur parcelles filles
+        // Filtres : ≥1 parcelle, tolérance surface ±10%, prix > 1€
+        console.log('⚡ 4.4 - Recherche achats lotisseurs sur parcelles filles...');
+        db.exec(`
+            DROP TABLE IF EXISTS achats_lotisseurs_filles;
+            CREATE TEMP TABLE achats_lotisseurs_filles AS
+            SELECT 
+                pf.num_pa,
+                t.id_mutation,
+                m.date_mutation,
+                pf.date_auth,
+                pf.superficie,
+                m.surface_totale_aggregee,
+                m.valeur_totale,
+                COUNT(DISTINCT t.id_parcelle) as nb_parcelles,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pf.num_pa 
+                    ORDER BY m.date_mutation ASC, COUNT(DISTINCT t.id_parcelle) DESC
+                ) as rang
+            FROM pa_filles_temp pf
+            INNER JOIN terrains_batir_temp t ON 
+                t.code_commune = pf.code_commune_dvf
+                AND t.section_cadastrale = pf.section
+                AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
+            INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
+            WHERE m.date_mutation BETWEEN 
+                  DATE(pf.date_auth, '-2 years') AND 
+                  DATE(pf.date_auth, '+2 years')
+              AND t.id_pa IS NULL  -- Pas déjà attribué
+              AND m.valeur_totale > 1  -- Prix > 1€
+            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale
+            HAVING COUNT(DISTINCT t.id_parcelle) >= 1
+               AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.9 AND pf.superficie * 1.1)
+        `);
+        
+        const nbAchatsFilles = db.prepare(`
+            UPDATE terrains_batir_temp
+            SET est_terrain_viabilise = 0,
+                id_pa = (
+                    SELECT num_pa 
+                    FROM achats_lotisseurs_filles a 
+                    WHERE a.id_mutation = terrains_batir_temp.id_mutation
+                      AND a.rang = 1
+                    LIMIT 1
+                )
+            WHERE id_pa IS NULL
+              AND id_mutation IN (
+                  SELECT id_mutation FROM achats_lotisseurs_filles WHERE rang = 1
+              )
+        `).run().changes;
+        console.log(`✅ ${nbAchatsFilles} achats lotisseurs sur parcelles filles\n`);
+        
+        // SOUS-ÉTAPE 4.5 : Lots vendus (viabilisés) - toutes les autres transactions sur parcelles filles
+        console.log('⚡ 4.5 - Association lots vendus (viabilisés)...');
+        
+        // Approche ultra-optimisée : créer une table de correspondance avec clé composite
+        // puis utiliser cette table pour UPDATE directement
+        db.exec(`
+            -- Créer une table de correspondance parcelle -> PA avec clé composite indexée
+            DROP TABLE IF EXISTS parcelle_pa_map;
+            CREATE TEMP TABLE parcelle_pa_map (
+                code_commune TEXT,
+                section TEXT,
+                parcelle_suffixe TEXT,
+                num_pa TEXT,
+                PRIMARY KEY (code_commune, section, parcelle_suffixe)
+            );
+            
+            INSERT OR IGNORE INTO parcelle_pa_map (code_commune, section, parcelle_suffixe, num_pa)
+            SELECT DISTINCT code_commune_dvf, section, parcelle_fille_suffixe, num_pa
+            FROM pa_filles_temp;
+        `);
+        
+        // UPDATE direct avec la table de correspondance (beaucoup plus rapide)
+        const nbLotsVendus = db.prepare(`
+            UPDATE terrains_batir_temp
+            SET est_terrain_viabilise = 1,
+                id_pa = (
+                    SELECT num_pa 
+                    FROM parcelle_pa_map p
+                    WHERE p.code_commune = terrains_batir_temp.code_commune
+                      AND p.section = terrains_batir_temp.section_cadastrale
+                      AND p.parcelle_suffixe = terrains_batir_temp.parcelle_suffixe
+                    LIMIT 1
+                )
+            WHERE id_pa IS NULL
+              AND EXISTS (
+                  SELECT 1 
+                  FROM parcelle_pa_map p
+                  WHERE p.code_commune = terrains_batir_temp.code_commune
+                    AND p.section = terrains_batir_temp.section_cadastrale
+                    AND p.parcelle_suffixe = terrains_batir_temp.parcelle_suffixe
+              )
+        `).run().changes;
+        console.log(`✅ ${nbLotsVendus} lots vendus associés\n`);
+        
+        // Statistiques
+        const nbPAassocies = db.prepare(`
+            SELECT COUNT(DISTINCT id_pa) as nb FROM terrains_batir_temp WHERE id_pa IS NOT NULL
+        `).get().nb;
+        
+        console.log(`✅ ÉTAPE 4 TERMINÉE :`);
+        console.log(`   - ${nbPAassocies} PA associés à des transactions`);
+        console.log(`   - ${nbAchatsMeres + nbAchatsFilles} achats lotisseurs (non-viabilisés)`);
+        console.log(`   - ${nbLotsVendus} lots vendus (viabilisés)\n`);
+        
+        // FIN ÉTAPE 4 - Passer directement aux statistiques
+        });
+    console.log('📊 ÉTAPE 5 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+    enrichirCoordonnees(db).then(() => {
+        // ÉTAPE 6 : Créer la table finale simplifiée
+        console.log('\n📊 ÉTAPE 6 : Création de la table finale simplifiée...');
+        
+        db.exec(`
+            CREATE TABLE terrains_batir (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                valeur_fonciere REAL,
+                surface_totale REAL,
+                surface_reelle_bati REAL,
+                prix_m2 REAL,
+                date_mutation TEXT,
+                latitude REAL,
+                longitude REAL,
+                nom_commune TEXT,
+                type_terrain TEXT,
+                id_pa TEXT
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_coords ON terrains_batir(latitude, longitude);
+            CREATE INDEX IF NOT EXISTS idx_date ON terrains_batir(date_mutation);
+            CREATE INDEX IF NOT EXISTS idx_type_terrain ON terrains_batir(type_terrain);
+            CREATE INDEX IF NOT EXISTS idx_commune ON terrains_batir(nom_commune);
+            CREATE INDEX IF NOT EXISTS idx_pa ON terrains_batir(id_pa);
+        `);
+        
+        // Copier les données en AGRÉGEANT par mutation
+        // FILTRE 1 : Ne garder QUE les transactions rattachées à un PA
+        // FILTRE 2 : Exclure les transactions NON géolocalisées ⚠️
+        // IMPORTANT : Une mutation = plusieurs parcelles → AGRÉGER !
+        db.exec(`
+            INSERT INTO terrains_batir (
+                valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+                date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa
+            )
+            SELECT 
+                MAX(valeur_fonciere) as valeur_fonciere,  -- Valeur UNIQUE (même pour toutes les parcelles)
+                SUM(surface_totale) as surface_totale,    -- SOMME des surfaces
+                SUM(surface_reelle_bati) as surface_reelle_bati,  -- SOMME du bâti
+                MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,  -- Recalculer le prix/m²
+                MIN(date_mutation) as date_mutation,      -- Date la plus ancienne
+                AVG(latitude) as latitude,                -- Moyenne des coordonnées
+                AVG(longitude) as longitude,
+                MAX(nom_commune) as nom_commune,
+                CASE 
+                    WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
+                    WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
+                    ELSE NULL
+                END as type_terrain,
+                id_pa
+            FROM terrains_batir_temp
+            WHERE id_pa IS NOT NULL
+            GROUP BY id_mutation, est_terrain_viabilise, id_pa;
+        `);
+        
+        // Supprimer la table temporaire
+        db.exec(`DROP TABLE terrains_batir_temp;`);
+        
+        const finalStats = db.prepare(`
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN type_terrain = 'VIABILISE' THEN 1 ELSE 0 END) as viabilises,
+                SUM(CASE WHEN type_terrain = 'NON_VIABILISE' THEN 1 ELSE 0 END) as non_viabilises,
+                COUNT(DISTINCT id_pa) as nb_pa
+            FROM terrains_batir
+        `).get();
+        
+        console.log(`✅ Table finale créée :`);
+        console.log(`   - Total : ${finalStats.total} transactions`);
+        console.log(`   - VIABILISE : ${finalStats.viabilises}`);
+        console.log(`   - NON_VIABILISE : ${finalStats.non_viabilises}`);
+        console.log(`   - PA distincts : ${finalStats.nb_pa}\n`);
+        
+        console.log('✅ Base terrains_batir créée avec succès !\n');
+        db.close();
+        process.exit(0);
+    }).catch(err => {
+        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
+        db.close();
+        process.exit(1);
+    });
+});
+}).catch(err => {
+    console.error('❌ Erreur:', err);
+    process.exit(1);
+});
+} // Fin de demarrerCreationBase()

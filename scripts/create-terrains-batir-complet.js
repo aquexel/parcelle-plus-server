@@ -46,8 +46,9 @@ const DFI_DIR = path.join(__dirname, '..', 'dvf_data'); // DFI dans le même dos
 const TEMP_DIR = path.join(__dirname, '..', 'temp_dfi');
 
 // URLs PA/PC
-const URL_PA = 'https://www.data.gouv.fr/api/1/datasets/r/9db13a09-72a9-4871-b430-13872b4890b3';
-const URL_PC = 'https://www.data.gouv.fr/api/1/datasets/r/65a9e264-7a20-46a9-9d98-66becb817bc3';
+// Format correct API data.gouv.fr: /api/1/datasets/{id}/
+const URL_PA = 'https://www.data.gouv.fr/api/1/datasets/9db13a09-72a9-4871-b430-13872b4890b3/';
+const URL_PC = 'https://www.data.gouv.fr/api/1/datasets/65a9e264-7a20-46a9-9d98-66becb817bc3/';
 const FILE_PA = path.join(DATA_DIR, 'Liste-des-permis-damenager.2025-10.csv');
 const FILE_PC = path.join(DATA_DIR, 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
 
@@ -125,38 +126,150 @@ function downloadWithRedirect(url, outputPath, fileName = '') {
 // Fonction pour obtenir l'URL de téléchargement depuis l'API data.gouv.fr
 function getDownloadUrl(apiUrl) {
     return new Promise((resolve, reject) => {
-        https.get(apiUrl, (response) => {
-            if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
-                return getDownloadUrl(response.headers.location).then(resolve).catch(reject);
-            }
-            
-            if (response.statusCode !== 200) {
-                reject(new Error(`Erreur HTTP ${response.statusCode} lors de l'accès à l'API`));
+        console.log(`   🔍 Accès à l'API: ${apiUrl}`);
+        
+        const requestOptions = {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; ParcellePlus/1.0)',
+                'Accept': 'application/json'
+            },
+            maxRedirects: 10
+        };
+        
+        const followRedirect = (currentUrl, depth = 0) => {
+            if (depth > 10) {
+                reject(new Error('Trop de redirections'));
                 return;
             }
             
-            let data = '';
-            response.on('data', (chunk) => {
-                data += chunk;
-            });
-            
-            response.on('end', () => {
-                try {
-                    const json = JSON.parse(data);
-                    if (json.url) {
-                        resolve(json.url);
-                    } else if (json.resources && json.resources.length > 0) {
-                        resolve(json.resources[0].url);
-                    } else {
-                        reject(new Error('URL de téléchargement non trouvée dans la réponse API'));
-                    }
-                } catch (err) {
-                    reject(new Error(`Erreur parsing JSON: ${err.message}`));
+            https.get(currentUrl, requestOptions, (response) => {
+                // Suivre les redirections
+                if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
+                    const redirectUrl = response.headers.location;
+                    console.log(`   ↪️  Redirection ${depth + 1} vers: ${redirectUrl}`);
+                    followRedirect(redirectUrl, depth + 1);
+                    return;
                 }
+                
+                if (response.statusCode !== 200) {
+                    reject(new Error(`Erreur HTTP ${response.statusCode} lors de l'accès à l'API`));
+                    return;
+                }
+                
+                const contentType = response.headers['content-type'] || '';
+                console.log(`   📋 Content-Type: ${contentType}`);
+                
+                // Si c'est directement un fichier CSV ou autre fichier, retourner l'URL actuelle
+                if (contentType.includes('text/csv') || 
+                    contentType.includes('application/octet-stream') ||
+                    contentType.includes('application/zip') ||
+                    contentType.includes('application/gzip') ||
+                    currentUrl.includes('.csv') ||
+                    currentUrl.includes('.zip') ||
+                    currentUrl.includes('.gz')) {
+                    console.log(`   ✅ URL directe vers fichier: ${currentUrl}`);
+                    resolve(currentUrl);
+                    return;
+                }
+                
+                // Sinon, essayer de parser comme JSON
+                let data = '';
+                response.on('data', (chunk) => {
+                    data += chunk.toString();
+                });
+                
+                response.on('end', () => {
+                    try {
+                        // Nettoyer la réponse : enlever les caractères de contrôle et les espaces en début/fin
+                        data = data.trim();
+                        
+                        // Vérifier si la réponse est vide
+                        if (!data || data.length === 0) {
+                            reject(new Error('Réponse vide de l\'API'));
+                            return;
+                        }
+                        
+                        // Vérifier si c'est du CSV au lieu de JSON (commence par des guillemets ou des lettres)
+                        if (data.startsWith('"') || data.startsWith('REG_') || data.startsWith('DEP_') || data.match(/^[A-Z_]+;/)) {
+                            console.log(`   ⚠️  Réponse semble être du CSV, pas du JSON. URL actuelle: ${currentUrl}`);
+                            resolve(currentUrl);
+                            return;
+                        }
+                        
+                        // Si la réponse commence par un point-virgule ou autre caractère invalide, essayer de le retirer
+                        if (data.startsWith(';') || data.startsWith(')') || data.startsWith('(')) {
+                            // Peut-être du JSONP, essayer d'extraire le JSON
+                            const jsonMatch = data.match(/\{[\s\S]*\}/);
+                            if (jsonMatch) {
+                                data = jsonMatch[0];
+                            } else {
+                                // Retirer les caractères invalides au début
+                                data = data.replace(/^[;()\s]+/, '');
+                            }
+                        }
+                        
+                        // Logger les premières lignes pour debug
+                        console.log(`   📥 Réponse reçue (${data.length} chars)`);
+                        if (data.length < 500) {
+                            console.log(`   Contenu: ${data.substring(0, Math.min(200, data.length))}...`);
+                        }
+                        
+                        const json = JSON.parse(data);
+                        
+                        // Chercher l'URL dans différentes structures possibles
+                        if (json.url) {
+                            console.log(`   ✅ URL trouvée: ${json.url}`);
+                            resolve(json.url);
+                        } else if (json.resources && json.resources.length > 0) {
+                            // Chercher la ressource avec l'extension .csv
+                            const csvResource = json.resources.find(r => r.url && (r.url.includes('.csv') || r.format === 'csv'));
+                            if (csvResource) {
+                                console.log(`   ✅ Ressource CSV trouvée: ${csvResource.url}`);
+                                resolve(csvResource.url);
+                            } else {
+                                console.log(`   ✅ Première ressource trouvée: ${json.resources[0].url}`);
+                                resolve(json.resources[0].url);
+                            }
+                        } else if (json.data && json.data.url) {
+                            console.log(`   ✅ URL dans data: ${json.data.url}`);
+                            resolve(json.data.url);
+                        } else if (json.download_url) {
+                            console.log(`   ✅ download_url trouvée: ${json.download_url}`);
+                            resolve(json.download_url);
+                        } else {
+                            console.error(`   ❌ Structure JSON inattendue. Clés disponibles: ${Object.keys(json).join(', ')}`);
+                            if (json.resources) {
+                                console.error(`   Ressources disponibles: ${JSON.stringify(json.resources.map(r => ({ title: r.title, url: r.url, format: r.format })), null, 2)}`);
+                            }
+                            reject(new Error('URL de téléchargement non trouvée dans la réponse API'));
+                        }
+                    } catch (err) {
+                        // Si l'erreur de parsing JSON et que l'URL semble pointer vers un fichier, utiliser l'URL directement
+                        if (currentUrl.includes('.csv') || currentUrl.includes('.zip') || currentUrl.includes('.gz') || 
+                            currentUrl.includes('datafiles') || currentUrl.includes('download')) {
+                            console.log(`   ⚠️  Erreur parsing JSON mais URL semble être un fichier direct: ${currentUrl}`);
+                            resolve(currentUrl);
+                            return;
+                        }
+                        
+                        console.error(`   ❌ Erreur parsing JSON: ${err.message}`);
+                        console.error(`   Position de l'erreur: ${err.message.match(/position (\d+)/)?.[1] || 'inconnue'}`);
+                        console.error(`   Caractères autour de l'erreur:`);
+                        const pos = parseInt(err.message.match(/position (\d+)/)?.[1] || '10');
+                        console.error(`   ${data.substring(Math.max(0, pos - 50), pos + 50)}`);
+                        console.error(`   Réponse complète (premiers 200 chars):`);
+                        console.error(`   ${data.substring(0, 200)}`);
+                        reject(new Error(`Erreur parsing JSON: ${err.message}`));
+                    }
+                });
+                
+                response.on('error', reject);
+            }).on('error', (err) => {
+                reject(new Error(`Erreur lors du téléchargement: ${err.message}`));
             });
-            
-            response.on('error', reject);
-        }).on('error', reject);
+        };
+        
+        followRedirect(apiUrl, 0);
     });
 }
 
@@ -249,7 +362,7 @@ async function telechargerDVFAnnee(annee) {
         
         if (annee === 2025) {
             // Pour 2025, utiliser l'API data.gouv.fr pour obtenir l'URL réelle
-            url = 'https://www.data.gouv.fr/api/1/datasets/r/4d741143-8331-4b59-95c2-3b24a7bdbe3c';
+            url = 'https://www.data.gouv.fr/api/1/datasets/4d741143-8331-4b59-95c2-3b24a7bdbe3c/';
             extension = '.txt.zip';
             // Résoudre l'URL via l'API avant de télécharger
             return getDownloadUrl(url).then(downloadUrl => {

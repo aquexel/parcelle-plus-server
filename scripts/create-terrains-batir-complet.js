@@ -491,10 +491,8 @@ async function telechargerDVFAnnee(annee) {
                         const size = fs.statSync(outputFile).size;
                         console.log(`\n   ✅ dvf_${annee}.csv créé (${(size / 1024 / 1024).toFixed(1)} MB)`);
                         
-                        // Normaliser le fichier au format uniforme
-                        normaliserFichierDVF(outputFile).then(() => {
-                            resolve();
-                        }).catch(reject);
+                        // La normalisation sera faite après tous les téléchargements
+                        resolve();
                     });
                     
                     writeStream.on('error', reject);
@@ -589,10 +587,8 @@ async function telechargerDVFAnnee(annee) {
                             const size = fs.statSync(outputFile).size;
                             console.log(`   ✅ dvf_${annee}.csv créé (${(size / 1024 / 1024).toFixed(1)} MB)`);
                             
-                            // Normaliser le fichier au format uniforme
-                            normaliserFichierDVF(outputFile).then(() => {
-                                resolve();
-                            }).catch(reject);
+                            // La normalisation sera faite après tous les téléchargements
+                            resolve();
                         } catch (err) {
                             if (fs.existsSync(tempZip)) fs.unlinkSync(tempZip);
                             reject(new Error(`Erreur décompression ZIP: ${err.message}`));

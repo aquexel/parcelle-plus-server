@@ -512,8 +512,9 @@ async function telechargerDVFAnnee(annee) {
                 dossier = '201904';
                 extension = '.txt';
             } else if (annee === 2019) {
-                dossier = '201904';
-                extension = '.txt.zip';
+                // Pour 2019, utiliser le dossier 202404
+                dossier = '202404';
+                extension = '.txt';
             } else {
                 dossier = '201904';
                 extension = '.txt';
@@ -522,12 +523,12 @@ async function telechargerDVFAnnee(annee) {
             url = `https://data.cquest.org/dgfip_dvf/${dossier}/valeursfoncieres-${annee}${extension}`;
         }
         
-        const makeRequest = (requestUrl) => {
+        const makeRequest = (requestUrl, isRetry = false) => {
             https.get(requestUrl, (response) => {
                 if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
                     const redirectUrl = response.headers.location;
                     console.log(`   ↪️  Redirection vers: ${redirectUrl}`);
-                    return makeRequest(redirectUrl);
+                    return makeRequest(redirectUrl, isRetry);
                 }
                 
                 if (response.statusCode !== 200) {

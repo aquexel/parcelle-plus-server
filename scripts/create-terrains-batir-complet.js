@@ -975,14 +975,33 @@ function extraireZIP(zipPath, outputDir) {
 function extraire7Z(file7z, outputDir) {
     console.log(`   📦 Décompression 7Z...`);
     
-    try {
-        execSync(`7z x "${file7z}" -o"${outputDir}" -y`, { stdio: 'inherit' });
-        console.log(`   ✅ 7Z décompressé avec 7-Zip\n`);
-        return true;
-    } catch (err) {
-        console.log(`   💡 7-Zip non trouvé, tentative avec Python...`);
-        
+    // Essayer différentes commandes 7z possibles
+    const commands7z = ['7z', '7za', '7zr', 'p7zip'];
+    
+    for (const cmd of commands7z) {
         try {
+            // Vérifier si la commande existe
+            execSync(`which ${cmd}`, { stdio: 'ignore' });
+            // Essayer d'extraire
+            execSync(`${cmd} x "${file7z}" -o"${outputDir}" -y`, { stdio: 'inherit' });
+            console.log(`   ✅ 7Z décompressé avec ${cmd}\n`);
+            return true;
+        } catch (err) {
+            // Continuer avec la commande suivante
+            continue;
+        }
+    }
+    
+    // Si aucune commande 7z n'a fonctionné, essayer Python
+    console.log(`   💡 7-Zip non trouvé, tentative avec Python...`);
+    
+    const pythonCommands = ['python3', 'python'];
+    
+    for (const pythonCmd of pythonCommands) {
+        try {
+            // Vérifier si Python existe
+            execSync(`which ${pythonCmd}`, { stdio: 'ignore' });
+            
             const pythonScript = `
 import py7zr
 import sys
@@ -1002,16 +1021,25 @@ print("Extraction terminée")
             const scriptPath = path.join(TEMP_DIR, 'extract_7z.py');
             fs.writeFileSync(scriptPath, pythonScript);
             
-            execSync(`python "${scriptPath}" "${file7z}" "${outputDir}"`, { stdio: 'inherit' });
+            execSync(`${pythonCmd} "${scriptPath}" "${file7z}" "${outputDir}"`, { stdio: 'inherit' });
             
             fs.unlinkSync(scriptPath);
-            console.log(`   ✅ 7Z décompressé avec Python\n`);
+            console.log(`   ✅ 7Z décompressé avec ${pythonCmd}\n`);
             return true;
         } catch (pyErr) {
-            console.error(`   ❌ Erreur décompression 7Z: ${pyErr.message}\n`);
-            return false;
+            // Continuer avec la commande suivante
+            continue;
         }
     }
+    
+    // Si tout a échoué, donner des instructions
+    console.error(`\n   ❌ Impossible de décompresser le fichier 7Z\n`);
+    console.error(`   📋 Pour installer 7-Zip sur Linux, exécutez :\n`);
+    console.error(`      sudo apt-get update && sudo apt-get install -y p7zip-full\n`);
+    console.error(`   📋 Ou pour Python avec py7zr :\n`);
+    console.error(`      pip3 install py7zr\n`);
+    console.error(`   💡 Ensuite, relancez le script.\n`);
+    return false;
 }
 
 function decompresserTxtZip(sourceDir) {

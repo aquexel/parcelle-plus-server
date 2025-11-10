@@ -773,16 +773,24 @@ function chargerTousLesCSV(db, insertStmt) {
                             const noPlan = noPlanRaw.padStart(4, '0');
                             
                             if (dept.length === 2 && comm.length === 3 && noPlan.length === 4) {
-                            // Normaliser la section (1-2 caractères, peut être alphanumérique)
-                            let sectionNorm = sectionRaw.toUpperCase();
-                            if (sectionNorm.length === 1) {
-                                sectionNorm = '0' + sectionNorm;
-                            } else if (sectionNorm.length === 0) {
-                                return; // Skip si pas de section
+                                // Normaliser la section (1-2 caractères, peut être alphanumérique)
+                                let sectionNorm = sectionRaw.toUpperCase();
+                                if (sectionNorm.length === 1) {
+                                    sectionNorm = '0' + sectionNorm;
+                                } else if (sectionNorm.length === 0) {
+                                    skippedNoSection++;
+                                    return; // Skip si pas de section
+                                }
+                                // S'assurer que la section fait 2 caractères
+                                sectionNorm = sectionNorm.padStart(2, '0').substring(0, 2);
+                                idParcelle = dept + comm + prefixeSection + sectionNorm + noPlan;
+                            } else {
+                                skippedConstructionFailed++;
+                                return;
                             }
-                            // S'assurer que la section fait 2 caractères
-                            sectionNorm = sectionNorm.padStart(2, '0').substring(0, 2);
-                            idParcelle = dept + comm + prefixeSection + sectionNorm + noPlan;
+                        } else {
+                            skippedConstructionFailed++;
+                            return;
                         }
                     }
                     

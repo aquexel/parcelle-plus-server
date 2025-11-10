@@ -660,25 +660,38 @@ function enrichirCoordonnees(db) {
 }
 
 // Fonction pour détecter automatiquement le séparateur d'un fichier CSV
+// Tous les fichiers DVF sont maintenant normalisés avec des virgules
 function detecterSeparateur(filePath) {
     try {
-        const firstLine = fs.readFileSync(filePath, 'utf8').split('\n')[0];
+        // Lire seulement la première ligne (plus rapide)
+        const fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(8192); // Lire les 8 premiers KB
+        const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
+        fs.closeSync(fd);
+        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n')[0];
+        
+        if (!firstLine || firstLine.trim().length === 0) {
+            return ','; // Par défaut virgule pour fichiers normalisés
+        }
+        
         const countPipe = (firstLine.match(/\|/g) || []).length;
         const countComma = (firstLine.match(/,/g) || []).length;
         
-        // Si le pipe apparaît plus souvent, c'est probablement le séparateur
-        if (countPipe > countComma && countPipe > 5) {
-            return '|';
-        }
-        // Si la virgule apparaît plus souvent, c'est probablement le séparateur
+        // Les fichiers normalisés utilisent des virgules
+        // Si beaucoup de virgules, c'est probablement le séparateur
         if (countComma > countPipe && countComma > 5) {
             return ',';
         }
-        // Par défaut, utiliser le pipe (format historique DVF)
-        return '|';
+        // Si beaucoup de pipes, c'est l'ancien format (non normalisé)
+        if (countPipe > countComma && countPipe > 5) {
+            return '|';
+        }
+        // Par défaut, utiliser la virgule (fichiers normalisés)
+        return ',';
     } catch (err) {
-        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: |`);
-        return '|';
+        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: ,`);
+        // En cas d'erreur, utiliser la virgule (fichiers normalisés)
+        return ',';
     }
 }
 

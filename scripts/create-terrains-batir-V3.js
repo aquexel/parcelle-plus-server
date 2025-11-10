@@ -34,8 +34,8 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 
-let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
-const LISTE_PA_FILE = path.join(__dirname, '..', '..', 'Liste-des-permis-damenager.2025-10.csv');
+let DB_FILE = path.join(__dirname, 'database', 'terrains_batir.db');
+const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
 // Plus de filtre département - France entière
 const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)
 
@@ -284,7 +284,7 @@ function attribuerTypeUsage(db) {
             }
         }
         
-        const LISTE_AUTORISATIONS_FILE = path.join(__dirname, '..', '..', 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
+        const LISTE_AUTORISATIONS_FILE = path.join(__dirname, '..', 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
         
         if (!fs.existsSync(LISTE_AUTORISATIONS_FILE)) {
             console.log('   ⚠️  Fichier Liste autorisations non trouvé, attribution type ignorée\n');
@@ -470,7 +470,7 @@ function attribuerTypeUsage(db) {
 function enrichirCoordonnees(db) {
     return new Promise((resolve, reject) => {
         // BDNB France entière - fichier parcelle.csv dans bdnb_data/csv
-        const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
+        const PARCELLE_FILE = path.join(__dirname, 'bdnb_data', 'csv', 'parcelle.csv');
         
         if (!fs.existsSync(PARCELLE_FILE)) {
             console.log('   ⚠️  Fichier parcelle.csv non trouvé, enrichissement coordonnées ignoré\n');
@@ -660,45 +660,32 @@ function enrichirCoordonnees(db) {
 }
 
 // Fonction pour détecter automatiquement le séparateur d'un fichier CSV
-// Tous les fichiers DVF sont maintenant normalisés avec des virgules
 function detecterSeparateur(filePath) {
     try {
-        // Lire seulement la première ligne (plus rapide)
-        const fd = fs.openSync(filePath, 'r');
-        const buffer = Buffer.alloc(8192); // Lire les 8 premiers KB
-        const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
-        fs.closeSync(fd);
-        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n')[0];
-        
-        if (!firstLine || firstLine.trim().length === 0) {
-            return ','; // Par défaut virgule pour fichiers normalisés
-        }
-        
+        const firstLine = fs.readFileSync(filePath, 'utf8').split('\n')[0];
         const countPipe = (firstLine.match(/\|/g) || []).length;
         const countComma = (firstLine.match(/,/g) || []).length;
         
-        // Les fichiers normalisés utilisent des virgules
-        // Si beaucoup de virgules, c'est probablement le séparateur
-        if (countComma > countPipe && countComma > 5) {
-            return ',';
-        }
-        // Si beaucoup de pipes, c'est l'ancien format (non normalisé)
+        // Si le pipe apparaît plus souvent, c'est probablement le séparateur
         if (countPipe > countComma && countPipe > 5) {
             return '|';
         }
-        // Par défaut, utiliser la virgule (fichiers normalisés)
-        return ',';
+        // Si la virgule apparaît plus souvent, c'est probablement le séparateur
+        if (countComma > countPipe && countComma > 5) {
+            return ',';
+        }
+        // Par défaut, utiliser le pipe (format historique DVF)
+        return '|';
     } catch (err) {
-        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: ,`);
-        // En cas d'erreur, utiliser la virgule (fichiers normalisés)
-        return ',';
+        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: |`);
+        return '|';
     }
 }
 
 // Fonction pour charger tous les CSV depuis dvf_data/
 function chargerTousLesCSV(db, insertStmt) {
     return new Promise((resolve, reject) => {
-        const dvfDir = path.join(__dirname, '..', 'dvf_data');
+        const dvfDir = path.join(__dirname, 'dvf_data');
         if (!fs.existsSync(dvfDir)) {
             console.log('   ❌ Dossier dvf_data non trouvé !\n');
             reject(new Error('Dossier dvf_data non trouvé'));
@@ -772,14 +759,20 @@ function chargerTousLesCSV(db, insertStmt) {
                     let idParcelle = row.id_parcelle || '';
                     if (!idParcelle) {
                         // Construire depuis les colonnes normalisées
-                        const dept = (row.code_departement || '').trim().padStart(2, '0');
-                        const comm = (row.code_commune || '').trim().padStart(3, '0');
+                        const deptRaw = (row.code_departement || '').trim();
+                        const commRaw = (row.code_commune || '').trim();
                         const prefixeSectionRaw = (row.prefixe_section || row.prefixe_de_section || '').trim();
-                        const prefixeSection = prefixeSectionRaw ? prefixeSectionRaw.padStart(3, '0') : '000';
                         const sectionRaw = (row.section || '').trim();
-                        const noPlan = (row.numero_plan || row.no_plan || '').trim().padStart(4, '0');
+                        const noPlanRaw = (row.numero_plan || row.no_plan || '').trim();
                         
-                        if (dept && dept.length === 2 && comm && comm.length === 3 && sectionRaw && noPlan && noPlan.length === 4) {
+                        // Vérifier que toutes les valeurs nécessaires sont présentes AVANT le padding
+                        if (deptRaw && deptRaw.length >= 1 && commRaw && commRaw.length >= 1 && sectionRaw && noPlanRaw && noPlanRaw.length >= 1) {
+                            const dept = deptRaw.padStart(2, '0');
+                            const comm = commRaw.padStart(3, '0');
+                            const prefixeSection = prefixeSectionRaw ? prefixeSectionRaw.padStart(3, '0') : '000';
+                            const noPlan = noPlanRaw.padStart(4, '0');
+                            
+                            if (dept.length === 2 && comm.length === 3 && noPlan.length === 4) {
                             // Normaliser la section (1-2 caractères, peut être alphanumérique)
                             let sectionNorm = sectionRaw.toUpperCase();
                             if (sectionNorm.length === 1) {
@@ -1325,7 +1318,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // SOUS-ÉTAPE 4.3.5 : Enrichir les superficies depuis parcelle.csv si nulles
         console.log('⚡ 4.3.5 - Enrichissement des superficies depuis parcelle.csv...');
-        const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
+        const PARCELLE_FILE = path.join(__dirname, 'bdnb_data', 'csv', 'parcelle.csv');
         
         return new Promise((resolve) => {
             if (fs.existsSync(PARCELLE_FILE)) {
@@ -1536,6 +1529,52 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,  -- Recalculer le prix/m²
                 MIN(date_mutation) as date_mutation,      -- Date la plus ancienne
                 AVG(latitude) as latitude,                -- Moyenne des coordonnées
+                AVG(longitude) as longitude,
+                MAX(nom_commune) as nom_commune,
+                CASE 
+                    WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
+                    WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
+                    ELSE NULL
+                END as type_terrain,
+                id_pa
+            FROM terrains_batir_temp
+            WHERE id_pa IS NOT NULL
+            GROUP BY id_mutation, est_terrain_viabilise, id_pa;
+        `);
+        
+        // Supprimer la table temporaire
+        db.exec(`DROP TABLE terrains_batir_temp;`);
+        
+        const finalStats = db.prepare(`
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN type_terrain = 'VIABILISE' THEN 1 ELSE 0 END) as viabilises,
+                SUM(CASE WHEN type_terrain = 'NON_VIABILISE' THEN 1 ELSE 0 END) as non_viabilises,
+                COUNT(DISTINCT id_pa) as nb_pa
+            FROM terrains_batir
+        `).get();
+        
+        console.log(`✅ Table finale créée :`);
+        console.log(`   - Total : ${finalStats.total} transactions`);
+        console.log(`   - VIABILISE : ${finalStats.viabilises}`);
+        console.log(`   - NON_VIABILISE : ${finalStats.non_viabilises}`);
+        console.log(`   - PA distincts : ${finalStats.nb_pa}\n`);
+        
+        console.log('✅ Base terrains_batir créée avec succès !\n');
+        db.close();
+        process.exit(0);
+    }).catch(err => {
+        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
+        db.close();
+        process.exit(1);
+    });
+});
+}).catch(err => {
+    console.error('❌ Erreur:', err);
+    process.exit(1);
+});
+} // Fin de demarrerCreationBase()
+
                 AVG(longitude) as longitude,
                 MAX(nom_commune) as nom_commune,
                 CASE 

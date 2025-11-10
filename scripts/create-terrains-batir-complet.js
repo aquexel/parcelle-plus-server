@@ -687,9 +687,42 @@ function escapeCSV(value) {
     return str;
 }
 
+// Fonction pour vérifier si un fichier DVF est déjà normalisé
+function estDejaNormalise(filePath) {
+    try {
+        const firstLine = fs.readFileSync(filePath, 'utf8').split('\n')[0];
+        
+        // Vérifier le séparateur (doit être une virgule)
+        if (!firstLine.includes(',')) {
+            return false;
+        }
+        
+        // Vérifier que les colonnes sont en minuscules avec underscores (pas d'espaces, pas de majuscules)
+        const colonnes = firstLine.split(',');
+        for (const col of colonnes) {
+            const colClean = col.trim().replace(/"/g, '');
+            // Si la colonne contient des espaces ou des majuscules (sauf pour les valeurs), ce n'est pas normalisé
+            if (colClean.includes(' ') || /[A-Z]/.test(colClean)) {
+                return false;
+            }
+        }
+        
+        return true;
+    } catch (err) {
+        return false;
+    }
+}
+
 // Fonction pour normaliser un fichier DVF (convertir au format uniforme) - Version streaming optimisée
 function normaliserFichierDVF(filePath) {
     return new Promise((resolve, reject) => {
+        // Vérifier si le fichier est déjà normalisé
+        if (estDejaNormalise(filePath)) {
+            console.log(`   ⏭️  ${path.basename(filePath)} déjà normalisé, ignoré`);
+            resolve();
+            return;
+        }
+        
         console.log(`   🔄 Normalisation du fichier ${path.basename(filePath)}...`);
         
         const separator = detecterSeparateur(filePath);

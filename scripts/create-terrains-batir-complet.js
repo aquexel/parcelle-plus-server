@@ -46,9 +46,9 @@ const DFI_DIR = path.join(__dirname, '..', 'dvf_data'); // DFI dans le même dos
 const TEMP_DIR = path.join(__dirname, '..', 'temp_dfi');
 
 // URLs PA/PC
-// Format correct API data.gouv.fr: /api/1/datasets/{id}/
-const URL_PA = 'https://www.data.gouv.fr/api/1/datasets/9db13a09-72a9-4871-b430-13872b4890b3/';
-const URL_PC = 'https://www.data.gouv.fr/api/1/datasets/65a9e264-7a20-46a9-9d98-66becb817bc3/';
+// Format /r/ redirige directement vers le fichier CSV (géré par getDownloadUrl)
+const URL_PA = 'https://www.data.gouv.fr/api/1/datasets/r/9db13a09-72a9-4871-b430-13872b4890b3';
+const URL_PC = 'https://www.data.gouv.fr/api/1/datasets/r/65a9e264-7a20-46a9-9d98-66becb817bc3';
 const FILE_PA = path.join(DATA_DIR, 'Liste-des-permis-damenager.2025-10.csv');
 const FILE_PC = path.join(DATA_DIR, 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
 
@@ -362,7 +362,7 @@ async function telechargerDVFAnnee(annee) {
         
         if (annee === 2025) {
             // Pour 2025, utiliser l'API data.gouv.fr pour obtenir l'URL réelle
-            url = 'https://www.data.gouv.fr/api/1/datasets/4d741143-8331-4b59-95c2-3b24a7bdbe3c/';
+            url = 'https://www.data.gouv.fr/api/1/datasets/r/4d741143-8331-4b59-95c2-3b24a7bdbe3c';
             extension = '.txt.zip';
             // Résoudre l'URL via l'API avant de télécharger
             return getDownloadUrl(url).then(downloadUrl => {

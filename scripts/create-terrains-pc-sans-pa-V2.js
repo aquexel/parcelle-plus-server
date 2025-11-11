@@ -29,7 +29,7 @@ const DB_SOURCE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
 const DVF_DIR = path.join(__dirname, '..', 'dvf_data');
 // BDNB France entière - fichier parcelle.csv dans bdnb_data/csv
 const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
-const LISTE_AUTORISATIONS_FILE = path.join(__dirname, '..', '..', 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
+const LISTE_AUTORISATIONS_FILE = path.join(__dirname, '..', 'Liste-des-autorisations-durbanisme-creant-des-logements.2025-10.csv');
 // Plus de filtre département - France entière
 
 // =======================

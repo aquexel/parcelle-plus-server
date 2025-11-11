@@ -1138,23 +1138,33 @@ function deplacerFichiersTXT(sourceDir) {
     // Debug : lister quelques fichiers trouvés
     if (fichiersTXT.length === 0) {
         console.log(`   ⚠️  Aucun fichier .txt trouvé dans ${sourceDir}`);
-        // Lister les fichiers présents pour debug
+        // Lister les fichiers présents pour debug (fonction récursive)
         try {
-            const allFiles = fs.readdirSync(sourceDir, { recursive: true, withFileTypes: true });
-            const txtFiles = [];
-            const zipFiles = [];
-            for (const file of allFiles) {
-                if (file.isFile()) {
-                    const name = typeof file === 'string' ? file : file.name;
-                    if (name.endsWith('.txt')) txtFiles.push(name);
-                    if (name.endsWith('.txt.zip')) zipFiles.push(name);
+            function listerFichiersRecursif(dir, baseDir = '') {
+                const fichiers = [];
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(dir, entry.name);
+                    const relPath = path.join(baseDir, entry.name);
+                    if (entry.isDirectory()) {
+                        fichiers.push(...listerFichiersRecursif(fullPath, relPath));
+                    } else if (entry.isFile()) {
+                        fichiers.push(relPath);
+                    }
                 }
+                return fichiers;
             }
+            const allFiles = listerFichiersRecursif(sourceDir);
+            const txtFiles = allFiles.filter(f => f.endsWith('.txt') && !f.endsWith('.txt.zip'));
+            const zipFiles = allFiles.filter(f => f.endsWith('.txt.zip'));
             if (txtFiles.length > 0) {
                 console.log(`   📄 Fichiers .txt trouvés (non dfiano-dep): ${txtFiles.slice(0, 5).join(', ')}${txtFiles.length > 5 ? '...' : ''}`);
             }
             if (zipFiles.length > 0) {
                 console.log(`   📦 Fichiers .txt.zip trouvés: ${zipFiles.slice(0, 5).join(', ')}${zipFiles.length > 5 ? '...' : ''}`);
+            }
+            if (txtFiles.length === 0 && zipFiles.length === 0) {
+                console.log(`   📂 Contenu du répertoire: ${fs.readdirSync(sourceDir).slice(0, 10).join(', ')}${fs.readdirSync(sourceDir).length > 10 ? '...' : ''}`);
             }
         } catch (err) {
             console.log(`   ⚠️  Erreur lecture répertoire: ${err.message}`);

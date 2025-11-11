@@ -1097,67 +1097,78 @@ function decompresserTxtZip(sourceDir) {
         
         let success = false;
         
-        // Méthode 1 : Essayer avec unzip
-        try {
-            execSync(`unzip -q -o "${fichierZip}" -d "${dirZip}"`, {
-                stdio: 'pipe'
-            });
-            if (fs.existsSync(fichierTxtAttendu)) {
-                success = true;
+        // Méthode 1 : Essayer avec 7zip (méthode principale pour les fichiers DFI)
+        const commands7z = ['7z', '7za', '7zr', 'p7zip'];
+        
+        for (const cmd of commands7z) {
+            try {
+                // Vérifier si la commande existe
+                execSync(`which ${cmd}`, { stdio: 'ignore' });
+                // Extraire avec 7zip
+                execSync(`${cmd} x "${fichierZip}" -o"${dirZip}" -y`, {
+                    stdio: 'pipe'
+                });
+                if (fs.existsSync(fichierTxtAttendu)) {
+                    success = true;
+                    break;
+                }
+            } catch (err) {
+                // Continuer avec la commande suivante
+                continue;
             }
-        } catch (err) {
-            // Continuer avec les autres méthodes
         }
         
-        // Méthode 2 : Si unzip échoue, essayer avec Python zipfile
+        // Méthode 2 : Si 7zip échoue, essayer avec Python py7zr
         if (!success) {
-            try {
-                const scriptPython = `
-import zipfile
+            const pythonCommands = ['python3', 'python'];
+            for (const pythonCmd of pythonCommands) {
+                try {
+                    execSync(`which ${pythonCmd}`, { stdio: 'ignore' });
+                    
+                    const pythonScript = `
+import py7zr
 import sys
 import os
 
-zip_path = sys.argv[1]
-extract_dir = sys.argv[2]
+archive_path = sys.argv[1]
+output_dir = sys.argv[2]
 
-with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-    zip_ref.extractall(extract_dir)
+os.makedirs(output_dir, exist_ok=True)
+
+with py7zr.SevenZipFile(archive_path, mode='r') as archive:
+    archive.extractall(path=output_dir)
 `;
-                const tempScript = path.join(dirZip, 'extract_temp.py');
-                fs.writeFileSync(tempScript, scriptPython);
-                
-                execSync(`python3 "${tempScript}" "${fichierZip}" "${dirZip}"`, {
-                    stdio: 'pipe'
-                });
-                
-                if (fs.existsSync(fichierTxtAttendu)) {
-                    success = true;
+                    const tempScript = path.join(dirZip, 'extract_temp.py');
+                    fs.writeFileSync(tempScript, pythonScript);
+                    
+                    execSync(`${pythonCmd} "${tempScript}" "${fichierZip}" "${dirZip}"`, {
+                        stdio: 'pipe'
+                    });
+                    
+                    if (fs.existsSync(fichierTxtAttendu)) {
+                        success = true;
+                    }
+                    
+                    // Nettoyer le script temporaire
+                    if (fs.existsSync(tempScript)) {
+                        fs.unlinkSync(tempScript);
+                    }
+                    
+                    if (success) break;
+                } catch (err) {
+                    // Continuer avec la commande suivante
+                    continue;
                 }
-                
-                // Nettoyer le script temporaire
-                if (fs.existsSync(tempScript)) {
-                    fs.unlinkSync(tempScript);
-                }
-            } catch (err) {
-                // Continuer
             }
         }
         
-        // Méthode 3 : Si c'est juste un fichier .txt renommé en .zip, copier directement
+        // Méthode 3 : Fallback avec unzip (au cas où c'est un vrai ZIP)
         if (!success) {
             try {
-                // Vérifier si le fichier commence par du texte (pas un vrai ZIP)
-                const buffer = Buffer.alloc(4);
-                const fd = fs.openSync(fichierZip, 'r');
-                fs.readSync(fd, buffer, 0, 4, 0);
-                fs.closeSync(fd);
-                
-                // Si ce n'est pas un ZIP (PK\x03\x04), c'est peut-être juste un fichier texte
-                const isZip = buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04;
-                
-                if (!isZip) {
-                    // C'est probablement juste un fichier texte avec extension .zip
-                    fs.copyFileSync(fichierZip, fichierTxtAttendu);
+                execSync(`unzip -q -o "${fichierZip}" -d "${dirZip}"`, {
+                    stdio: 'pipe'
+                });
+                if (fs.existsSync(fichierTxtAttendu)) {
                     success = true;
                 }
             } catch (err) {

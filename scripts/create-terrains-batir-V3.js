@@ -783,13 +783,27 @@ function chargerTousLesCSV(db, insertStmt) {
             const stream = fs.createReadStream(filePath);
             
             let count = 0;
+            let totalRows = 0;
             let lastLog = Date.now();
             let skippedNoSection = 0;
             let skippedConstructionFailed = 0;
+            let skippedNoIdParcelle = 0;
+            let skippedValeurFonciereZero = 0;
+            let skippedNoSectionExtracted = 0;
+            let firstRowColumns = null;
             
             stream
                 .pipe(csv({ separator, skipLinesWithError: true }))
                 .on('data', (row) => {
+                    totalRows++;
+                    
+                    // Afficher les colonnes de la première ligne pour debug
+                    if (totalRows === 1 && !firstRowColumns) {
+                        firstRowColumns = Object.keys(row);
+                        console.log(`      📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 15).join(', ')}...`);
+                        console.log(`      🔍 Exemple première ligne: id_parcelle="${row.id_parcelle}", valeur_fonciere="${row.valeur_fonciere}", code_departement="${row.code_departement}"`);
+                    }
+                    
                     // Format DVF uniformisé : tous les fichiers sont maintenant normalisés
                     // Colonnes en minuscules avec underscores (ex: "code_departement", "valeur_fonciere")
                     
@@ -841,17 +855,26 @@ function chargerTousLesCSV(db, insertStmt) {
                         }
                     }
                     
-                    if (!idParcelle || idParcelle.length < 10) return;
+                    if (!idParcelle || idParcelle.length < 10) {
+                        skippedNoIdParcelle++;
+                        return;
+                    }
                     
                     // France entière - pas de filtre département
                     
                     // Parser valeur foncière (format français avec virgule)
                     const valeurFonciere = parseFloat(valeurFonciereStr.toString().replace(/\s/g, '').replace(',', '.'));
                     
-                    if (valeurFonciere <= 0) return;
+                    if (valeurFonciere <= 0) {
+                        skippedValeurFonciereZero++;
+                        return;
+                    }
                     
                     const section = extraireSection(idParcelle);
-                    if (!section) return; // Skip si on ne peut pas extraire la section
+                    if (!section) {
+                        skippedNoSectionExtracted++;
+                        return; // Skip si on ne peut pas extraire la section
+                    }
                     
                     const prixM2 = surfaceTerrain > 0 ? valeurFonciere / surfaceTerrain : 0;
                     
@@ -924,6 +947,14 @@ function chargerTousLesCSV(db, insertStmt) {
                     }
                 })
                 .on('end', () => {
+                    console.log(`      📊 Statistiques pour ${name}:`);
+                    console.log(`         - Lignes lues: ${totalRows}`);
+                    console.log(`         - Transactions insérées: ${count}`);
+                    console.log(`         - Ignorées (pas de section): ${skippedNoSection}`);
+                    console.log(`         - Ignorées (construction id_parcelle échouée): ${skippedConstructionFailed}`);
+                    console.log(`         - Ignorées (pas d'id_parcelle valide): ${skippedNoIdParcelle}`);
+                    console.log(`         - Ignorées (valeur foncière <= 0): ${skippedValeurFonciereZero}`);
+                    console.log(`         - Ignorées (section non extraite): ${skippedNoSectionExtracted}`);
                     console.log(`      ✅ ${count} transactions insérées depuis ${name}\n`);
                     totalInserted += count;
                     // Passer au fichier suivant

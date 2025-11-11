@@ -1081,29 +1081,117 @@ function decompresserTxtZip(sourceDir) {
     console.log(`   📄 ${fichiersZip.length} fichier(s) .txt.zip trouvé(s), décompression...`);
     
     let decompresses = 0;
+    let erreurs = 0;
+    
     for (const fichierZip of fichiersZip) {
         const dirZip = path.dirname(fichierZip);
+        const nomFichier = path.basename(fichierZip);
+        const nomSansZip = nomFichier.replace('.zip', '');
+        const fichierTxtAttendu = path.join(dirZip, nomSansZip);
         
+        // Vérifier si le fichier .txt existe déjà (déjà décompressé)
+        if (fs.existsSync(fichierTxtAttendu)) {
+            decompresses++;
+            continue;
+        }
+        
+        let success = false;
+        
+        // Méthode 1 : Essayer avec unzip
         try {
-            // Utiliser unzip sur Linux (pas PowerShell)
             execSync(`unzip -q -o "${fichierZip}" -d "${dirZip}"`, {
-                stdio: 'ignore'
+                stdio: 'pipe'
             });
-            
-            fs.unlinkSync(fichierZip);
+            if (fs.existsSync(fichierTxtAttendu)) {
+                success = true;
+            }
+        } catch (err) {
+            // Continuer avec les autres méthodes
+        }
+        
+        // Méthode 2 : Si unzip échoue, essayer avec Python zipfile
+        if (!success) {
+            try {
+                const scriptPython = `
+import zipfile
+import sys
+import os
+
+zip_path = sys.argv[1]
+extract_dir = sys.argv[2]
+
+with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+    zip_ref.extractall(extract_dir)
+`;
+                const tempScript = path.join(dirZip, 'extract_temp.py');
+                fs.writeFileSync(tempScript, scriptPython);
+                
+                execSync(`python3 "${tempScript}" "${fichierZip}" "${dirZip}"`, {
+                    stdio: 'pipe'
+                });
+                
+                if (fs.existsSync(fichierTxtAttendu)) {
+                    success = true;
+                }
+                
+                // Nettoyer le script temporaire
+                if (fs.existsSync(tempScript)) {
+                    fs.unlinkSync(tempScript);
+                }
+            } catch (err) {
+                // Continuer
+            }
+        }
+        
+        // Méthode 3 : Si c'est juste un fichier .txt renommé en .zip, copier directement
+        if (!success) {
+            try {
+                // Vérifier si le fichier commence par du texte (pas un vrai ZIP)
+                const buffer = Buffer.alloc(4);
+                const fd = fs.openSync(fichierZip, 'r');
+                fs.readSync(fd, buffer, 0, 4, 0);
+                fs.closeSync(fd);
+                
+                // Si ce n'est pas un ZIP (PK\x03\x04), c'est peut-être juste un fichier texte
+                const isZip = buffer[0] === 0x50 && buffer[1] === 0x4B && buffer[2] === 0x03 && buffer[3] === 0x04;
+                
+                if (!isZip) {
+                    // C'est probablement juste un fichier texte avec extension .zip
+                    fs.copyFileSync(fichierZip, fichierTxtAttendu);
+                    success = true;
+                }
+            } catch (err) {
+                // Ignorer
+            }
+        }
+        
+        if (success) {
+            // Supprimer le fichier .zip seulement si la décompression a réussi
+            try {
+                fs.unlinkSync(fichierZip);
+            } catch (err) {
+                // Ignorer si suppression échoue
+            }
             decompresses++;
             
             if (decompresses % 10 === 0) {
                 process.stdout.write(`\r   📦 ${decompresses}/${fichiersZip.length} fichiers décompressés...`);
             }
-        } catch (err) {
-            // Ignorer les erreurs individuelles
-            console.error(`      ⚠️  Erreur décompression ${path.basename(fichierZip)}: ${err.message}`);
+        } else {
+            erreurs++;
+            console.error(`\n      ⚠️  Impossible de décompresser ${nomFichier}`);
         }
     }
     
     if (decompresses > 0) {
-        console.log(`\r   ✅ ${decompresses} fichier(s) .txt.zip décompressé(s)\n`);
+        console.log(`\r   ✅ ${decompresses} fichier(s) .txt.zip décompressé(s)`);
+        if (erreurs > 0) {
+            console.log(`   ⚠️  ${erreurs} fichier(s) en erreur\n`);
+        } else {
+            console.log('');
+        }
+    } else if (erreurs > 0) {
+        console.log(`\n   ❌ Aucun fichier décompressé (${erreurs} erreur(s))\n`);
     }
     
     return decompresses;

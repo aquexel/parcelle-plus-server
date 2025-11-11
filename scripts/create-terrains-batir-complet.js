@@ -1524,11 +1524,18 @@ async function chargerDFIDansBase() {
                 
                 // Afficher la barre de progression toutes les 10000 lignes
                 if (ligneCount % 10000 === 0) {
-                    const pourcentage = totalLignes > 0 ? Math.min(100, Math.round((ligneCount / totalLignes) * 100)) : 0;
                     const barreLength = 20;
-                    const filled = totalLignes > 0 ? Math.round((ligneCount / totalLignes) * barreLength) : 0;
-                    const empty = barreLength - filled;
-                    const barre = '█'.repeat(filled) + '░'.repeat(empty);
+                    let filled = 0;
+                    let empty = barreLength;
+                    let pourcentage = 0;
+                    
+                    if (totalLignes > 0) {
+                        pourcentage = Math.min(100, Math.round((ligneCount / totalLignes) * 100));
+                        filled = Math.max(0, Math.min(barreLength, Math.round((ligneCount / totalLignes) * barreLength)));
+                        empty = Math.max(0, barreLength - filled);
+                    }
+                    
+                    const barre = '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, empty));
                     process.stdout.write(`\r      [${barre}] ${pourcentage}% - ${ligneCount.toLocaleString()} lignes, ${dfiData.size} DFI`);
                 }
             });
@@ -1560,11 +1567,18 @@ async function chargerDFIDansBase() {
     
     // Fonction pour afficher une barre de progression
     function afficherBarreProgression(current, total, prefix = '') {
-        const pourcentage = Math.round((current / total) * 100);
         const barreLength = 30;
-        const filled = Math.round((current / total) * barreLength);
-        const empty = barreLength - filled;
-        const barre = '█'.repeat(filled) + '░'.repeat(empty);
+        let filled = 0;
+        let empty = barreLength;
+        let pourcentage = 0;
+        
+        if (total > 0 && current >= 0) {
+            pourcentage = Math.min(100, Math.max(0, Math.round((current / total) * 100)));
+            filled = Math.max(0, Math.min(barreLength, Math.round((current / total) * barreLength)));
+            empty = Math.max(0, barreLength - filled);
+        }
+        
+        const barre = '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, empty));
         process.stdout.write(`\r${prefix}[${barre}] ${pourcentage}% (${current}/${total})`);
     }
     

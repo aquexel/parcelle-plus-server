@@ -34,7 +34,7 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 
-let DB_FILE = path.join(__dirname, 'database', 'terrains_batir.db');
+let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
 // Plus de filtre département - France entière
 const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)

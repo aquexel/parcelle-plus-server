@@ -669,23 +669,61 @@ function enrichirCoordonnees(db) {
 // Fonction pour détecter automatiquement le séparateur d'un fichier CSV
 function detecterSeparateur(filePath) {
     try {
-        const firstLine = fs.readFileSync(filePath, 'utf8').split('\n')[0];
-        const countPipe = (firstLine.match(/\|/g) || []).length;
-        const countComma = (firstLine.match(/,/g) || []).length;
-        
-        // Si le pipe apparaît plus souvent, c'est probablement le séparateur
-        if (countPipe > countComma && countPipe > 5) {
-            return '|';
-        }
-        // Si la virgule apparaît plus souvent, c'est probablement le séparateur
-        if (countComma > countPipe && countComma > 5) {
+        const fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(8192);
+        const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
+        fs.closeSync(fd);
+        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n')[0];
+
+        if (!firstLine || firstLine.trim().length === 0) {
             return ',';
         }
-        // Par défaut, utiliser le pipe (format historique DVF)
-        return '|';
+        const countPipe = (firstLine.match(/\|/g) || []).length;
+        const countComma = (firstLine.match(/,/g) || []).length;
+        const countSemicolon = (firstLine.match(/;/g) || []).length;
+        
+        if (countComma > countPipe && countComma > countSemicolon && countComma > 5) {
+            return ',';
+        }
+        if (countPipe > countComma && countPipe > countSemicolon && countPipe > 5) {
+            return '|';
+        }
+        if (countSemicolon > countComma && countSemicolon > countPipe && countSemicolon > 5) {
+            return ';';
+        }
+        return ','; // Default to comma for normalized files
     } catch (err) {
-        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: |`);
-        return '|';
+        console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: ,`);
+        return ',';
+    }
+}
+
+// Fonction pour détecter le séparateur du fichier PA (peut être ; ou ,)
+function detecterSeparateurPA(filePath) {
+    try {
+        const fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(8192);
+        const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
+        fs.closeSync(fd);
+        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n')[0];
+
+        if (!firstLine || firstLine.trim().length === 0) {
+            return ';';
+        }
+        const countSemicolon = (firstLine.match(/;/g) || []).length;
+        const countComma = (firstLine.match(/,/g) || []).length;
+        
+        // Les fichiers PA utilisent généralement le point-virgule
+        if (countSemicolon > countComma && countSemicolon > 5) {
+            return ';';
+        }
+        if (countComma > countSemicolon && countComma > 5) {
+            return ',';
+        }
+        return ';'; // Default to semicolon for PA files
+    } catch (err) {
+        console.log(`   ⚠️  Erreur détection séparateur PA, utilisation par défaut: ;`);
+        return ';';
     }
 }
 
@@ -1011,12 +1049,44 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
 
     // ÉTAPE 3 : Charger les PA
     console.log('📊 ÉTAPE 3 : Chargement de la liste des PA...');
+    
+    // Vérifier que le fichier existe
+    if (!fs.existsSync(LISTE_PA_FILE)) {
+        console.log(`   ❌ Fichier PA non trouvé : ${LISTE_PA_FILE}\n`);
+        console.log(`   💡 Vérifiez que le fichier a été téléchargé par le script complet.\n`);
+        throw new Error(`Fichier PA non trouvé : ${LISTE_PA_FILE}`);
+    }
+    
+    // Détecter le séparateur
+    const separateurPA = detecterSeparateurPA(LISTE_PA_FILE);
+    console.log(`   🔍 Séparateur détecté: "${separateurPA}"`);
+    
+    // Afficher les premières lignes pour debug
+    const fileSize = fs.statSync(LISTE_PA_FILE).size;
+    console.log(`   📏 Taille du fichier: ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
+    
     const paList = [];
+    let ligneCount = 0;
+    let skippedNoNumPA = 0;
+    let skippedNoDate = 0;
+    let skippedNoSections = 0;
+    let firstRowColumns = null;
+    
     return new Promise((resolve, reject) => {
         fs.createReadStream(LISTE_PA_FILE)
-        .pipe(csv({ separator: ';', skipLines: 1, skipLinesWithError: true }))
+        .pipe(csv({ separator: separateurPA, skipLinesWithError: true }))
         .on('data', (row) => {
-            // Après skipLines: 1, csv-parser utilise la 2ème ligne d'en-tête (codes courts)
+            ligneCount++;
+            
+            // Afficher les colonnes de la première ligne pour debug
+            if (ligneCount === 1 && !firstRowColumns) {
+                firstRowColumns = Object.keys(row);
+                console.log(`   📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 10).join(', ')}...`);
+                // Afficher aussi un exemple de valeurs pour debug
+                console.log(`   🔍 Exemple première ligne: NUM_PA="${row.NUM_PA}", DATE_REELLE_AUTORISATION="${row.DATE_REELLE_AUTORISATION}", COMM="${row.COMM}"`);
+            }
+            
+            // Utiliser directement la première ligne comme en-tête (comme le script PC)
             // France entière - pas de filtre département
             
             const numPA = row.NUM_PA;
@@ -1029,7 +1099,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             // Combiner lieu-dit et adresse pour la recherche
             const adresseCombinée = [lieuDit, adresseVoie].filter(a => a && a.length > 0).join(' ');
             
-            if (!numPA || !dateAuth) return;
+            if (!numPA) {
+                skippedNoNumPA++;
+                return;
+            }
+            if (!dateAuth) {
+                skippedNoDate++;
+                return;
+            }
             
             // Extraire sections et parcelles
             const sections = new Set();
@@ -1057,6 +1134,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 sections.add(sec3);
                 const parcelleId = normaliserParcelle(comm, sec3, num3);
                 if (parcelleId) parcelles.push(parcelleId);
+            }
+            
+            if (sections.size === 0) {
+                skippedNoSections++;
+                return;
             }
             
             if (sections.size > 0) {

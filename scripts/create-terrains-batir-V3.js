@@ -477,7 +477,7 @@ function attribuerTypeUsage(db) {
 function enrichirCoordonnees(db) {
     return new Promise((resolve, reject) => {
         // BDNB France entière - fichier parcelle.csv dans bdnb_data/csv
-        const PARCELLE_FILE = path.join(__dirname, 'bdnb_data', 'csv', 'parcelle.csv');
+        const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
         
         if (!fs.existsSync(PARCELLE_FILE)) {
             console.log('   ⚠️  Fichier parcelle.csv non trouvé, enrichissement coordonnées ignoré\n');
@@ -746,6 +746,8 @@ function chargerTousLesCSV(db, insertStmt) {
             
             let count = 0;
             let lastLog = Date.now();
+            let skippedNoSection = 0;
+            let skippedConstructionFailed = 0;
             
             stream
                 .pipe(csv({ separator, skipLinesWithError: true }))

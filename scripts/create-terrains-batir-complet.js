@@ -928,9 +928,21 @@ async function telechargerDFI() {
     }
     
     console.log('📋 Organisation des fichiers...\n');
-    deplacerFichiersTXT(extractDir1);
+    const deplaces1 = deplacerFichiersTXT(extractDir1);
+    let deplaces2 = 0;
     if (success2) {
-        deplacerFichiersTXT(extractDir2);
+        deplaces2 = deplacerFichiersTXT(extractDir2);
+    }
+    
+    const totalDeplaces = deplaces1 + deplaces2;
+    if (totalDeplaces === 0) {
+        console.log('⚠️  Aucun fichier DFI déplacé vers dvf_data. Vérifiez les répertoires d\'extraction.\n');
+        console.log(`   📂 Répertoire extraction 1: ${extractDir1}\n`);
+        if (success2) {
+            console.log(`   📂 Répertoire extraction 2: ${extractDir2}\n`);
+        }
+    } else {
+        console.log(`✅ ${totalDeplaces} fichier(s) DFI déplacé(s) vers ${DFI_DIR}\n`);
     }
     
     console.log('🧹 Nettoyage...\n');
@@ -1115,24 +1127,71 @@ function deplacerFichiersTXT(sourceDir) {
         return fichiers;
     }
     
+    // Debug : lister tous les fichiers dans le répertoire source
+    if (!fs.existsSync(sourceDir)) {
+        console.log(`   ⚠️  Répertoire source non trouvé: ${sourceDir}\n`);
+        return 0;
+    }
+    
     const fichiersTXT = parcourirDossier(sourceDir);
     
+    // Debug : lister quelques fichiers trouvés
+    if (fichiersTXT.length === 0) {
+        console.log(`   ⚠️  Aucun fichier .txt trouvé dans ${sourceDir}`);
+        // Lister les fichiers présents pour debug
+        try {
+            const allFiles = fs.readdirSync(sourceDir, { recursive: true, withFileTypes: true });
+            const txtFiles = [];
+            const zipFiles = [];
+            for (const file of allFiles) {
+                if (file.isFile()) {
+                    const name = typeof file === 'string' ? file : file.name;
+                    if (name.endsWith('.txt')) txtFiles.push(name);
+                    if (name.endsWith('.txt.zip')) zipFiles.push(name);
+                }
+            }
+            if (txtFiles.length > 0) {
+                console.log(`   📄 Fichiers .txt trouvés (non dfiano-dep): ${txtFiles.slice(0, 5).join(', ')}${txtFiles.length > 5 ? '...' : ''}`);
+            }
+            if (zipFiles.length > 0) {
+                console.log(`   📦 Fichiers .txt.zip trouvés: ${zipFiles.slice(0, 5).join(', ')}${zipFiles.length > 5 ? '...' : ''}`);
+            }
+        } catch (err) {
+            console.log(`   ⚠️  Erreur lecture répertoire: ${err.message}`);
+        }
+        console.log('');
+        return 0;
+    }
+    
     console.log(`   📄 ${fichiersTXT.length} fichier(s) .txt trouvé(s)`);
+    if (fichiersTXT.length > 0) {
+        console.log(`   📋 Exemple: ${path.basename(fichiersTXT[0])}`);
+    }
+    
+    // S'assurer que le répertoire de destination existe
+    if (!fs.existsSync(DFI_DIR)) {
+        fs.mkdirSync(DFI_DIR, { recursive: true });
+        console.log(`   📁 Répertoire créé: ${DFI_DIR}`);
+    }
     
     let deplaces = 0;
     for (const fichier of fichiersTXT) {
         const nomFichier = path.basename(fichier);
         const destPath = path.join(DFI_DIR, nomFichier);
         
-        if (fs.existsSync(destPath)) {
-            fs.unlinkSync(destPath);
-        }
-        
-        fs.copyFileSync(fichier, destPath);
-        deplaces++;
-        
-        if (deplaces % 10 === 0) {
-            process.stdout.write(`\r   📦 ${deplaces}/${fichiersTXT.length} fichiers déplacés...`);
+        try {
+            if (fs.existsSync(destPath)) {
+                fs.unlinkSync(destPath);
+            }
+            
+            fs.copyFileSync(fichier, destPath);
+            deplaces++;
+            
+            if (deplaces % 10 === 0) {
+                process.stdout.write(`\r   📦 ${deplaces}/${fichiersTXT.length} fichiers déplacés...`);
+            }
+        } catch (err) {
+            console.error(`\n   ❌ Erreur copie ${nomFichier}: ${err.message}`);
         }
     }
     

@@ -1073,10 +1073,8 @@ function decompresserTxtZip(sourceDir) {
         const dirZip = path.dirname(fichierZip);
         
         try {
-            const zipEscaped = fichierZip.replace(/'/g, "''").replace(/\\/g, '/');
-            const dirEscaped = dirZip.replace(/'/g, "''").replace(/\\/g, '/');
-            
-            execSync(`powershell -Command "Expand-Archive -Path '${zipEscaped}' -DestinationPath '${dirEscaped}' -Force"`, {
+            // Utiliser unzip sur Linux (pas PowerShell)
+            execSync(`unzip -q -o "${fichierZip}" -d "${dirZip}"`, {
                 stdio: 'ignore'
             });
             
@@ -1088,6 +1086,7 @@ function decompresserTxtZip(sourceDir) {
             }
         } catch (err) {
             // Ignorer les erreurs individuelles
+            console.error(`      ⚠️  Erreur décompression ${path.basename(fichierZip)}: ${err.message}`);
         }
     }
     

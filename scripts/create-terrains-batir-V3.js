@@ -48,6 +48,13 @@ console.log('📊 Démarrage de la création de la base...\n');
 demarrerCreationBase();
 
 function demarrerCreationBase() {
+// S'assurer que le répertoire database existe
+const dbDir = path.dirname(DB_FILE);
+if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+    console.log(`📁 Répertoire créé : ${dbDir}\n`);
+}
+
 // Supprimer ancienne base (gérer les erreurs de verrouillage)
 let dbExisteAvecDFI = false;
 if (fs.existsSync(DB_FILE)) {

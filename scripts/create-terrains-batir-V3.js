@@ -1582,49 +1582,4 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     process.exit(1);
 });
 } // Fin de demarrerCreationBase()
-
-                AVG(longitude) as longitude,
-                MAX(nom_commune) as nom_commune,
-                CASE 
-                    WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
-                    WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
-                    ELSE NULL
-                END as type_terrain,
-                id_pa
-            FROM terrains_batir_temp
-            WHERE id_pa IS NOT NULL
-            GROUP BY id_mutation, est_terrain_viabilise, id_pa;
-        `);
-        
-        // Supprimer la table temporaire
-        db.exec(`DROP TABLE terrains_batir_temp;`);
-        
-        const finalStats = db.prepare(`
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN type_terrain = 'VIABILISE' THEN 1 ELSE 0 END) as viabilises,
-                SUM(CASE WHEN type_terrain = 'NON_VIABILISE' THEN 1 ELSE 0 END) as non_viabilises,
-                COUNT(DISTINCT id_pa) as nb_pa
-            FROM terrains_batir
-        `).get();
-        
-        console.log(`✅ Table finale créée :`);
-        console.log(`   - Total : ${finalStats.total} transactions`);
-        console.log(`   - VIABILISE : ${finalStats.viabilises}`);
-        console.log(`   - NON_VIABILISE : ${finalStats.non_viabilises}`);
-        console.log(`   - PA distincts : ${finalStats.nb_pa}\n`);
-        
-        console.log('✅ Base terrains_batir créée avec succès !\n');
-        db.close();
-        process.exit(0);
-    }).catch(err => {
-        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
-        db.close();
-        process.exit(1);
-    });
-});
-}).catch(err => {
-    console.error('❌ Erreur:', err);
-    process.exit(1);
-});
 } // Fin de demarrerCreationBase()

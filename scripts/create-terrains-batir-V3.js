@@ -692,7 +692,7 @@ function detecterSeparateur(filePath) {
 // Fonction pour charger tous les CSV depuis dvf_data/
 function chargerTousLesCSV(db, insertStmt) {
     return new Promise((resolve, reject) => {
-        const dvfDir = path.join(__dirname, 'dvf_data');
+        const dvfDir = path.join(__dirname, '..', 'dvf_data');
         if (!fs.existsSync(dvfDir)) {
             console.log('   ❌ Dossier dvf_data non trouvé !\n');
             reject(new Error('Dossier dvf_data non trouvé'));
@@ -1333,7 +1333,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // SOUS-ÉTAPE 4.3.5 : Enrichir les superficies depuis parcelle.csv si nulles
         console.log('⚡ 4.3.5 - Enrichissement des superficies depuis parcelle.csv...');
-        const PARCELLE_FILE = path.join(__dirname, 'bdnb_data', 'csv', 'parcelle.csv');
+        const PARCELLE_FILE = path.join(__dirname, '..', 'bdnb_data', 'csv', 'parcelle.csv');
         
         return new Promise((resolve) => {
             if (fs.existsSync(PARCELLE_FILE)) {

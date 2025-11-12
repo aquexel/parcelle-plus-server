@@ -1855,17 +1855,82 @@ function fusionnerBases() {
     const dbPaPath = DB_PA.replace(/\\/g, '/');
     dbUnifie.exec(`ATTACH DATABASE '${dbPaPath}' AS db_pa`);
     
+    // Lister toutes les tables disponibles pour debug
+    const allTables = dbUnifie.prepare(`
+        SELECT name FROM db_pa.sqlite_master 
+        WHERE type='table'
+        ORDER BY name
+    `).all();
+    console.log(`   🔍 Tables disponibles dans la base PA : ${allTables.map(t => t.name).join(', ')}`);
+    
     // Vérifier que la table existe
     const tableExists = dbUnifie.prepare(`
         SELECT name FROM db_pa.sqlite_master 
         WHERE type='table' AND name='terrains_batir'
     `).get();
     
+    // Si la table finale n'existe pas, vérifier si terrains_batir_temp existe
     if (!tableExists) {
-        console.error('   ❌ Erreur : Table terrains_batir non trouvée dans la base PA !');
-        dbUnifie.exec('DETACH DATABASE db_pa');
-        dbUnifie.close();
-        process.exit(1);
+        const tempTableExists = dbUnifie.prepare(`
+            SELECT name FROM db_pa.sqlite_master 
+            WHERE type='table' AND name='terrains_batir_temp'
+        `).get();
+        
+        if (tempTableExists) {
+            console.log('   ⚠️  Table terrains_batir non trouvée, mais terrains_batir_temp existe.');
+            console.log('   🔧 Création de la table finale depuis terrains_batir_temp...');
+            
+            // Créer la table finale dans la base PA depuis terrains_batir_temp
+            dbUnifie.exec(`
+                CREATE TABLE db_pa.terrains_batir (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    valeur_fonciere REAL,
+                    surface_totale REAL,
+                    surface_reelle_bati REAL,
+                    prix_m2 REAL,
+                    date_mutation TEXT,
+                    latitude REAL,
+                    longitude REAL,
+                    nom_commune TEXT,
+                    type_terrain TEXT,
+                    id_pa TEXT
+                );
+            `);
+            
+            // Copier les données depuis terrains_batir_temp vers terrains_batir
+            dbUnifie.exec(`
+                INSERT INTO db_pa.terrains_batir (
+                    valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+                    date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa
+                )
+                SELECT 
+                    MAX(valeur_fonciere) as valeur_fonciere,
+                    SUM(surface_totale) as surface_totale,
+                    SUM(surface_reelle_bati) as surface_reelle_bati,
+                    MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,
+                    MIN(date_mutation) as date_mutation,
+                    AVG(latitude) as latitude,
+                    AVG(longitude) as longitude,
+                    MAX(nom_commune) as nom_commune,
+                    CASE 
+                        WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
+                        WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
+                        ELSE NULL
+                    END as type_terrain,
+                    id_pa
+                FROM db_pa.terrains_batir_temp
+                WHERE id_pa IS NOT NULL
+                GROUP BY id_mutation, est_terrain_viabilise, id_pa;
+            `);
+            
+            console.log('   ✅ Table terrains_batir créée depuis terrains_batir_temp');
+        } else {
+            console.error('   ❌ Erreur : Table terrains_batir non trouvée dans la base PA !');
+            console.error('   ❌ Table terrains_batir_temp non trouvée non plus.');
+            dbUnifie.exec('DETACH DATABASE db_pa');
+            dbUnifie.close();
+            process.exit(1);
+        }
     }
     
     dbUnifie.exec(`

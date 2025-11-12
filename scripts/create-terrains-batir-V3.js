@@ -815,6 +815,46 @@ function chargerTousLesCSV(db, insertStmt) {
             const separator = detecterSeparateur(filePath);
             console.log(`      🔍 Séparateur détecté: "${separator}"`);
             
+            // Lire la première ligne pour détecter si c'est un en-tête ou des données
+            let firstLineContent = '';
+            try {
+                const fd = fs.openSync(filePath, 'r');
+                const buffer = Buffer.alloc(1024);
+                const bytesRead = fs.readSync(fd, buffer, 0, 1024, 0);
+                fs.closeSync(fd);
+                
+                // Gérer le BOM UTF-8
+                let startOffset = 0;
+                if (bytesRead >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+                    startOffset = 3;
+                }
+                
+                firstLineContent = buffer.toString('utf8', startOffset, bytesRead).split('\n')[0];
+            } catch (err) {
+                // Ignorer l'erreur, on utilisera le parsing par défaut
+            }
+            
+            // Détecter si la première ligne est un en-tête (contient des noms de colonnes comme "id_mutation", "date_mutation", etc.)
+            const isHeader = firstLineContent && (
+                firstLineContent.includes('id_mutation') || 
+                firstLineContent.includes('id_parcelle') ||
+                firstLineContent.includes('valeur_fonciere') ||
+                firstLineContent.includes('code_departement')
+            );
+            
+            // Si ce n'est pas un en-tête, définir les colonnes manuellement
+            const columnNames = isHeader ? null : [
+                'id_mutation', 'date_mutation', 'numero_disposition', 'nature_mutation', 'valeur_fonciere',
+                'adresse_numero', 'adresse_suffixe', 'adresse_nom_voie', 'adresse_code_voie', 'code_postal',
+                'code_commune', 'nom_commune', 'code_departement', 'ancien_code_commune', 'ancien_nom_commune',
+                'id_parcelle', 'ancien_id_parcelle', 'numero_volume', 'lot1_numero', 'lot1_surface_carrez',
+                'lot2_numero', 'lot2_surface_carrez', 'lot3_numero', 'lot3_surface_carrez', 'lot4_numero',
+                'lot4_surface_carrez', 'lot5_numero', 'lot5_surface_carrez', 'nombre_lots', 'code_type_local',
+                'type_local', 'surface_reelle_bati', 'nombre_pieces_principales', 'code_nature_culture',
+                'nature_culture', 'code_nature_culture_speciale', 'nature_culture_speciale', 'surface_terrain',
+                'longitude', 'latitude'
+            ];
+            
             // Créer le stream avec gestion du BOM UTF-8
             const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
             
@@ -829,15 +869,22 @@ function chargerTousLesCSV(db, insertStmt) {
             let firstRowColumns = null;
             let firstRowData = null;
             
+            const csvOptions = { 
+                separator, 
+                skipLinesWithError: true,
+                skipEmptyLines: true,
+                quote: '"',
+                escape: '"'
+            };
+            
+            // Si on a défini les colonnes manuellement, utiliser headers: false
+            if (columnNames) {
+                csvOptions.headers = columnNames;
+                csvOptions.skipLinesWithError = true;
+            }
+            
             stream
-                .pipe(csv({ 
-                    separator, 
-                    skipLinesWithError: true,
-                    skipEmptyLines: true,
-                    // Gérer les guillemets correctement
-                    quote: '"',
-                    escape: '"'
-                }))
+                .pipe(csv(csvOptions))
                 .on('data', (row) => {
                     totalRows++;
                     
@@ -847,15 +894,17 @@ function chargerTousLesCSV(db, insertStmt) {
                         firstRowData = row;
                         console.log(`      📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 15).join(', ')}...`);
                         
-                        // Si on n'a qu'une seule colonne, c'est un problème de parsing
-                        if (firstRowColumns.length === 1) {
+                        // Si on n'a qu'une seule colonne, essayer de parser manuellement
+                        if (firstRowColumns.length === 1 && columnNames) {
+                            // On a déjà défini les colonnes manuellement, donc ça devrait fonctionner
+                            console.log(`      ✅ Colonnes définies manuellement (${columnNames.length} colonnes)`);
+                        } else if (firstRowColumns.length === 1) {
                             const firstColName = firstRowColumns[0];
                             const firstColValue = row[firstColName];
                             console.log(`      ⚠️  PROBLÈME : Une seule colonne détectée !`);
-                            console.log(`      ⚠️  Nom colonne: "${firstColName}"`);
+                            console.log(`      ⚠️  Nom colonne: "${firstColName.substring(0, 100)}"`);
                             console.log(`      ⚠️  Valeur (100 premiers caractères): "${(firstColValue || '').substring(0, 100)}"`);
                             console.log(`      ⚠️  Séparateur utilisé: "${separator}"`);
-                            // Essayer de parser manuellement pour voir
                             if (firstColValue && firstColValue.includes(',')) {
                                 const manualParts = firstColValue.split(',');
                                 console.log(`      💡 Si séparateur = ",", on aurait ${manualParts.length} colonnes`);

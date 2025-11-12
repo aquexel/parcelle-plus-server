@@ -99,6 +99,7 @@ function lambert93ToWGS84(x, y) {
 }
 
 // Fonction pour enrichir les coordonnées depuis le fichier parcelle.csv
+// OPTIMISÉ : Utilise une table temporaire SQLite au lieu de charger en mémoire
 function enrichirCoordonnees(db) {
     return new Promise((resolve, reject) => {
         if (!fs.existsSync(PARCELLE_FILE)) {
@@ -107,11 +108,41 @@ function enrichirCoordonnees(db) {
             return;
         }
         
-        console.log('   📂 Chargement des parcelles avec coordonnées...');
+        console.log('   📂 Chargement des parcelles avec coordonnées dans table temporaire...');
         
-        const parcelleCoords = new Map();
+        // Créer une table temporaire pour stocker les coordonnées
+        db.exec(`
+            DROP TABLE IF EXISTS temp_parcelle_coords;
+            CREATE TEMP TABLE temp_parcelle_coords (
+                parcelle_id TEXT PRIMARY KEY,
+                latitude REAL,
+                longitude REAL
+            );
+            CREATE INDEX idx_temp_parcelle_coords_id ON temp_parcelle_coords(parcelle_id);
+        `);
+        
+        const insertStmt = db.prepare(`
+            INSERT OR REPLACE INTO temp_parcelle_coords (parcelle_id, latitude, longitude)
+            VALUES (?, ?, ?)
+        `);
+        
+        // Traitement par lots pour éviter la surcharge mémoire
+        const BATCH_SIZE = 10000;
+        let batch = [];
         let countLoaded = 0;
         let countWithGeom = 0;
+        
+        const processBatch = () => {
+            if (batch.length > 0) {
+                const transaction = db.transaction(() => {
+                    for (const item of batch) {
+                        insertStmt.run(item.parcelleId, item.latitude, item.longitude);
+                    }
+                });
+                transaction();
+                batch = [];
+            }
+        };
         
         fs.createReadStream(PARCELLE_FILE)
             .pipe(csv())
@@ -123,7 +154,8 @@ function enrichirCoordonnees(db) {
                     const centroid = extraireCentroideLambert(geom);
                     if (centroid) {
                         const wgs84 = lambert93ToWGS84(centroid.x, centroid.y);
-                        parcelleCoords.set(parcelleId, {
+                        batch.push({
+                            parcelleId,
                             latitude: wgs84.latitude,
                             longitude: wgs84.longitude
                         });
@@ -132,70 +164,94 @@ function enrichirCoordonnees(db) {
                 }
                 countLoaded++;
                 
+                // Traiter par lots pour libérer la mémoire
+                if (batch.length >= BATCH_SIZE) {
+                    processBatch();
+                }
+                
                 if (countLoaded % 50000 === 0) {
                     process.stdout.write(`   ${countLoaded} parcelles chargées...\r`);
                 }
             })
             .on('end', () => {
+                // Traiter le dernier lot
+                processBatch();
+                
                 console.log(`\n   ✅ ${countLoaded} parcelles chargées, ${countWithGeom} avec géométrie\n`);
                 
                 console.log('   🔗 Enrichissement des coordonnées...');
                 
-                const transactionsSansCoords = db.prepare(`
-                    SELECT DISTINCT id_parcelle
-                    FROM terrains_pc_sans_pa_temp
+                // Utiliser une jointure SQL pour enrichir les coordonnées (plus efficace)
+                const result = db.prepare(`
+                    UPDATE terrains_pc_sans_pa_temp
+                    SET latitude = (
+                        SELECT latitude 
+                        FROM temp_parcelle_coords 
+                        WHERE temp_parcelle_coords.parcelle_id = terrains_pc_sans_pa_temp.id_parcelle
+                    ),
+                    longitude = (
+                        SELECT longitude 
+                        FROM temp_parcelle_coords 
+                        WHERE temp_parcelle_coords.parcelle_id = terrains_pc_sans_pa_temp.id_parcelle
+                    )
                     WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
                         AND id_parcelle IS NOT NULL
+                        AND EXISTS (
+                            SELECT 1 
+                            FROM temp_parcelle_coords 
+                            WHERE temp_parcelle_coords.parcelle_id = terrains_pc_sans_pa_temp.id_parcelle
+                        )
+                `).run();
+                
+                let countUpdated = result.changes;
+                
+                // Enrichir via parcelle mère si nécessaire
+                const transactionsSansCoords = db.prepare(`
+                    SELECT DISTINCT t.id_parcelle, t.parcelle_mere
+                    FROM terrains_pc_sans_pa_temp t
+                    WHERE (t.latitude IS NULL OR t.latitude = 0 OR t.longitude IS NULL OR t.longitude = 0)
+                        AND t.id_parcelle IS NOT NULL
+                        AND t.parcelle_mere IS NOT NULL
                 `).all();
                 
-                console.log(`   ${transactionsSansCoords.length} transactions sans coordonnées trouvées`);
-                
-                const updateStmt = db.prepare(`
+                let countViaMere = 0;
+                const updateViaMereStmt = db.prepare(`
                     UPDATE terrains_pc_sans_pa_temp
                     SET latitude = ?, longitude = ?
                     WHERE id_parcelle = ?
                         AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
                 `);
                 
-                let countUpdated = 0;
-                let countViaMere = 0;
-                let countNotFound = 0;
-                
                 for (const tx of transactionsSansCoords) {
-                    // Essayer d'abord avec l'id_parcelle direct
-                    let coords = parcelleCoords.get(tx.id_parcelle);
-                    
-                    if (!coords) {
-                        // Si pas trouvé, essayer avec la parcelle_mere
-                        const txDetails = db.prepare(`
-                            SELECT parcelle_mere 
-                            FROM terrains_pc_sans_pa_temp 
-                            WHERE id_parcelle = ? AND parcelle_mere IS NOT NULL
-                            LIMIT 1
-                        `).get(tx.id_parcelle);
+                    // La parcelle_mere est au format "BL56", il faut la convertir en id_parcelle
+                    const codeCommune = tx.id_parcelle.substring(0, 5);
+                    const match = tx.parcelle_mere.match(/^([A-Z]+)(\d+)$/);
+                    if (match) {
+                        const [, section, numero] = match;
+                        const numeroPad = numero.padStart(4, '0');
+                        const parcelleIdMere = `${codeCommune}000${section}${numeroPad}`;
                         
-                        if (txDetails && txDetails.parcelle_mere) {
-                            // La parcelle_mere est au format "BL56", il faut la convertir en id_parcelle
-                            // Format attendu : 40088000BL0056
-                            const codeCommune = tx.id_parcelle.substring(0, 5);
-                            const match = txDetails.parcelle_mere.match(/^([A-Z]+)(\d+)$/);
-                            if (match) {
-                                const [, section, numero] = match;
-                                const numeroPad = numero.padStart(4, '0');
-                                const parcelleIdMere = `${codeCommune}000${section}${numeroPad}`;
-                                coords = parcelleCoords.get(parcelleIdMere);
-                                if (coords) countViaMere++;
-                            }
+                        const coords = db.prepare(`
+                            SELECT latitude, longitude
+                            FROM temp_parcelle_coords
+                            WHERE parcelle_id = ?
+                        `).get(parcelleIdMere);
+                        
+                        if (coords && coords.latitude && coords.longitude) {
+                            updateViaMereStmt.run(coords.latitude, coords.longitude, tx.id_parcelle);
+                            countViaMere++;
+                            countUpdated++;
                         }
                     }
-                    
-                    if (coords && coords.latitude && coords.longitude) {
-                        updateStmt.run(coords.latitude, coords.longitude, tx.id_parcelle);
-                        countUpdated++;
-                    } else {
-                        countNotFound++;
-                    }
                 }
+                
+                // Compter les transactions sans coordonnées
+                const countNotFound = db.prepare(`
+                    SELECT COUNT(DISTINCT id_parcelle) as count
+                    FROM terrains_pc_sans_pa_temp
+                    WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                        AND id_parcelle IS NOT NULL
+                `).get().count;
                 
                 console.log(`   ✅ ${countUpdated} transactions enrichies`);
                 if (countViaMere > 0) {
@@ -207,10 +263,14 @@ function enrichirCoordonnees(db) {
                     console.log('');
                 }
                 
+                // Nettoyer la table temporaire
+                db.exec(`DROP TABLE IF EXISTS temp_parcelle_coords;`);
+                
                 resolve();
             })
             .on('error', (err) => {
                 console.log(`   ⚠️  Erreur lors du chargement: ${err.message}\n`);
+                db.exec(`DROP TABLE IF EXISTS temp_parcelle_coords;`);
                 resolve();
             });
     });

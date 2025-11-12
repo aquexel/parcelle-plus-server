@@ -1746,7 +1746,7 @@ telechargerToutesDonnees()
         process.exit(1);
     }
     
-    const processPA = spawn('node', [SCRIPT_PA], {
+    const processPA = spawn('node', ['--max-old-space-size=4096', SCRIPT_PA], {
         stdio: 'inherit',
         cwd: __dirname
     });
@@ -1772,7 +1772,7 @@ telechargerToutesDonnees()
             process.exit(1);
         }
         
-        const processPC = spawn('node', [SCRIPT_PC], {
+        const processPC = spawn('node', ['--max-old-space-size=4096', SCRIPT_PC], {
             stdio: 'inherit',
             cwd: __dirname
         });

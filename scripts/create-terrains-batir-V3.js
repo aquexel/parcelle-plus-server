@@ -673,24 +673,59 @@ function detecterSeparateur(filePath) {
         const buffer = Buffer.alloc(8192);
         const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
         fs.closeSync(fd);
-        const firstLine = buffer.toString('utf8', 0, bytesRead).split('\n')[0];
+        
+        // Gérer le BOM UTF-8 si présent (EF BB BF)
+        let startOffset = 0;
+        if (bytesRead >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+            startOffset = 3;
+        }
+        
+        const firstLine = buffer.toString('utf8', startOffset, bytesRead).split('\n')[0];
 
         if (!firstLine || firstLine.trim().length === 0) {
             return ',';
         }
+        
+        // Vérifier si la première ligne contient des guillemets (CSV avec guillemets)
+        const hasQuotes = firstLine.includes('"');
+        
         const countPipe = (firstLine.match(/\|/g) || []).length;
         const countComma = (firstLine.match(/,/g) || []).length;
         const countSemicolon = (firstLine.match(/;/g) || []).length;
         
-        if (countComma > countPipe && countComma > countSemicolon && countComma > 5) {
+        // Si on a beaucoup de virgules mais que tout est dans une seule "colonne", c'est peut-être un problème
+        // Vérifier si la ligne contient vraiment plusieurs colonnes séparées
+        const partsComma = firstLine.split(',');
+        const partsSemicolon = firstLine.split(';');
+        const partsPipe = firstLine.split('|');
+        
+        // Si on a des guillemets et beaucoup de virgules, mais peu de colonnes réelles, c'est peut-être mal formaté
+        if (hasQuotes && countComma > 20 && partsComma.length < 5) {
+            // Probablement un problème de format, essayer quand même la virgule
             return ',';
         }
-        if (countPipe > countComma && countPipe > countSemicolon && countPipe > 5) {
+        
+        if (countComma > countPipe && countComma > countSemicolon && countComma > 5 && partsComma.length > 5) {
+            return ',';
+        }
+        if (countPipe > countComma && countPipe > countSemicolon && countPipe > 5 && partsPipe.length > 5) {
             return '|';
         }
-        if (countSemicolon > countComma && countSemicolon > countPipe && countSemicolon > 5) {
+        if (countSemicolon > countComma && countSemicolon > countPipe && countSemicolon > 5 && partsSemicolon.length > 5) {
             return ';';
         }
+        
+        // Fallback : utiliser celui qui donne le plus de colonnes
+        if (partsComma.length > partsSemicolon.length && partsComma.length > partsPipe.length) {
+            return ',';
+        }
+        if (partsPipe.length > partsComma.length && partsPipe.length > partsSemicolon.length) {
+            return '|';
+        }
+        if (partsSemicolon.length > partsComma.length && partsSemicolon.length > partsPipe.length) {
+            return ';';
+        }
+        
         return ','; // Default to comma for normalized files
     } catch (err) {
         console.log(`   ⚠️  Erreur détection séparateur, utilisation par défaut: ,`);
@@ -780,7 +815,8 @@ function chargerTousLesCSV(db, insertStmt) {
             const separator = detecterSeparateur(filePath);
             console.log(`      🔍 Séparateur détecté: "${separator}"`);
             
-            const stream = fs.createReadStream(filePath);
+            // Créer le stream avec gestion du BOM UTF-8
+            const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
             
             let count = 0;
             let totalRows = 0;
@@ -791,17 +827,42 @@ function chargerTousLesCSV(db, insertStmt) {
             let skippedValeurFonciereZero = 0;
             let skippedNoSectionExtracted = 0;
             let firstRowColumns = null;
+            let firstRowData = null;
             
             stream
-                .pipe(csv({ separator, skipLinesWithError: true }))
+                .pipe(csv({ 
+                    separator, 
+                    skipLinesWithError: true,
+                    skipEmptyLines: true,
+                    // Gérer les guillemets correctement
+                    quote: '"',
+                    escape: '"'
+                }))
                 .on('data', (row) => {
                     totalRows++;
                     
                     // Afficher les colonnes de la première ligne pour debug
                     if (totalRows === 1 && !firstRowColumns) {
                         firstRowColumns = Object.keys(row);
+                        firstRowData = row;
                         console.log(`      📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 15).join(', ')}...`);
-                        console.log(`      🔍 Exemple première ligne: id_parcelle="${row.id_parcelle}", valeur_fonciere="${row.valeur_fonciere}", code_departement="${row.code_departement}"`);
+                        
+                        // Si on n'a qu'une seule colonne, c'est un problème de parsing
+                        if (firstRowColumns.length === 1) {
+                            const firstColName = firstRowColumns[0];
+                            const firstColValue = row[firstColName];
+                            console.log(`      ⚠️  PROBLÈME : Une seule colonne détectée !`);
+                            console.log(`      ⚠️  Nom colonne: "${firstColName}"`);
+                            console.log(`      ⚠️  Valeur (100 premiers caractères): "${(firstColValue || '').substring(0, 100)}"`);
+                            console.log(`      ⚠️  Séparateur utilisé: "${separator}"`);
+                            // Essayer de parser manuellement pour voir
+                            if (firstColValue && firstColValue.includes(',')) {
+                                const manualParts = firstColValue.split(',');
+                                console.log(`      💡 Si séparateur = ",", on aurait ${manualParts.length} colonnes`);
+                            }
+                        } else {
+                            console.log(`      🔍 Exemple première ligne: id_parcelle="${row.id_parcelle}", valeur_fonciere="${row.valeur_fonciere}", code_departement="${row.code_departement}"`);
+                        }
                     }
                     
                     // Format DVF uniformisé : tous les fichiers sont maintenant normalisés

@@ -834,13 +834,29 @@ function chargerTousLesCSV(db, insertStmt) {
                 // Ignorer l'erreur, on utilisera le parsing par défaut
             }
             
-            // Détecter si la première ligne est un en-tête (contient des noms de colonnes comme "id_mutation", "date_mutation", etc.)
-            const isHeader = firstLineContent && (
-                firstLineContent.includes('id_mutation') || 
-                firstLineContent.includes('id_parcelle') ||
-                firstLineContent.includes('valeur_fonciere') ||
-                firstLineContent.includes('code_departement')
-            );
+            // Détecter si la première ligne est un en-tête
+            // Critères : doit COMMENCER par "id_mutation" (pas juste le contenir)
+            // OU contenir plusieurs noms de colonnes typiques sans valeurs numériques/dates
+            let isHeader = false;
+            if (firstLineContent) {
+                const trimmed = firstLineContent.trim();
+                // Vérifier si ça commence par "id_mutation" (cas typique d'un en-tête)
+                if (trimmed.startsWith('id_mutation')) {
+                    isHeader = true;
+                } else {
+                    // Vérifier si c'est un en-tête en cherchant plusieurs noms de colonnes typiques
+                    const headerKeywords = ['id_mutation', 'id_parcelle', 'valeur_fonciere', 'code_departement', 'date_mutation'];
+                    const keywordCount = headerKeywords.filter(kw => trimmed.includes(kw)).length;
+                    
+                    // Si on trouve au moins 3 mots-clés d'en-tête ET pas de valeurs numériques/dates au début
+                    // (les en-têtes ne commencent jamais par des nombres ou dates)
+                    const startsWithNumberOrDate = /^\d{4}-\d{2}-\d{2}/.test(trimmed) || /^\d+/.test(trimmed);
+                    
+                    if (keywordCount >= 3 && !startsWithNumberOrDate) {
+                        isHeader = true;
+                    }
+                }
+            }
             
             // Si ce n'est pas un en-tête, définir les colonnes manuellement
             const columnNames = isHeader ? null : [
@@ -854,6 +870,12 @@ function chargerTousLesCSV(db, insertStmt) {
                 'nature_culture', 'code_nature_culture_speciale', 'nature_culture_speciale', 'surface_terrain',
                 'longitude', 'latitude'
             ];
+            
+            // Log pour debug
+            if (firstLineContent) {
+                console.log(`      🔍 Première ligne (100 premiers caractères): "${firstLineContent.substring(0, 100)}"`);
+                console.log(`      🔍 Détection en-tête: ${isHeader ? 'OUI (en-tête détecté)' : 'NON (données, colonnes définies manuellement)'}`);
+            }
             
             // Créer le stream avec gestion du BOM UTF-8
             const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
@@ -877,10 +899,15 @@ function chargerTousLesCSV(db, insertStmt) {
                 escape: '"'
             };
             
-            // Si on a défini les colonnes manuellement, utiliser headers: false
+            // Si on a défini les colonnes manuellement, utiliser headers: columnNames
+            // Cela indique à csv-parser d'utiliser ces noms comme en-têtes et de ne PAS lire la première ligne comme un en-tête
             if (columnNames) {
                 csvOptions.headers = columnNames;
                 csvOptions.skipLinesWithError = true;
+                console.log(`      🔧 Utilisation de ${columnNames.length} colonnes définies manuellement (pas d'en-tête dans le fichier)`);
+            } else {
+                // Si c'est un en-tête, laisser csv-parser le détecter automatiquement
+                console.log(`      🔧 Détection automatique des colonnes depuis l'en-tête`);
             }
             
             stream

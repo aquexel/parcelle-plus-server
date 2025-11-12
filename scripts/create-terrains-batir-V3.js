@@ -811,6 +811,9 @@ function chargerTousLesCSV(db, insertStmt) {
             const { path: filePath, name, year } = fichiers[index];
             console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
             
+            // Réinitialiser le mapping des colonnes pour ce fichier
+            let columnMapping = null;
+            
             // Détecter automatiquement le séparateur en analysant la première ligne
             const separator = detecterSeparateur(filePath);
             console.log(`      🔍 Séparateur détecté: "${separator}"`);
@@ -835,23 +838,35 @@ function chargerTousLesCSV(db, insertStmt) {
             }
             
             // Détecter si la première ligne est un en-tête
-            // Critères : doit COMMENCER par "id_mutation" (pas juste le contenir)
-            // OU contenir plusieurs noms de colonnes typiques sans valeurs numériques/dates
+            // Critères multiples pour détecter différents formats d'en-tête
             let isHeader = false;
             if (firstLineContent) {
                 const trimmed = firstLineContent.trim();
-                // Vérifier si ça commence par "id_mutation" (cas typique d'un en-tête)
+                
+                // Critère 1 : Commence par "id_mutation" (format normalisé standard)
                 if (trimmed.startsWith('id_mutation')) {
                     isHeader = true;
-                } else {
-                    // Vérifier si c'est un en-tête en cherchant plusieurs noms de colonnes typiques
-                    const headerKeywords = ['id_mutation', 'id_parcelle', 'valeur_fonciere', 'code_departement', 'date_mutation'];
-                    const keywordCount = headerKeywords.filter(kw => trimmed.includes(kw)).length;
+                }
+                // Critère 2 : Pattern d'en-tête numéroté (ex: "1_articles_cgi,2_articles_cgi...")
+                else if (/^\d+_[a-z_]+/i.test(trimmed)) {
+                    // Vérifier que plusieurs colonnes suivent ce pattern
+                    const parts = trimmed.split(separator);
+                    const numberedColumns = parts.filter(p => /^\d+_[a-z_]+/i.test(p.trim())).length;
+                    if (numberedColumns >= 3) {
+                        isHeader = true;
+                    }
+                }
+                // Critère 3 : Contient plusieurs mots-clés d'en-tête typiques
+                else {
+                    const headerKeywords = ['id_mutation', 'id_parcelle', 'valeur_fonciere', 'code_departement', 
+                                          'date_mutation', 'adresse_code_voie', 'adresse_nom_voie', 'code_commune',
+                                          'nom_commune', 'identifiant_local', 'articles_cgi'];
+                    const keywordCount = headerKeywords.filter(kw => trimmed.toLowerCase().includes(kw.toLowerCase())).length;
                     
-                    // Si on trouve au moins 3 mots-clés d'en-tête ET pas de valeurs numériques/dates au début
-                    // (les en-têtes ne commencent jamais par des nombres ou dates)
-                    const startsWithNumberOrDate = /^\d{4}-\d{2}-\d{2}/.test(trimmed) || /^\d+/.test(trimmed);
+                    // Vérifier que ce n'est PAS une ligne de données (pas de dates/nombres au début)
+                    const startsWithNumberOrDate = /^\d{4}-\d{2}-\d{2}/.test(trimmed) || /^\d+[,\s]/.test(trimmed);
                     
+                    // Si on trouve au moins 3 mots-clés ET pas de valeurs numériques/dates au début
                     if (keywordCount >= 3 && !startsWithNumberOrDate) {
                         isHeader = true;
                     }
@@ -910,6 +925,58 @@ function chargerTousLesCSV(db, insertStmt) {
                 console.log(`      🔧 Détection automatique des colonnes depuis l'en-tête`);
             }
             
+            // Fonction helper pour mapper les colonnes avec des noms alternatifs
+            function getColumnValue(row, possibleNames) {
+                if (!columnMapping) {
+                    // Créer le mapping une seule fois lors de la première ligne de ce fichier
+                    columnMapping = {};
+                    const allColumns = Object.keys(row);
+                    
+                    // Mapping des colonnes possibles
+                    const columnMappings = {
+                        'id_mutation': ['id_mutation', 'no_disposition', 'numero_disposition'],
+                        'date_mutation': ['date_mutation'],
+                        'valeur_fonciere': ['valeur_fonciere', 'valeur_fonciere_globale'],
+                        'code_departement': ['code_departement', 'dep'],
+                        'code_commune': ['code_commune', 'comm', 'code_commune_insee'],
+                        'nom_commune': ['nom_commune', 'commune'],
+                        'id_parcelle': ['id_parcelle', 'identifiant_local', 'parcelle'],
+                        'section': ['section', 'section_cadastrale'],
+                        'numero_plan': ['numero_plan', 'no_plan', 'plan'],
+                        'surface_terrain': ['surface_terrain', 'surface_terrain_total'],
+                        'surface_reelle_bati': ['surface_reelle_bati', 'surface_bati'],
+                        'type_local': ['type_local', 'type_local_dvf']
+                    };
+                    
+                    // Créer le mapping inverse (nom fichier -> nom normalisé)
+                    for (const [normalizedName, possibleNames] of Object.entries(columnMappings)) {
+                        for (const possibleName of possibleNames) {
+                            const found = allColumns.find(col => 
+                                col.toLowerCase() === possibleName.toLowerCase() ||
+                                col.toLowerCase().includes(possibleName.toLowerCase())
+                            );
+                            if (found) {
+                                columnMapping[normalizedName] = found;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Retourner la valeur en utilisant le mapping
+                for (const name of possibleNames) {
+                    const mappedName = columnMapping[name];
+                    if (mappedName && row[mappedName] !== undefined && row[mappedName] !== '') {
+                        return row[mappedName];
+                    }
+                    // Essayer aussi directement
+                    if (row[name] !== undefined && row[name] !== '') {
+                        return row[name];
+                    }
+                }
+                return '';
+            }
+            
             stream
                 .pipe(csv(csvOptions))
                 .on('data', (row) => {
@@ -920,6 +987,9 @@ function chargerTousLesCSV(db, insertStmt) {
                         firstRowColumns = Object.keys(row);
                         firstRowData = row;
                         console.log(`      📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 15).join(', ')}...`);
+                        
+                        // Créer le mapping des colonnes
+                        getColumnValue(row, ['id_mutation']); // Initialiser le mapping
                         
                         // Si on n'a qu'une seule colonne, essayer de parser manuellement
                         if (firstRowColumns.length === 1 && columnNames) {
@@ -937,31 +1007,34 @@ function chargerTousLesCSV(db, insertStmt) {
                                 console.log(`      💡 Si séparateur = ",", on aurait ${manualParts.length} colonnes`);
                             }
                         } else {
-                            console.log(`      🔍 Exemple première ligne: id_parcelle="${row.id_parcelle}", valeur_fonciere="${row.valeur_fonciere}", code_departement="${row.code_departement}"`);
+                            // Afficher le mapping créé
+                            const mappedCols = Object.entries(columnMapping || {}).slice(0, 5);
+                            console.log(`      🔍 Mapping colonnes (exemples): ${mappedCols.map(([k, v]) => `${k}->${v}`).join(', ')}...`);
+                            console.log(`      🔍 Exemple première ligne: id_parcelle="${getColumnValue(row, ['id_parcelle'])}", valeur_fonciere="${getColumnValue(row, ['valeur_fonciere'])}", code_departement="${getColumnValue(row, ['code_departement'])}"`);
                         }
                     }
                     
                     // Format DVF uniformisé : tous les fichiers sont maintenant normalisés
                     // Colonnes en minuscules avec underscores (ex: "code_departement", "valeur_fonciere")
                     
-                    // Utiliser uniquement les noms de colonnes normalisés
-                    const codeDept = row.code_departement || '';
-                    const valeurFonciereStr = row.valeur_fonciere || '0';
-                    const surfaceTerrain = parseFloat(row.surface_terrain || 0);
-                    const surfaceBati = parseFloat(row.surface_reelle_bati || 0);
-                    const typeLocal = row.type_local || '';
-                    const dateMutationRaw = row.date_mutation || '';
-                    const idMutationRaw = row.id_mutation || row.no_disposition || '';
+                    // Utiliser la fonction helper pour mapper les colonnes
+                    const codeDept = getColumnValue(row, ['code_departement']) || '';
+                    const valeurFonciereStr = getColumnValue(row, ['valeur_fonciere']) || '0';
+                    const surfaceTerrain = parseFloat(getColumnValue(row, ['surface_terrain']) || 0);
+                    const surfaceBati = parseFloat(getColumnValue(row, ['surface_reelle_bati']) || 0);
+                    const typeLocal = getColumnValue(row, ['type_local']) || '';
+                    const dateMutationRaw = getColumnValue(row, ['date_mutation']) || '';
+                    const idMutationRaw = getColumnValue(row, ['id_mutation']) || '';
                     
                     // Construire id_parcelle si elle n'existe pas
-                    let idParcelle = row.id_parcelle || '';
+                    let idParcelle = getColumnValue(row, ['id_parcelle']) || '';
                     if (!idParcelle) {
                         // Construire depuis les colonnes normalisées
-                        const deptRaw = (row.code_departement || '').trim();
-                        const commRaw = (row.code_commune || '').trim();
-                        const prefixeSectionRaw = (row.prefixe_section || row.prefixe_de_section || '').trim();
-                        const sectionRaw = (row.section || '').trim();
-                        const noPlanRaw = (row.numero_plan || row.no_plan || '').trim();
+                        const deptRaw = (getColumnValue(row, ['code_departement']) || '').trim();
+                        const commRaw = (getColumnValue(row, ['code_commune']) || '').trim();
+                        const prefixeSectionRaw = (getColumnValue(row, ['prefixe_section', 'prefixe_de_section']) || '').trim();
+                        const sectionRaw = (getColumnValue(row, ['section']) || '').trim();
+                        const noPlanRaw = (getColumnValue(row, ['numero_plan', 'no_plan']) || '').trim();
                         
                         // Vérifier que toutes les valeurs nécessaires sont présentes AVANT le padding
                         if (deptRaw && deptRaw.length >= 1 && commRaw && commRaw.length >= 1 && sectionRaw && noPlanRaw && noPlanRaw.length >= 1) {

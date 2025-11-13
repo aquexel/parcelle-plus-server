@@ -7,8 +7,15 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, '..', 'database', 'safer_prices.db');
+const DB_DIR = path.join(__dirname, '..', 'database');
+const DB_PATH = path.join(DB_DIR, 'safer_prices.db');
+
+// Créer le répertoire database s'il n'existe pas
+if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+}
 
 /**
  * Route principale
@@ -33,6 +40,15 @@ module.exports = (req, res) => {
             return res.status(400).json({
                 success: false,
                 error: 'Code INSEE invalide (doit être 5 chiffres)'
+            });
+        }
+        
+        // Vérifier que la base de données existe
+        if (!fs.existsSync(DB_PATH)) {
+            return res.status(503).json({
+                success: false,
+                error: 'Base de données SAFER non disponible',
+                message: `Le fichier ${DB_PATH} n'existe pas. Veuillez exécuter le script de création de la base de données.`
             });
         }
         

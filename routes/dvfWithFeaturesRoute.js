@@ -7,8 +7,15 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
-const DB_PATH = path.join(__dirname, '..', 'database', 'dvf_bdnb_complete.db');
+const DB_DIR = path.join(__dirname, '..', 'database');
+const DB_PATH = path.join(DB_DIR, 'dvf_bdnb_complete.db');
+
+// Créer le répertoire database s'il n'existe pas
+if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+}
 
 /**
  * Calcule la distance entre deux points GPS (formule de Haversine)
@@ -34,6 +41,8 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
  */
 module.exports = (req, res) => {
     try {
+        const startTime = Date.now();
+        
         // Récupérer les paramètres
         const lat = parseFloat(req.query.lat);
         const lon = parseFloat(req.query.lon);
@@ -46,6 +55,21 @@ module.exports = (req, res) => {
         const avecPiscine = req.query.avec_piscine ? parseInt(req.query.avec_piscine) : null;
         const avecGarage = req.query.avec_garage ? parseInt(req.query.avec_garage) : null;
         const limit = parseInt(req.query.limit) || 100;
+        
+        console.log('\n[DVF][REQ] =================================================================');
+        console.log('[DVF][REQ] Params:', {
+            lat,
+            lon,
+            radius,
+            typeBien,
+            monthsBack,
+            limit,
+            minSurface,
+            maxSurface,
+            classeDPE,
+            avecPiscine,
+            avecGarage
+        });
         
         // Validation
         if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
@@ -60,6 +84,15 @@ module.exports = (req, res) => {
             return res.status(400).json({
                 success: false,
                 error: 'Coordonnées hors de France métropolitaine'
+            });
+        }
+        
+        // Vérifier que la base de données existe
+        if (!fs.existsSync(DB_PATH)) {
+            return res.status(503).json({
+                success: false,
+                error: 'Base de données DVF non disponible',
+                message: `Le fichier ${DB_PATH} n'existe pas. Veuillez exécuter le script de création de la base de données.`
             });
         }
         
@@ -99,6 +132,7 @@ module.exports = (req, res) => {
                 presence_piscine,
                 presence_garage,
                 type_local as type_bien,
+                nature_culture,
                 orientation_principale,
                 pourcentage_vitrage,
                 CASE 
@@ -118,10 +152,41 @@ module.exports = (req, res) => {
         
         // Filtres optionnels
         if (typeBien) {
-            // Convertir en format attendu par la base (première lettre en majuscule)
-            const typeBienFormatted = typeBien.charAt(0).toUpperCase() + typeBien.slice(1).toLowerCase();
-            query += ` AND type_local = ?`;
-            params.push(typeBienFormatted);
+            if (typeBien.toLowerCase() === 'forestier') {
+                // Pour les forêts, filtrer par nature_culture
+                query += ` AND (
+                    nature_culture LIKE '%bois%' OR
+                    nature_culture LIKE '%futaie%' OR
+                    nature_culture LIKE '%taillis%' OR
+                    nature_culture LIKE '%peupleraie%' OR
+                    nature_culture LIKE '%forêt%'
+                )`;
+            } else if (typeBien.toLowerCase() === 'agricole') {
+                // Pour les terrains agricoles, filtrer par nature_culture
+                query += ` AND (
+                    nature_culture LIKE '%terres%' OR
+                    nature_culture LIKE '%prés%' OR
+                    nature_culture LIKE '%pré%' OR
+                    nature_culture LIKE '%vergers%' OR
+                    nature_culture LIKE '%vignes%' OR
+                    nature_culture LIKE '%landes%' OR
+                    nature_culture LIKE '%pâtures%' OR
+                    nature_culture LIKE '%cultures%' OR
+                    nature_culture LIKE '%herbages%' OR
+                    nature_culture LIKE '%prairies%' OR
+                    nature_culture LIKE '%champs%'
+                ) AND (
+                    nature_culture NOT LIKE '%bois%' AND
+                    nature_culture NOT LIKE '%futaie%' AND
+                    nature_culture NOT LIKE '%taillis%' AND
+                    nature_culture NOT LIKE '%peupleraie%'
+                )`;
+            } else {
+                // Pour les autres types (Maison, Appartement, etc.), utiliser type_local
+                const typeBienFormatted = typeBien.charAt(0).toUpperCase() + typeBien.slice(1).toLowerCase();
+                query += ` AND type_local = ?`;
+                params.push(typeBienFormatted);
+            }
         }
         
         if (minSurface !== null) {
@@ -174,6 +239,24 @@ module.exports = (req, res) => {
             .filter(t => t.distance_meters <= radius)
             .sort((a, b) => a.distance_meters - b.distance_meters)
             .slice(0, limit);
+
+        const durationMs = Date.now() - startTime;
+        console.log(`[DVF][RESP] ${transactions.length} transactions retournées en ${durationMs} ms`);
+        if (transactions.length > 0) {
+            const preview = transactions.slice(0, 3).map(t => ({
+                id_mutation: t.id_mutation,
+                valeur_fonciere: t.valeur_fonciere,
+                surface_bati: t.surface_reelle_bati,
+                surface_terrain: t.surface_terrain,
+                distance_meters: t.distance_meters,
+                type_bien: t.type_bien,
+                date_mutation: t.date_mutation,
+                nom_commune: t.nom_commune
+            }));
+            console.table(preview);
+        } else {
+            console.log('[DVF][RESP] Aucune transaction renvoyée.');
+        }
         
         // Calculer les statistiques
         const prixM2Bati = transactions

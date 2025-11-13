@@ -2004,8 +2004,23 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             GROUP BY id_mutation, est_terrain_viabilise, id_pa;
         `);
         
+        // Checkpoint après INSERT massif
+        try {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+        } catch (checkpointErr) {
+            // Ignorer
+        }
+        
         // Supprimer la table temporaire
         db.exec(`DROP TABLE terrains_batir_temp;`);
+        
+        // Checkpoint final pour nettoyer le WAL après toutes les opérations
+        try {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+            console.log('🧹 Checkpoint WAL final effectué\n');
+        } catch (checkpointErr) {
+            // Ignorer les erreurs de checkpoint
+        }
         
         const finalStats = db.prepare(`
             SELECT 

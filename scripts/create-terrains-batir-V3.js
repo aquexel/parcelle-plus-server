@@ -33,6 +33,7 @@ const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
+const { execSync } = require('child_process');
 
 let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
@@ -47,12 +48,36 @@ console.log('🏗️  === CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 ===\n');
 console.log('📊 Démarrage de la création de la base...\n');
 demarrerCreationBase();
 
+// Fonction pour vérifier l'espace disque disponible (en GB)
+function verifierEspaceDisque(chemin) {
+    try {
+        // Utiliser df sur Linux/Mac
+        const result = execSync(`df -BG "${chemin}" | tail -1 | awk '{print $4}'`, { encoding: 'utf8' }).trim();
+        const espaceGB = parseFloat(result.replace('G', ''));
+        return espaceGB;
+    } catch (err) {
+        // Si df échoue, essayer une autre méthode ou retourner null
+        console.log('⚠️  Impossible de vérifier l\'espace disque, continuation...');
+        return null;
+    }
+}
+
 function demarrerCreationBase() {
 // S'assurer que le répertoire database existe
 const dbDir = path.dirname(DB_FILE);
 if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
     console.log(`📁 Répertoire créé : ${dbDir}\n`);
+}
+
+// Vérifier l'espace disque disponible
+const espaceDispo = verifierEspaceDisque(dbDir);
+if (espaceDispo !== null) {
+    console.log(`💾 Espace disque disponible : ${espaceDispo.toFixed(2)} GB\n`);
+    if (espaceDispo < 5) {
+        console.log('⚠️  ATTENTION : Moins de 5 GB d\'espace disponible !');
+        console.log('   Le script peut échouer si l\'espace est insuffisant.\n');
+    }
 }
 
 // Supprimer ancienne base (gérer les erreurs de verrouillage)
@@ -1225,22 +1250,73 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log('✅ Index créés\n');
     
     // Copier seulement les données nécessaires dans terrains_batir_temp
+    // Utiliser un INSERT par batch pour éviter les problèmes d'espace disque
     console.log('📊 ÉTAPE 1.5 : Copie des données dans la table de travail...');
-    db.exec(`
-        INSERT INTO terrains_batir_temp (
-            id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-            date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
-            section_cadastrale, est_terrain_viabilise, id_pa,
-            parcelle_suffixe
-        )
-        SELECT 
-            id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-            date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
-            section_cadastrale, 0, NULL,
-            parcelle_suffixe
-        FROM dvf_temp_indexed;
-    `);
-    console.log(`✅ Données copiées\n`);
+    
+    // Compter d'abord le nombre de lignes à copier
+    const countResult = db.prepare('SELECT COUNT(*) as count FROM dvf_temp_indexed').get();
+    const totalRows = countResult.count;
+    console.log(`   📊 ${totalRows.toLocaleString()} lignes à copier...`);
+    
+    if (totalRows === 0) {
+        console.log('⚠️  Aucune donnée à copier !\n');
+        return;
+    }
+    
+    // Copier par batch pour éviter les problèmes de mémoire et d'espace disque
+    const BATCH_SIZE = 100000; // 100k lignes par batch
+    let offset = 0;
+    let totalInserted = 0;
+    
+    while (offset < totalRows) {
+        const batchSize = Math.min(BATCH_SIZE, totalRows - offset);
+        const transaction = db.transaction(() => {
+            const rows = db.prepare(`
+                SELECT 
+                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+                    date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
+                    section_cadastrale, parcelle_suffixe
+                FROM dvf_temp_indexed
+                LIMIT ? OFFSET ?
+            `).all(batchSize, offset);
+            
+            const insertBatch = db.prepare(`
+                INSERT INTO terrains_batir_temp (
+                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+                    date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
+                    section_cadastrale, est_terrain_viabilise, id_pa,
+                    parcelle_suffixe
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+            `);
+            
+            for (const row of rows) {
+                insertBatch.run(
+                    row.id_parcelle, row.id_mutation, row.valeur_fonciere, row.surface_totale,
+                    row.surface_reelle_bati, row.prix_m2, row.date_mutation, row.latitude,
+                    row.longitude, row.code_departement, row.code_commune, row.nom_commune,
+                    row.section_cadastrale, row.parcelle_suffixe
+                );
+            }
+        });
+        
+        try {
+            transaction();
+            totalInserted += batchSize;
+            offset += batchSize;
+            const progress = ((offset / totalRows) * 100).toFixed(1);
+            process.stdout.write(`\r   → ${totalInserted.toLocaleString()}/${totalRows.toLocaleString()} lignes copiées (${progress}%)...`);
+        } catch (err) {
+            if (err.code === 'SQLITE_FULL') {
+                console.error(`\n❌ Erreur : Espace disque insuffisant !`);
+                console.error(`   ${totalInserted.toLocaleString()} lignes copiées avant l'erreur`);
+                console.error(`   Libérez de l'espace disque et relancez le script.`);
+                throw err;
+            }
+            throw err;
+        }
+    }
+    
+    console.log(`\n✅ ${totalInserted.toLocaleString()} lignes copiées avec succès\n`);
 
     // ÉTAPE 2 : Créer vue agrégée par id_mutation
     // Pour 2014-2018 : agrégation par date + prix + section (id_mutation créé artificiellement)

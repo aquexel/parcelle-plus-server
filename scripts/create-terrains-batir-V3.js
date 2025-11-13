@@ -109,9 +109,32 @@ if (fs.existsSync(DB_FILE)) {
     }
 }
 
+// Nettoyer les fichiers WAL de l'ancienne base si elle existe
+if (fs.existsSync(DB_FILE)) {
+    const walFile = DB_FILE + '-wal';
+    const shmFile = DB_FILE + '-shm';
+    if (fs.existsSync(walFile)) {
+        try {
+            fs.unlinkSync(walFile);
+            console.log('🧹 Fichier WAL nettoyé\n');
+        } catch (err) {
+            // Ignorer si le fichier est verrouillé
+        }
+    }
+    if (fs.existsSync(shmFile)) {
+        try {
+            fs.unlinkSync(shmFile);
+        } catch (err) {
+            // Ignorer si le fichier est verrouillé
+        }
+    }
+}
+
 // Créer ou ouvrir la base
 const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL'); // Optimisation pour performance
+db.pragma('cache_size = -64000'); // 64 MB de cache
 
 // Créer la structure de terrains_batir_temp (table temporaire pour le matching)
 db.exec(`
@@ -1305,6 +1328,15 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             offset += batchSize;
             const progress = ((offset / totalRows) * 100).toFixed(1);
             process.stdout.write(`\r   → ${totalInserted.toLocaleString()}/${totalRows.toLocaleString()} lignes copiées (${progress}%)...`);
+            
+            // Faire un checkpoint tous les 10 batchs pour éviter que le WAL devienne trop gros
+            if ((offset / BATCH_SIZE) % 10 === 0) {
+                try {
+                    db.pragma('wal_checkpoint(TRUNCATE)');
+                } catch (checkpointErr) {
+                    // Ignorer les erreurs de checkpoint, ce n'est pas critique
+                }
+            }
         } catch (err) {
             if (err.code === 'SQLITE_FULL') {
                 console.error(`\n❌ Erreur : Espace disque insuffisant !`);
@@ -1314,6 +1346,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             }
             throw err;
         }
+    }
+    
+    // Checkpoint final pour nettoyer le WAL
+    try {
+        db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch (checkpointErr) {
+        // Ignorer les erreurs de checkpoint
     }
     
     console.log(`\n✅ ${totalInserted.toLocaleString()} lignes copiées avec succès\n`);
@@ -1888,6 +1927,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     AND p.parcelle_suffixe = terrains_batir_temp.parcelle_suffixe
               )
         `).run().changes;
+        
+        // Checkpoint après UPDATE massif
+        try {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+        } catch (checkpointErr) {
+            // Ignorer
+        }
         console.log(`✅ ${nbLotsVendus} lots vendus associés\n`);
         
         // Statistiques

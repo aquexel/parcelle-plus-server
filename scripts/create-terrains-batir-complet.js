@@ -1350,7 +1350,15 @@ async function chargerDFIDansBase() {
     }
     
     // Créer une base temporaire pour le chargement (plus rapide)
-    const DB_TEMP = path.join(__dirname, 'database', 'dfi_temp.db');
+    const DB_TEMP_DIR = path.join(__dirname, '..', 'database');
+    const DB_TEMP = path.join(DB_TEMP_DIR, 'dfi_temp.db');
+    
+    // Créer le répertoire s'il n'existe pas
+    if (!fs.existsSync(DB_TEMP_DIR)) {
+        fs.mkdirSync(DB_TEMP_DIR, { recursive: true });
+        console.log(`📁 Répertoire créé : ${DB_TEMP_DIR}\n`);
+    }
+    
     console.log('📋 Création base temporaire DFI (optimisée pour insertion)...\n');
     
     // Supprimer l'ancienne base temp si elle existe

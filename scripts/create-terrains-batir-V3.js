@@ -1289,7 +1289,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     // Copier par batch pour éviter les problèmes de mémoire et d'espace disque
     const BATCH_SIZE = 100000; // 100k lignes par batch
     let offset = 0;
-    let totalInserted = 0;
+    let totalInsertedBatch = 0;
     
     while (offset < totalRows) {
         const batchSize = Math.min(BATCH_SIZE, totalRows - offset);
@@ -1324,10 +1324,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         try {
             transaction();
-            totalInserted += batchSize;
+            totalInsertedBatch += batchSize;
             offset += batchSize;
             const progress = ((offset / totalRows) * 100).toFixed(1);
-            process.stdout.write(`\r   → ${totalInserted.toLocaleString()}/${totalRows.toLocaleString()} lignes copiées (${progress}%)...`);
+            process.stdout.write(`\r   → ${totalInsertedBatch.toLocaleString()}/${totalRows.toLocaleString()} lignes copiées (${progress}%)...`);
             
             // Faire un checkpoint tous les 10 batchs pour éviter que le WAL devienne trop gros
             if ((offset / BATCH_SIZE) % 10 === 0) {
@@ -1340,7 +1340,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         } catch (err) {
             if (err.code === 'SQLITE_FULL') {
                 console.error(`\n❌ Erreur : Espace disque insuffisant !`);
-                console.error(`   ${totalInserted.toLocaleString()} lignes copiées avant l'erreur`);
+                console.error(`   ${totalInsertedBatch.toLocaleString()} lignes copiées avant l'erreur`);
                 console.error(`   Libérez de l'espace disque et relancez le script.`);
                 throw err;
             }
@@ -1355,7 +1355,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // Ignorer les erreurs de checkpoint
     }
     
-    console.log(`\n✅ ${totalInserted.toLocaleString()} lignes copiées avec succès\n`);
+    console.log(`\n✅ ${totalInsertedBatch.toLocaleString()} lignes copiées avec succès\n`);
 
     // ÉTAPE 2 : Créer vue agrégée par id_mutation
     // Pour 2014-2018 : agrégation par date + prix + section (id_mutation créé artificiellement)

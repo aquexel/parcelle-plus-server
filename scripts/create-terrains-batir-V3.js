@@ -1261,15 +1261,45 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log(`✅ ${totalInserted} transactions DVF chargées\n`);
     
     // Créer les index APRÈS le chargement (beaucoup plus rapide)
+    // Désactiver temporairement le WAL pour éviter les fichiers WAL trop gros
     console.log('⚡ Création des index optimisés sur DVF...');
-    db.exec(`
-        CREATE INDEX idx_dvf_commune ON dvf_temp_indexed(code_commune);
-        CREATE INDEX idx_dvf_commune_section ON dvf_temp_indexed(code_commune, section_cadastrale);
-        CREATE INDEX idx_dvf_commune_suffixe ON dvf_temp_indexed(code_commune, parcelle_suffixe);
-        CREATE INDEX idx_dvf_commune_section_suffixe ON dvf_temp_indexed(code_commune, section_cadastrale, parcelle_suffixe);
-        CREATE INDEX idx_dvf_mutation ON dvf_temp_indexed(id_mutation);
-        CREATE INDEX idx_dvf_parcelle ON dvf_temp_indexed(id_parcelle);
-    `);
+    console.log('   🔧 Désactivation temporaire du WAL pour la création des index...');
+    db.pragma('journal_mode = DELETE');
+    
+    const indexes = [
+        { name: 'idx_dvf_commune', sql: 'CREATE INDEX idx_dvf_commune ON dvf_temp_indexed(code_commune)' },
+        { name: 'idx_dvf_commune_section', sql: 'CREATE INDEX idx_dvf_commune_section ON dvf_temp_indexed(code_commune, section_cadastrale)' },
+        { name: 'idx_dvf_commune_suffixe', sql: 'CREATE INDEX idx_dvf_commune_suffixe ON dvf_temp_indexed(code_commune, parcelle_suffixe)' },
+        { name: 'idx_dvf_commune_section_suffixe', sql: 'CREATE INDEX idx_dvf_commune_section_suffixe ON dvf_temp_indexed(code_commune, section_cadastrale, parcelle_suffixe)' },
+        { name: 'idx_dvf_mutation', sql: 'CREATE INDEX idx_dvf_mutation ON dvf_temp_indexed(id_mutation)' },
+        { name: 'idx_dvf_parcelle', sql: 'CREATE INDEX idx_dvf_parcelle ON dvf_temp_indexed(id_parcelle)' }
+    ];
+    
+    for (let i = 0; i < indexes.length; i++) {
+        const idx = indexes[i];
+        try {
+            process.stdout.write(`   → Création index ${i + 1}/${indexes.length}: ${idx.name}...`);
+            db.exec(idx.sql);
+            process.stdout.write(` ✅\n`);
+        } catch (err) {
+            if (err.code === 'SQLITE_FULL') {
+                console.error(`\n❌ Erreur : Espace disque insuffisant lors de la création de l'index ${idx.name} !`);
+                console.error(`   Libérez de l'espace disque et relancez le script.`);
+                // Réactiver le WAL avant de quitter
+                try {
+                    db.pragma('journal_mode = WAL');
+                } catch (walErr) {
+                    // Ignorer
+                }
+                throw err;
+            }
+            throw err;
+        }
+    }
+    
+    // Réactiver le WAL après la création des index
+    console.log('   🔧 Réactivation du mode WAL...');
+    db.pragma('journal_mode = WAL');
     console.log('✅ Index créés\n');
     
     // Copier seulement les données nécessaires dans terrains_batir_temp

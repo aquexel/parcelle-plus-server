@@ -158,14 +158,7 @@ db.exec(`
         parcelle_suffixe TEXT
     );
     
-    -- INDEX OPTIMISÉS POUR RECHERCHE PAR COMMUNE
-    CREATE INDEX IF NOT EXISTS idx_temp_commune_section ON terrains_batir_temp(code_commune, section_cadastrale);
-    CREATE INDEX IF NOT EXISTS idx_temp_commune_suffixe ON terrains_batir_temp(code_commune, parcelle_suffixe);
-    CREATE INDEX IF NOT EXISTS idx_temp_commune_mutation ON terrains_batir_temp(code_commune, id_mutation);
-    CREATE INDEX IF NOT EXISTS idx_temp_commune_section_suffixe ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe);
-    CREATE INDEX IF NOT EXISTS idx_temp_parcelle ON terrains_batir_temp(id_parcelle);
-    CREATE INDEX IF NOT EXISTS idx_temp_mutation ON terrains_batir_temp(id_mutation);
-    CREATE INDEX IF NOT EXISTS idx_temp_pa ON terrains_batir_temp(id_pa);
+    -- ⚡ OPTIMISATION : Index créés APRÈS la copie des données (pas sur table vide)
 `);
 
 // Créer la table DFI si elle n'existe pas
@@ -1258,48 +1251,11 @@ const insertDvfTemp = db.prepare(`
 chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log(`✅ ${totalInserted} transactions DVF chargées\n`);
     
-    // Créer les index APRÈS le chargement (beaucoup plus rapide)
-    // Désactiver temporairement le WAL pour éviter les fichiers WAL trop gros
-    console.log('⚡ Création des index optimisés sur DVF...');
-    console.log('   🔧 Désactivation temporaire du WAL pour la création des index...');
-    db.pragma('journal_mode = DELETE');
-    
-    // Index OPTIMISÉS : seulement les 4 strictement nécessaires (suppression de 2 index redondants)
-    // idx_dvf_commune_suffixe : SUPPRIMÉ (redondant avec commune_section_suffixe)
-    // idx_dvf_parcelle : SUPPRIMÉ (redondant car id_parcelle = code_commune + section + suffixe)
-    const indexes = [
-        { name: 'idx_dvf_commune_section', sql: 'CREATE INDEX idx_dvf_commune_section ON dvf_temp_indexed(code_commune, section_cadastrale)', desc: 'Pour jointures parcelles mères' },
-        { name: 'idx_dvf_commune_section_suffixe', sql: 'CREATE INDEX idx_dvf_commune_section_suffixe ON dvf_temp_indexed(code_commune, section_cadastrale, parcelle_suffixe)', desc: 'Pour jointures parcelles filles' },
-        { name: 'idx_dvf_mutation', sql: 'CREATE INDEX idx_dvf_mutation ON dvf_temp_indexed(id_mutation)', desc: 'Pour agrégations par mutation' },
-        { name: 'idx_dvf_date', sql: 'CREATE INDEX idx_dvf_date ON dvf_temp_indexed(date_mutation)', desc: 'Pour filtres temporels ±2 ans' }
-    ];
-    
-    for (let i = 0; i < indexes.length; i++) {
-        const idx = indexes[i];
-        try {
-            process.stdout.write(`   → Création index ${i + 1}/${indexes.length}: ${idx.name} (${idx.desc})...`);
-            db.exec(idx.sql);
-            process.stdout.write(` ✅\n`);
-        } catch (err) {
-            if (err.code === 'SQLITE_FULL') {
-                console.error(`\n❌ Erreur : Espace disque insuffisant lors de la création de l'index ${idx.name} !`);
-                console.error(`   Libérez de l'espace disque et relancez le script.`);
-                // Réactiver le WAL avant de quitter
-                try {
-                    db.pragma('journal_mode = WAL');
-                } catch (walErr) {
-                    // Ignorer
-                }
-                throw err;
-            }
-            throw err;
-        }
-    }
-    
-    // Réactiver le WAL après la création des index
-    console.log('   🔧 Réactivation du mode WAL...');
-    db.pragma('journal_mode = WAL');
-    console.log('✅ Index créés\n');
+    // ⚡ OPTIMISATION RADICALE : Ne PAS créer d'index sur dvf_temp_indexed
+    // Les index sur 36M de lignes prennent trop de place (risque SQLITE_FULL)
+    // À la place, on copie d'abord dans terrains_batir_temp, puis on crée les index là-bas
+    // La copie sera plus lente (~5-10 min), mais on évite le problème d'espace disque
+    console.log('⚡ Optimisation : Pas d\'index sur DVF temporaire (économie d\'espace)\n');
     
     // Copier seulement les données nécessaires dans terrains_batir_temp
     // Utiliser un INSERT par batch pour éviter les problèmes d'espace disque
@@ -1384,11 +1340,37 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         }
     }
     
-    // Réactiver le WAL après la copie
-    console.log('\n   🔧 Réactivation du mode WAL...');
+    console.log(`\n✅ ${totalInsertedBatch.toLocaleString()} lignes copiées avec succès\n`);
+    
+    // IMPORTANT : Supprimer dvf_temp_indexed AVANT de créer les index
+    // Cela libère ~14GB et évite d'avoir les deux tables indexées en même temps
+    console.log('🧹 Suppression de la table DVF temporaire pour libérer de l\'espace...');
+    db.exec('DROP TABLE IF EXISTS dvf_temp_indexed;');
+    console.log('✅ ~14 GB libérés\n');
+    
+    // Réactiver le WAL après la copie (avant création des index)
+    console.log('   🔧 Réactivation du mode WAL...');
     db.pragma('journal_mode = WAL');
     
-    console.log(`\n✅ ${totalInsertedBatch.toLocaleString()} lignes copiées avec succès\n`);
+    // ÉTAPE 1.6 : Créer les index sur terrains_batir_temp (maintenant qu'on a libéré l'espace)
+    console.log('⚡ Création des index sur terrains_batir_temp...');
+    console.log('   (4 index essentiels sur ~36M lignes, durée estimée : 3-5 min)\n');
+    
+    const indexesTBT = [
+        { name: 'idx_temp_commune_section', sql: 'CREATE INDEX idx_temp_commune_section ON terrains_batir_temp(code_commune, section_cadastrale)', desc: 'Jointures parcelles mères' },
+        { name: 'idx_temp_commune_section_suffixe', sql: 'CREATE INDEX idx_temp_commune_section_suffixe ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe)', desc: 'Jointures parcelles filles' },
+        { name: 'idx_temp_mutation', sql: 'CREATE INDEX idx_temp_mutation ON terrains_batir_temp(id_mutation)', desc: 'Agrégations par mutation' },
+        { name: 'idx_temp_pa', sql: 'CREATE INDEX idx_temp_pa ON terrains_batir_temp(id_pa)', desc: 'Filtrage PA' }
+    ];
+    
+    for (let i = 0; i < indexesTBT.length; i++) {
+        const idx = indexesTBT[i];
+        process.stdout.write(`   → ${i + 1}/${indexesTBT.length}: ${idx.name} (${idx.desc})...`);
+        db.exec(idx.sql);
+        process.stdout.write(` ✅\n`);
+    }
+    
+    console.log('✅ Index créés sur terrains_batir_temp\n');
 
     // ÉTAPE 2 : Créer vue agrégée par id_mutation
     // Pour 2014-2018 : agrégation par date + prix + section (id_mutation créé artificiellement)

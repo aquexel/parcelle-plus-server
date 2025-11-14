@@ -1543,38 +1543,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     }).then(() => {
         console.log(`✅ ${paList.length} PA chargés\n`);
         
-        // OPTIMISATION 4 : Précalculer le nombre de parcelles par mutation
-        console.log('⚡ Optimisation : Précalcul du nombre de parcelles par mutation...');
-        db.exec(`
-            DROP TABLE IF EXISTS mutation_parcelle_counts;
-            CREATE TEMP TABLE mutation_parcelle_counts AS
-            SELECT 
-                id_mutation,
-                COUNT(DISTINCT id_parcelle) as nb_parcelles_total,
-                code_departement,
-                code_commune,
-                section_cadastrale
-            FROM terrains_batir_temp
-            GROUP BY id_mutation, code_departement, code_commune, section_cadastrale;
-            
-            CREATE INDEX idx_mutation_counts ON mutation_parcelle_counts(id_mutation);
-            CREATE INDEX idx_mutation_counts_commune ON mutation_parcelle_counts(code_commune, section_cadastrale);
-        `);
-        console.log('✅ Comptage précalculé\n');
-        
-        // OPTIMISATION 3 : Créer une table des mutations déjà attribuées
-        console.log('⚡ Optimisation : Table des mutations déjà attribuées...');
-        db.exec(`
-            DROP TABLE IF EXISTS mutations_attribuees;
-            CREATE TEMP TABLE mutations_attribuees AS
-            SELECT DISTINCT id_mutation
-            FROM terrains_batir_temp
-            WHERE id_pa IS NOT NULL;
-            
-            CREATE UNIQUE INDEX idx_mutations_attribuees ON mutations_attribuees(id_mutation);
-        `);
-        console.log('✅ Table d\'exclusion créée\n');
-        
         // OPTIMISATION 5 : BATCH PROCESSING - Regrouper les PA par commune/section
         console.log('⚡ Optimisation : Regroupement des PA par commune/section...');
         const paByCommuneSection = new Map();

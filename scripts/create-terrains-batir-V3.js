@@ -1264,19 +1264,20 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log('   🔧 Désactivation temporaire du WAL pour la création des index...');
     db.pragma('journal_mode = DELETE');
     
+    // Index OPTIMISÉS : seulement les 4 strictement nécessaires (suppression de 2 index redondants)
+    // idx_dvf_commune_suffixe : SUPPRIMÉ (redondant avec commune_section_suffixe)
+    // idx_dvf_parcelle : SUPPRIMÉ (redondant car id_parcelle = code_commune + section + suffixe)
     const indexes = [
-        { name: 'idx_dvf_commune', sql: 'CREATE INDEX idx_dvf_commune ON dvf_temp_indexed(code_commune)' },
-        { name: 'idx_dvf_commune_section', sql: 'CREATE INDEX idx_dvf_commune_section ON dvf_temp_indexed(code_commune, section_cadastrale)' },
-        { name: 'idx_dvf_commune_suffixe', sql: 'CREATE INDEX idx_dvf_commune_suffixe ON dvf_temp_indexed(code_commune, parcelle_suffixe)' },
-        { name: 'idx_dvf_commune_section_suffixe', sql: 'CREATE INDEX idx_dvf_commune_section_suffixe ON dvf_temp_indexed(code_commune, section_cadastrale, parcelle_suffixe)' },
-        { name: 'idx_dvf_mutation', sql: 'CREATE INDEX idx_dvf_mutation ON dvf_temp_indexed(id_mutation)' },
-        { name: 'idx_dvf_parcelle', sql: 'CREATE INDEX idx_dvf_parcelle ON dvf_temp_indexed(id_parcelle)' }
+        { name: 'idx_dvf_commune_section', sql: 'CREATE INDEX idx_dvf_commune_section ON dvf_temp_indexed(code_commune, section_cadastrale)', desc: 'Pour jointures parcelles mères' },
+        { name: 'idx_dvf_commune_section_suffixe', sql: 'CREATE INDEX idx_dvf_commune_section_suffixe ON dvf_temp_indexed(code_commune, section_cadastrale, parcelle_suffixe)', desc: 'Pour jointures parcelles filles' },
+        { name: 'idx_dvf_mutation', sql: 'CREATE INDEX idx_dvf_mutation ON dvf_temp_indexed(id_mutation)', desc: 'Pour agrégations par mutation' },
+        { name: 'idx_dvf_date', sql: 'CREATE INDEX idx_dvf_date ON dvf_temp_indexed(date_mutation)', desc: 'Pour filtres temporels ±2 ans' }
     ];
     
     for (let i = 0; i < indexes.length; i++) {
         const idx = indexes[i];
         try {
-            process.stdout.write(`   → Création index ${i + 1}/${indexes.length}: ${idx.name}...`);
+            process.stdout.write(`   → Création index ${i + 1}/${indexes.length}: ${idx.name} (${idx.desc})...`);
             db.exec(idx.sql);
             process.stdout.write(` ✅\n`);
         } catch (err) {

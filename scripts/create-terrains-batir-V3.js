@@ -1287,54 +1287,52 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     }
     
     // Copier par batch pour éviter les problèmes de mémoire et d'espace disque
-    const BATCH_SIZE = 100000; // 100k lignes par batch
+    // Utiliser INSERT INTO ... SELECT directement (plus efficace que charger en mémoire)
+    const BATCH_SIZE = 50000; // 50k lignes par batch (réduit pour éviter WAL trop gros)
     let offset = 0;
     let totalInsertedBatch = 0;
     
+    // Désactiver temporairement le WAL pendant la copie massive pour éviter les fichiers WAL trop gros
+    console.log('   🔧 Désactivation temporaire du WAL pour la copie massive...');
+    db.pragma('journal_mode = DELETE'); // Mode DELETE au lieu de WAL pour éviter les fichiers WAL
+    
     while (offset < totalRows) {
         const batchSize = Math.min(BATCH_SIZE, totalRows - offset);
-        const transaction = db.transaction(() => {
-            const rows = db.prepare(`
-                SELECT 
-                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-                    date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
-                    section_cadastrale, parcelle_suffixe
-                FROM dvf_temp_indexed
-                LIMIT ? OFFSET ?
-            `).all(batchSize, offset);
-            
-            const insertBatch = db.prepare(`
+        
+        try {
+            // Utiliser INSERT INTO ... SELECT directement (plus efficace)
+            db.exec(`
                 INSERT INTO terrains_batir_temp (
                     id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
                     date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
                     section_cadastrale, est_terrain_viabilise, id_pa,
                     parcelle_suffixe
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+                )
+                SELECT 
+                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+                    date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
+                    section_cadastrale, 0, NULL,
+                    parcelle_suffixe
+                FROM dvf_temp_indexed
+                LIMIT ${batchSize} OFFSET ${offset}
             `);
             
-            for (const row of rows) {
-                insertBatch.run(
-                    row.id_parcelle, row.id_mutation, row.valeur_fonciere, row.surface_totale,
-                    row.surface_reelle_bati, row.prix_m2, row.date_mutation, row.latitude,
-                    row.longitude, row.code_departement, row.code_commune, row.nom_commune,
-                    row.section_cadastrale, row.parcelle_suffixe
-                );
-            }
-        });
-        
-        try {
-            transaction();
             totalInsertedBatch += batchSize;
             offset += batchSize;
             const progress = ((offset / totalRows) * 100).toFixed(1);
             process.stdout.write(`\r   → ${totalInsertedBatch.toLocaleString()}/${totalRows.toLocaleString()} lignes copiées (${progress}%)...`);
             
-            // Faire un checkpoint tous les 10 batchs pour éviter que le WAL devienne trop gros
-            if ((offset / BATCH_SIZE) % 10 === 0) {
+            // Faire un checkpoint après chaque batch pour éviter que le journal devienne trop gros
+            if (offset % (BATCH_SIZE * 5) === 0 || offset >= totalRows) {
+                // Vérifier la taille du fichier de base de données
                 try {
-                    db.pragma('wal_checkpoint(TRUNCATE)');
-                } catch (checkpointErr) {
-                    // Ignorer les erreurs de checkpoint, ce n'est pas critique
+                    const stats = fs.statSync(DB_FILE);
+                    const sizeGB = (stats.size / (1024 * 1024 * 1024)).toFixed(2);
+                    if (offset % (BATCH_SIZE * 10) === 0) {
+                        process.stdout.write(` [${sizeGB} GB]`);
+                    }
+                } catch (statErr) {
+                    // Ignorer
                 }
             }
         } catch (err) {
@@ -1342,18 +1340,21 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 console.error(`\n❌ Erreur : Espace disque insuffisant !`);
                 console.error(`   ${totalInsertedBatch.toLocaleString()} lignes copiées avant l'erreur`);
                 console.error(`   Libérez de l'espace disque et relancez le script.`);
+                // Réactiver le WAL avant de quitter
+                try {
+                    db.pragma('journal_mode = WAL');
+                } catch (walErr) {
+                    // Ignorer
+                }
                 throw err;
             }
             throw err;
         }
     }
     
-    // Checkpoint final pour nettoyer le WAL
-    try {
-        db.pragma('wal_checkpoint(TRUNCATE)');
-    } catch (checkpointErr) {
-        // Ignorer les erreurs de checkpoint
-    }
+    // Réactiver le WAL après la copie
+    console.log('\n   🔧 Réactivation du mode WAL...');
+    db.pragma('journal_mode = WAL');
     
     console.log(`\n✅ ${totalInsertedBatch.toLocaleString()} lignes copiées avec succès\n`);
 

@@ -1348,13 +1348,12 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     db.exec('DROP TABLE IF EXISTS dvf_temp_indexed;');
     console.log('✅ ~14 GB libérés\n');
     
-    // Réactiver le WAL après la copie (avant création des index)
-    console.log('   🔧 Réactivation du mode WAL...');
-    db.pragma('journal_mode = WAL');
-    
     // ÉTAPE 1.6 : Créer les index sur terrains_batir_temp (maintenant qu'on a libéré l'espace)
+    // ⚠️ CRITIQUE : Garder journal_mode=DELETE pendant TOUTE la création des index
+    // Sinon les fichiers WAL temporaires dépassent l'espace disque disponible
     console.log('⚡ Création des index sur terrains_batir_temp...');
-    console.log('   (4 index essentiels sur ~36M lignes, durée estimée : 3-5 min)\n');
+    console.log('   (4 index essentiels sur ~36M lignes, durée estimée : 5-10 min)');
+    console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour économiser l\'espace\n');
     
     const indexesTBT = [
         { name: 'idx_temp_commune_section', sql: 'CREATE INDEX idx_temp_commune_section ON terrains_batir_temp(code_commune, section_cadastrale)', desc: 'Jointures parcelles mères' },
@@ -1365,10 +1364,28 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     for (let i = 0; i < indexesTBT.length; i++) {
         const idx = indexesTBT[i];
-        process.stdout.write(`   → ${i + 1}/${indexesTBT.length}: ${idx.name} (${idx.desc})...`);
-        db.exec(idx.sql);
-        process.stdout.write(` ✅\n`);
+        try {
+            process.stdout.write(`   → ${i + 1}/${indexesTBT.length}: ${idx.name} (${idx.desc})...`);
+            db.exec(idx.sql);
+            process.stdout.write(` ✅\n`);
+            
+            // CHECKPOINT après chaque index pour libérer de l'espace
+            if (i < indexesTBT.length - 1) {
+                db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+            }
+        } catch (err) {
+            if (err.code === 'SQLITE_FULL') {
+                console.error(`\n\n❌ Erreur : Espace disque insuffisant lors de la création de l'index ${idx.name} !`);
+                console.error(`   La base fait actuellement ~26 GB + ${i} index créés.`);
+                console.error(`   Tentez de libérer plus d'espace disque et relancez le script.\n`);
+            }
+            throw err;
+        }
     }
+    
+    // Réactiver le WAL SEULEMENT après que tous les index sont créés
+    console.log('\n   🔧 Réactivation du mode WAL...');
+    db.pragma('journal_mode = WAL');
     
     console.log('✅ Index créés sur terrains_batir_temp\n');
 

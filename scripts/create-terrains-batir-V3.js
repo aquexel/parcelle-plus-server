@@ -149,8 +149,6 @@ db.exec(`
         surface_reelle_bati REAL,
         prix_m2 REAL,
         date_mutation TEXT,
-        latitude REAL,
-        longitude REAL,
         code_departement TEXT,
         code_commune TEXT,
         nom_commune TEXT,
@@ -1185,8 +1183,7 @@ function chargerTousLesCSV(db, insertStmt) {
                             surfaceBati,
                             // prixM2 supprimé (calculé à la volée)
                             dateMutation,
-                            latitude,
-                            longitude,
+                            // latitude, longitude supprimés (seront enrichis à la fin pour économiser espace)
                             codeDept,
                             codeCommune,
                             // nomCommune supprimé (peut être récupéré depuis code_commune si nécessaire)
@@ -1235,9 +1232,11 @@ console.log('📊 ÉTAPE 1 : Création table temporaire DVF indexée...\n');
 
 db.exec(`
     DROP TABLE IF EXISTS dvf_temp_indexed;
-    -- Table optimisée : seulement les colonnes nécessaires pour réduire la taille
+    -- Table ULTRA-OPTIMISÉE : seulement les colonnes nécessaires pour les jointures et filtres
     -- Suppression de nom_commune (peut être récupéré depuis code_commune si nécessaire)
     -- Suppression de prix_m2 (peut être calculé à la volée : valeur_fonciere / surface_totale)
+    -- Suppression de latitude/longitude (non utilisées dans jointures, seront enrichies à la fin si nécessaire)
+    -- Cela réduit la taille de ~30% et évite SQLITE_FULL
     CREATE TEMP TABLE dvf_temp_indexed (
         id_parcelle TEXT NOT NULL,
         id_mutation TEXT NOT NULL,
@@ -1245,8 +1244,6 @@ db.exec(`
         surface_totale REAL,
         surface_reelle_bati REAL,
         date_mutation TEXT,
-        latitude REAL,
-        longitude REAL,
         code_departement TEXT NOT NULL,
         code_commune TEXT NOT NULL,
         section_cadastrale TEXT NOT NULL,
@@ -1255,7 +1252,7 @@ db.exec(`
 `);
 
 const insertDvfTemp = db.prepare(`
-    INSERT INTO dvf_temp_indexed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO dvf_temp_indexed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
@@ -1332,18 +1329,19 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         try {
             // Utiliser INSERT INTO ... SELECT directement (plus efficace)
-            // Calculer prix_m2 à la volée et mettre nom_commune à NULL (sera enrichi plus tard si nécessaire)
+            // Calculer prix_m2 à la volée, mettre nom_commune à NULL
+            // Ne pas copier latitude/longitude (économie de ~30% d'espace)
             db.exec(`
                 INSERT INTO terrains_batir_temp (
                     id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-                    date_mutation, latitude, longitude, code_departement, code_commune, nom_commune,
+                    date_mutation, code_departement, code_commune, nom_commune,
                     section_cadastrale, est_terrain_viabilise, id_pa,
                     parcelle_suffixe
                 )
                 SELECT 
                     id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                     CASE WHEN surface_totale > 0 THEN valeur_fonciere / surface_totale ELSE 0 END as prix_m2,
-                    date_mutation, latitude, longitude, code_departement, code_commune, NULL as nom_commune,
+                    date_mutation, code_departement, code_commune, NULL as nom_commune,
                     section_cadastrale, 0, NULL,
                     parcelle_suffixe
                 FROM dvf_temp_indexed
@@ -2024,8 +2022,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 SUM(surface_reelle_bati) as surface_reelle_bati,  -- SOMME du bâti
                 MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,  -- Recalculer le prix/m²
                 MIN(date_mutation) as date_mutation,      -- Date la plus ancienne
-                AVG(latitude) as latitude,                -- Moyenne des coordonnées
-                AVG(longitude) as longitude,
+                NULL as latitude,                          -- Sera enrichi plus tard si nécessaire
+                NULL as longitude,                         -- Sera enrichi plus tard si nécessaire
                 MAX(nom_commune) as nom_commune,
                 CASE 
                     WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'

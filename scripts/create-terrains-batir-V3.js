@@ -1575,8 +1575,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 superficie REAL,
                 date_auth TEXT
             );
-            CREATE INDEX idx_pa_parcelles_commune ON pa_parcelles_temp(code_commune_dfi, parcelle_normalisee);
-            CREATE INDEX idx_pa_parcelles_section ON pa_parcelles_temp(code_commune_dvf, section);
         `);
         
         // Insérer toutes les parcelles PA en masse
@@ -1614,7 +1612,15 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         });
         insertManyPA();
         const nbPA = db.prepare(`SELECT COUNT(DISTINCT num_pa) as nb FROM pa_parcelles_temp`).get().nb;
-        console.log(`✅ ${nbPA} PA avec parcelles explosées\n`);
+        console.log(`✅ ${nbPA} PA avec parcelles explosées`);
+        
+        // Créer les index APRÈS insertion (beaucoup plus efficace)
+        console.log('⚡ Création des index sur pa_parcelles_temp...');
+        db.exec(`
+            CREATE INDEX idx_pa_parcelles_commune ON pa_parcelles_temp(code_commune_dfi, parcelle_normalisee);
+            CREATE INDEX idx_pa_parcelles_section ON pa_parcelles_temp(code_commune_dvf, section);
+        `);
+        console.log(`✅ Index créés\n`);
         
         // SOUS-ÉTAPE 4.2 : Chercher parcelles mères dans DVF (ACHAT AVANT DIVISION)
         console.log('⚡ 4.2 - Recherche achats lotisseurs sur parcelles mères...');

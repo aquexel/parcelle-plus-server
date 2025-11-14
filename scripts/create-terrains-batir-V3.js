@@ -1767,15 +1767,16 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         return new Promise((resolve) => {
             if (fs.existsSync(PARCELLE_FILE)) {
                 // Créer une table temporaire avec les superficies depuis parcelle.csv
+                // ⚡ OPTIMISATION : PRIMARY KEY créée APRÈS insertion
                 db.exec(`
                     DROP TABLE IF EXISTS parcelle_superficies;
                     CREATE TEMP TABLE parcelle_superficies (
-                        id_parcelle TEXT PRIMARY KEY,
+                        id_parcelle TEXT,
                         superficie REAL
                     );
                 `);
                 
-                const insertSuperficie = db.prepare(`INSERT OR REPLACE INTO parcelle_superficies VALUES (?, ?)`);
+                const insertSuperficie = db.prepare(`INSERT INTO parcelle_superficies VALUES (?, ?)`);
                 let countSuperficies = 0;
                 
                 fs.createReadStream(PARCELLE_FILE)
@@ -1790,6 +1791,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     })
                     .on('end', () => {
                         console.log(`   ✅ ${countSuperficies} superficies chargées depuis parcelle.csv`);
+                        
+                        // Créer l'index APRÈS insertion
+                        db.exec(`CREATE UNIQUE INDEX idx_parcelle_superficies ON parcelle_superficies(id_parcelle);`);
                         
                         // Mettre à jour pa_filles_temp avec les superficies enrichies
                         db.exec(`

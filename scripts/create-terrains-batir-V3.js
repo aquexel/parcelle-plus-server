@@ -1383,11 +1383,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         }
     }
     
-    // Réactiver le WAL SEULEMENT après que tous les index sont créés
-    console.log('\n   🔧 Réactivation du mode WAL...');
-    db.pragma('journal_mode = WAL');
-    
-    console.log('✅ Index créés sur terrains_batir_temp\n');
+    console.log('✅ Index créés sur terrains_batir_temp');
+    console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
 
     // ÉTAPE 2 : Créer vue agrégée par id_mutation
     // Pour 2014-2018 : agrégation par date + prix + section (id_mutation créé artificiellement)
@@ -1962,6 +1959,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     enrichirCoordonnees(db).then(() => {
         // ÉTAPE 6 : Créer la table finale simplifiée
         console.log('\n📊 ÉTAPE 6 : Création de la table finale simplifiée...');
+        
+        // ✅ Réactiver le WAL MAINTENANT (pour la table finale uniquement)
+        console.log('   🔧 Réactivation du mode WAL pour la table finale...');
+        db.pragma('journal_mode = WAL');
         
         db.exec(`
             CREATE TABLE terrains_batir (

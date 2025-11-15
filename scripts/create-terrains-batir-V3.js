@@ -1638,6 +1638,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // SOUS-ÉTAPE 4.2 : Chercher parcelles mères dans DVF (ACHAT AVANT DIVISION)
         console.log('⚡ 4.2 - Recherche achats lotisseurs sur parcelles mères...');
+        
+        // OPTIMISATION : Créer la table en deux étapes pour réduire l'espace temporaire
+        // Étape 1 : Créer la table sans ROW_NUMBER (plus léger)
+        console.log('   → Étape 1/2 : Jointure PA-DVF (sans tri)...');
         db.exec(`
             DROP TABLE IF EXISTS achats_lotisseurs_meres;
             CREATE TEMP TABLE achats_lotisseurs_meres AS
@@ -1647,11 +1651,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 m.date_mutation,
                 p.date_auth,
                 p.superficie,
-                m.surface_totale_aggregee,
-                ROW_NUMBER() OVER (
-                    PARTITION BY p.num_pa 
-                    ORDER BY m.date_mutation ASC
-                ) as rang
+                m.surface_totale_aggregee
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = p.code_commune_dvf
@@ -1661,7 +1661,30 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE m.date_mutation BETWEEN 
                   DATE(p.date_auth, '-2 years') AND 
                   DATE(p.date_auth, '+2 years')
-            GROUP BY p.num_pa, t.id_mutation, m.date_mutation, p.date_auth, p.superficie, m.surface_totale_aggregee
+        `);
+        
+        // Étape 2 : Ajouter le rang (sur une table plus petite)
+        console.log('   → Étape 2/2 : Calcul du rang (première transaction par PA)...');
+        db.exec(`
+            CREATE TEMP TABLE achats_lotisseurs_meres_ranked AS
+            SELECT 
+                num_pa,
+                id_mutation,
+                date_mutation,
+                date_auth,
+                superficie,
+                surface_totale_aggregee,
+                ROW_NUMBER() OVER (
+                    PARTITION BY num_pa 
+                    ORDER BY date_mutation ASC
+                ) as rang
+            FROM achats_lotisseurs_meres
+        `);
+        
+        // Remplacer l'ancienne table
+        db.exec(`
+            DROP TABLE achats_lotisseurs_meres;
+            ALTER TABLE achats_lotisseurs_meres_ranked RENAME TO achats_lotisseurs_meres;
         `);
         
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
@@ -1843,6 +1866,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // SOUS-ÉTAPE 4.4 : Trouver achats lotisseurs sur parcelles filles
         // Filtres : ≥1 parcelle, tolérance surface ±10%, prix > 1€
         console.log('⚡ 4.4 - Recherche achats lotisseurs sur parcelles filles...');
+        
+        // OPTIMISATION : Créer la table en deux étapes pour réduire l'espace temporaire
+        // Étape 1 : Créer la table avec GROUP BY et HAVING (sans ROW_NUMBER)
+        console.log('   → Étape 1/2 : Jointure PA-filles-DVF avec filtres...');
         db.exec(`
             DROP TABLE IF EXISTS achats_lotisseurs_filles;
             CREATE TEMP TABLE achats_lotisseurs_filles AS
@@ -1854,11 +1881,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 pf.superficie,
                 m.surface_totale_aggregee,
                 m.valeur_totale,
-                COUNT(DISTINCT t.id_parcelle) as nb_parcelles,
-                ROW_NUMBER() OVER (
-                    PARTITION BY pf.num_pa 
-                    ORDER BY m.date_mutation ASC, COUNT(DISTINCT t.id_parcelle) DESC
-                ) as rang
+                COUNT(DISTINCT t.id_parcelle) as nb_parcelles
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = pf.code_commune_dvf
@@ -1873,6 +1896,32 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.9 AND pf.superficie * 1.1)
+        `);
+        
+        // Étape 2 : Ajouter le rang (sur une table plus petite)
+        console.log('   → Étape 2/2 : Calcul du rang (première transaction par PA)...');
+        db.exec(`
+            CREATE TEMP TABLE achats_lotisseurs_filles_ranked AS
+            SELECT 
+                num_pa,
+                id_mutation,
+                date_mutation,
+                date_auth,
+                superficie,
+                surface_totale_aggregee,
+                valeur_totale,
+                nb_parcelles,
+                ROW_NUMBER() OVER (
+                    PARTITION BY num_pa 
+                    ORDER BY date_mutation ASC, nb_parcelles DESC
+                ) as rang
+            FROM achats_lotisseurs_filles
+        `);
+        
+        // Remplacer l'ancienne table
+        db.exec(`
+            DROP TABLE achats_lotisseurs_filles;
+            ALTER TABLE achats_lotisseurs_filles_ranked RENAME TO achats_lotisseurs_filles;
         `);
         
         const nbAchatsFilles = db.prepare(`

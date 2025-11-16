@@ -1639,12 +1639,32 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // SOUS-ÉTAPE 4.2 : Chercher parcelles mères dans DVF (ACHAT AVANT DIVISION)
         console.log('⚡ 4.2 - Recherche achats lotisseurs sur parcelles mères...');
         
-        // OPTIMISATION : Créer la table en deux étapes pour réduire l'espace temporaire
-        // Étape 1 : Créer la table sans ROW_NUMBER (plus léger)
-        console.log('   → Étape 1/2 : Jointure PA-DVF (sans tri)...');
+        // OPTIMISATION RADICALE : Traiter par BATCH de COMMUNES pour éviter jointure massive
+        // Créer la table vide
         db.exec(`
             DROP TABLE IF EXISTS achats_lotisseurs_meres;
-            CREATE TEMP TABLE achats_lotisseurs_meres AS
+            CREATE TEMP TABLE achats_lotisseurs_meres (
+                num_pa TEXT,
+                id_mutation TEXT,
+                date_mutation TEXT,
+                date_auth TEXT,
+                superficie REAL,
+                surface_totale_aggregee REAL
+            );
+        `);
+        
+        // Récupérer la liste des communes avec PA
+        const communesAvecPA = db.prepare(`
+            SELECT DISTINCT code_commune_dvf 
+            FROM pa_parcelles_temp 
+            ORDER BY code_commune_dvf
+        `).all();
+        
+        console.log(`   → Traitement par batch de ${communesAvecPA.length} communes avec PA...`);
+        
+        // Traiter commune par commune (évite jointure 87k PA × 36M DVF en une fois)
+        const insertBatch = db.prepare(`
+            INSERT INTO achats_lotisseurs_meres 
             SELECT DISTINCT
                 p.num_pa,
                 t.id_mutation,
@@ -1658,13 +1678,27 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 AND t.section_cadastrale = p.section
                 AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
-            WHERE m.date_mutation BETWEEN 
+            WHERE p.code_commune_dvf = ?
+              AND m.date_mutation BETWEEN 
                   DATE(p.date_auth, '-2 years') AND 
                   DATE(p.date_auth, '+2 years')
         `);
         
-        // Étape 2 : Ajouter le rang (sur une table plus petite)
-        console.log('   → Étape 2/2 : Calcul du rang (première transaction par PA)...');
+        let totalMatches = 0;
+        for (let i = 0; i < communesAvecPA.length; i++) {
+            const commune = communesAvecPA[i].code_commune_dvf;
+            const result = insertBatch.run(commune);
+            totalMatches += result.changes;
+            
+            if ((i + 1) % 10 === 0 || i === communesAvecPA.length - 1) {
+                console.log(`   → ${i + 1}/${communesAvecPA.length} communes traitées (${totalMatches} matches trouvés)`);
+            }
+        }
+        
+        console.log(`   → Jointure terminée : ${totalMatches} associations PA-DVF\n`);
+        
+        // Ajouter le rang (sur une table réduite)
+        console.log('   → Calcul du rang (première transaction par PA)...');
         db.exec(`
             CREATE TEMP TABLE achats_lotisseurs_meres_ranked AS
             SELECT 
@@ -1867,12 +1901,34 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // Filtres : ≥1 parcelle, tolérance surface ±10%, prix > 1€
         console.log('⚡ 4.4 - Recherche achats lotisseurs sur parcelles filles...');
         
-        // OPTIMISATION : Créer la table en deux étapes pour réduire l'espace temporaire
-        // Étape 1 : Créer la table avec GROUP BY et HAVING (sans ROW_NUMBER)
-        console.log('   → Étape 1/2 : Jointure PA-filles-DVF avec filtres...');
+        // OPTIMISATION RADICALE : Traiter par BATCH de COMMUNES pour éviter jointure massive
+        // Créer la table vide
         db.exec(`
             DROP TABLE IF EXISTS achats_lotisseurs_filles;
-            CREATE TEMP TABLE achats_lotisseurs_filles AS
+            CREATE TEMP TABLE achats_lotisseurs_filles (
+                num_pa TEXT,
+                id_mutation TEXT,
+                date_mutation TEXT,
+                date_auth TEXT,
+                superficie REAL,
+                surface_totale_aggregee REAL,
+                valeur_totale REAL,
+                nb_parcelles INTEGER
+            );
+        `);
+        
+        // Récupérer la liste des communes avec PA filles
+        const communesAvecFillesPA = db.prepare(`
+            SELECT DISTINCT code_commune_dvf 
+            FROM pa_filles_temp 
+            ORDER BY code_commune_dvf
+        `).all();
+        
+        console.log(`   → Traitement par batch de ${communesAvecFillesPA.length} communes avec PA filles...`);
+        
+        // Traiter commune par commune
+        const insertFillesBatch = db.prepare(`
+            INSERT INTO achats_lotisseurs_filles 
             SELECT 
                 pf.num_pa,
                 t.id_mutation,
@@ -1888,7 +1944,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 AND t.section_cadastrale = pf.section
                 AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
-            WHERE m.date_mutation BETWEEN 
+            WHERE pf.code_commune_dvf = ?
+              AND m.date_mutation BETWEEN 
                   DATE(pf.date_auth, '-2 years') AND 
                   DATE(pf.date_auth, '+2 years')
               AND t.id_pa IS NULL  -- Pas déjà attribué
@@ -1898,8 +1955,21 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.9 AND pf.superficie * 1.1)
         `);
         
-        // Étape 2 : Ajouter le rang (sur une table plus petite)
-        console.log('   → Étape 2/2 : Calcul du rang (première transaction par PA)...');
+        let totalFillesMatches = 0;
+        for (let i = 0; i < communesAvecFillesPA.length; i++) {
+            const commune = communesAvecFillesPA[i].code_commune_dvf;
+            const result = insertFillesBatch.run(commune);
+            totalFillesMatches += result.changes;
+            
+            if ((i + 1) % 10 === 0 || i === communesAvecFillesPA.length - 1) {
+                console.log(`   → ${i + 1}/${communesAvecFillesPA.length} communes traitées (${totalFillesMatches} matches trouvés)`);
+            }
+        }
+        
+        console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
+        
+        // Ajouter le rang (sur une table réduite)
+        console.log('   → Calcul du rang (première transaction par PA)...');
         db.exec(`
             CREATE TEMP TABLE achats_lotisseurs_filles_ranked AS
             SELECT 

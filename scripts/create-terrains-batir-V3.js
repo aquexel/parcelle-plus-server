@@ -1352,11 +1352,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     // Les PA sont toujours dans la même commune et section, donc on peut simplifier
     console.log('📊 ÉTAPE 3 : Création vue agrégée par mutation...');
     
-    // Créer d'abord une vue intermédiaire pour dédupliquer les parcelles par mutation
-    // Si une parcelle apparaît plusieurs fois dans la même mutation, prendre MAX() des valeurs
+    // Matérialiser en TABLES au lieu de VIEWs pour éviter recalcul à chaque jointure
+    console.log('   → Déduplication des parcelles (matérialisation)...');
     db.exec(`
-    DROP VIEW IF EXISTS terrains_batir_deduplique;
-    CREATE VIEW terrains_batir_deduplique AS
+    DROP TABLE IF EXISTS terrains_batir_deduplique;
+    CREATE TEMP TABLE terrains_batir_deduplique AS
     SELECT 
         id_parcelle,
         id_mutation,
@@ -1372,15 +1372,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     GROUP BY id_parcelle, id_mutation, code_departement
     `);
     
-    // Créer la vue finale agrégée depuis la vue dédupliquée
+    console.log('   → Agrégation des mutations (matérialisation)...');
     db.exec(`
-    DROP VIEW IF EXISTS mutations_aggregees;
-    CREATE VIEW mutations_aggregees AS
+    DROP TABLE IF EXISTS mutations_aggregees;
+    CREATE TEMP TABLE mutations_aggregees AS
     SELECT 
         id_mutation,
         SUM(surface_totale) as surface_totale_aggregee,
-        -- Si même date et même prix, utiliser MAX (prix unique de la transaction)
-        -- Les surfaces sont additionnées, mais pas les prix (si identiques)
         MAX(valeur_fonciere) as valeur_totale,
         MIN(date_mutation) as date_mutation,
         code_departement,
@@ -1390,7 +1388,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     FROM terrains_batir_deduplique
     GROUP BY id_mutation, code_departement
     `);
-    console.log('✅ Vue créée\n');
+    
+    console.log('   → Création index sur mutations_aggregees...');
+    db.exec(`
+    CREATE INDEX idx_mutations_agg_id ON mutations_aggregees(id_mutation);
+    CREATE INDEX idx_mutations_agg_date ON mutations_aggregees(date_mutation);
+    `);
+    
+    console.log('✅ Tables agrégées créées avec index\n');
 
     // ÉTAPE 4 : Charger les PA
     console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
@@ -1663,7 +1668,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         console.log(`   → Jointure terminée : ${totalMatches} associations PA-DVF\n`);
         
-        // Ajouter le rang (sur une table réduite)
+        // Créer index AVANT le ROW_NUMBER() OVER pour éviter tri massif en mémoire
+        console.log('   → Création index pour optimiser le calcul du rang...');
+        db.exec(`CREATE INDEX idx_achats_meres_pa_date ON achats_lotisseurs_meres(num_pa, date_mutation);`);
+        
+        // Ajouter le rang (sur une table réduite) - l'index va accélérer le PARTITION BY + ORDER BY
         console.log('   → Calcul du rang (première transaction par PA)...');
         db.exec(`
             CREATE TEMP TABLE achats_lotisseurs_meres_ranked AS
@@ -1938,6 +1947,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         }
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
+        
+        // Créer index AVANT le ROW_NUMBER() OVER pour optimiser
+        console.log('   → Création index pour optimiser le calcul du rang...');
+        db.exec(`CREATE INDEX idx_achats_filles_pa_date ON achats_lotisseurs_filles(num_pa, date_mutation, nb_parcelles);`);
         
         // Ajouter le rang (sur une table réduite)
         console.log('   → Calcul du rang (première transaction par PA)...');

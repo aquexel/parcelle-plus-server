@@ -1,26 +1,37 @@
 #!/usr/bin/env node
 
 /**
- * 🏗️ CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 (AMÉLIORÉE)
+ * 🏗️ CRÉATION BASE TERRAINS À BÂTIR - VERSION 3 (OPTIMISÉE ESPACE DISQUE)
  * 
- * Logique validée par recoupement PA + DFI + DVF + PC :
- * 1. Charger PA depuis Liste-des-permis-damenager.2025-10.csv (tous départements)
- * 2. Charger TOUTES les transactions DVF (terrains à bâtir, bâti, tout type)
- * 3. Pour chaque PA, identifier les parcelles FILLES via DFI (64.5% des PA ont des filles)
- * 4. ÉTAPE 1 - ACHAT LOTISSEUR (NON-VIABILISÉ) :
+ * 🔥 OPTIMISATION RADICALE : Chargement DIRECT sans table intermédiaire
+ * 
+ * PROBLÈME :
+ * - Ancienne méthode : DVF → dvf_temp_indexed (14 GB) → terrains_batir_temp (26 GB) = 40 GB
+ * - Espace disque insuffisant sur Raspberry Pi (50 GB avec index)
+ * 
+ * SOLUTION :
+ * - Nouvelle méthode : DVF → terrains_batir_temp directement (26 GB) = économie de 14 GB
+ * - journal_mode=DELETE pendant indexation pour éviter WAL files
+ * - Suppression de colonnes inutiles (latitude, longitude, nom_commune)
+ * - prix_m2 calculé à la volée ou laissé NULL
+ * 
+ * Logique métier (identique à V2) :
+ * 1. Charger PA depuis Liste-des-permis-damenager.2025-10.csv
+ * 2. Pour chaque PA, identifier les parcelles FILLES via DFI (64.5% des PA ont des filles)
+ * 3. ÉTAPE 1 - ACHAT LOTISSEUR (NON-VIABILISÉ) :
  *    - Chercher transactions DVF avec ≥2 parcelles filles du PA
  *    - Date : ±2 ans autour du PA
  *    - Surface : ±10% de la superficie du PA
  *    - Prendre la PREMIÈRE chronologiquement
- * 5. ÉTAPE 2 - LOTS VENDUS (VIABILISÉS) :
+ * 4. ÉTAPE 2 - LOTS VENDUS (VIABILISÉS) :
  *    - Toutes les autres transactions sur parcelles filles
  *    - SANS filtre de date, surface, ou nombre de parcelles
- * 6. Attribution type usage via PC depuis Liste autorisations
+ * 5. Attribution type usage via PC depuis Liste autorisations
  *    - Filtres PC : NATURE_PROJET_COMPLETEE='1' (nouvelle construction)
  *                   DESTINATION_PRINCIPALE='1' (logements)
  *                   TYPE_PRINCIP_LOGTS_CREES IN ('1','2') (individuel)
  *                   NB_LGT_COL_CREES=0 (pas de collectif)
- * 7. FILTRE FINAL : Ne garder que les terrains viabilisés avec PC habitation INDIVIDUELLE
+ * 6. FILTRE FINAL : Ne garder que les terrains viabilisés avec PC habitation INDIVIDUELLE
  *    - Supprime : sans PC nouvelle construction habitation individuelle
  *    - Supprime : bâti existant (surface_reelle_bati > 0)
  *    - Conserve : TOUS les achats lotisseurs (on ne sait pas l'usage ni le bâti avant)
@@ -705,6 +716,45 @@ function enrichirCoordonnees(db) {
     });
 }
 
+// =====================================
+// FONCTION : SCANNER DÉPARTEMENTS PA
+// =====================================
+/**
+ * Scanne le fichier PA pour identifier les départements concernés
+ * Retourne un Array de codes départements (ex: ["40", "33", "64"])
+ */
+async function scannerDepartementsPA() {
+    console.log('🔍 PHASE 0 : Scanner les départements présents dans le fichier PA...\n');
+    
+    const departementsSet = new Set();
+    
+    // Détecter le séparateur du fichier PA
+    const separateurPA = detecterSeparateur(LISTE_PA_FILE);
+    console.log(`   🔍 Séparateur PA détecté: "${separateurPA}"`);
+    
+    return new Promise((resolve, reject) => {
+        fs.createReadStream(LISTE_PA_FILE)
+            .pipe(csv({ separator: separateurPA, skipLinesWithError: true }))
+            .on('data', (row) => {
+                const comm = row.COMM;
+                if (comm && comm.length >= 2) {
+                    // Extraire le code département (2 premiers caractères)
+                    const dept = comm.substring(0, 2);
+                    departementsSet.add(dept);
+                }
+            })
+            .on('end', () => {
+                const departements = Array.from(departementsSet).sort();
+                console.log(`\n   ✅ ${departements.length} département(s) identifié(s) : ${departements.join(', ')}`);
+                console.log(`   💾 Espace disque économisé : ~${Math.round(45 * (1 - departements.length / 100))} GB\n`);
+                resolve(departements);
+            })
+            .on('error', (err) => {
+                reject(err);
+            });
+    });
+}
+
 // Fonction pour détecter automatiquement le séparateur d'un fichier CSV
 function detecterSeparateur(filePath) {
     try {
@@ -802,7 +852,8 @@ function detecterSeparateurPA(filePath) {
 }
 
 // Fonction pour charger tous les CSV depuis dvf_data/
-function chargerTousLesCSV(db, insertStmt) {
+// departementFiltre: code département à charger (ex: "40"), ou null pour tous
+function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
     return new Promise((resolve, reject) => {
         const dvfDir = path.join(__dirname, '..', 'dvf_data');
         if (!fs.existsSync(dvfDir)) {
@@ -1109,7 +1160,10 @@ function chargerTousLesCSV(db, insertStmt) {
                         return;
                     }
                     
-                    // France entière - pas de filtre département
+                    // Filtre département si spécifié
+                    if (departementFiltre && codeDept !== departementFiltre) {
+                        return; // Skip si pas le bon département
+                    }
                     
                     // Parser valeur foncière (format français avec virgule)
                     const valeurFonciere = parseFloat(valeurFonciereStr.toString().replace(/\s/g, '').replace(',', '.'));
@@ -1220,138 +1274,33 @@ function chargerTousLesCSV(db, insertStmt) {
     });
 }
 
-// ÉTAPE 1 : Charger TOUTE la DVF dans une table temporaire indexée
-console.log('📊 ÉTAPE 1 : Création table temporaire DVF indexée...\n');
+// ÉTAPE 1 : Charger les DVF DIRECTEMENT dans terrains_batir_temp
+// 🔥 OPTIMISATION RADICALE : Plus de table intermédiaire dvf_temp_indexed
+// Économie : ~14 GB d'espace disque temporaire
+console.log('📊 ÉTAPE 1 : Chargement DVF directement dans la table de travail...\n');
+console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (économie ~14 GB)\n');
 
-db.exec(`
-    DROP TABLE IF EXISTS dvf_temp_indexed;
-    -- Table ULTRA-OPTIMISÉE : seulement les colonnes nécessaires pour les jointures et filtres
-    -- Suppression de nom_commune (peut être récupéré depuis code_commune si nécessaire)
-    -- Suppression de prix_m2 (peut être calculé à la volée : valeur_fonciere / surface_totale)
-    -- Suppression de latitude/longitude (non utilisées dans jointures, seront enrichies à la fin si nécessaire)
-    -- Cela réduit la taille de ~30% et évite SQLITE_FULL
-    CREATE TEMP TABLE dvf_temp_indexed (
-        id_parcelle TEXT NOT NULL,
-        id_mutation TEXT NOT NULL,
-        valeur_fonciere REAL NOT NULL,
-        surface_totale REAL,
-        surface_reelle_bati REAL,
-        date_mutation TEXT,
-        code_departement TEXT NOT NULL,
-        code_commune TEXT NOT NULL,
-        section_cadastrale TEXT NOT NULL,
-        parcelle_suffixe TEXT NOT NULL
-    );
-`);
-
+// Préparer l'insertion DIRECTE dans terrains_batir_temp
 const insertDvfTemp = db.prepare(`
-    INSERT INTO dvf_temp_indexed VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO terrains_batir_temp (
+        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+        date_mutation, code_departement, code_commune, section_cadastrale,
+        parcelle_suffixe, nom_commune, prix_m2, est_terrain_viabilise, id_pa
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, NULL)
 `);
 
 chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
-    console.log(`✅ ${totalInserted} transactions DVF chargées\n`);
+    console.log(`✅ ${totalInserted.toLocaleString()} transactions DVF chargées dans terrains_batir_temp\n`);
     
-    // ⚡ OPTIMISATION RADICALE : Ne PAS créer d'index sur dvf_temp_indexed
-    // Les index sur 36M de lignes prennent trop de place (risque SQLITE_FULL)
-    // À la place, on copie d'abord dans terrains_batir_temp, puis on crée les index là-bas
-    // La copie sera plus lente (~5-10 min), mais on évite le problème d'espace disque
-    console.log('⚡ Optimisation : Pas d\'index sur DVF temporaire (économie d\'espace)\n');
+    // ⚡ Données déjà dans terrains_batir_temp, on passe directement à l'indexation
+    // Désactiver temporairement le WAL pendant la création des index pour éviter les fichiers WAL trop gros
+    console.log('   🔧 Désactivation temporaire du WAL pour la création des index...');
+    db.pragma('journal_mode = DELETE');
     
-    // Copier seulement les données nécessaires dans terrains_batir_temp
-    // Utiliser un INSERT par batch pour éviter les problèmes d'espace disque
-    console.log('📊 ÉTAPE 1.5 : Copie des données dans la table de travail...');
-    
-    // Compter d'abord le nombre de lignes à copier
-    const countResult = db.prepare('SELECT COUNT(*) as count FROM dvf_temp_indexed').get();
-    const totalRows = countResult.count;
-    console.log(`   📊 ${totalRows.toLocaleString()} lignes à copier...`);
-    
-    if (totalRows === 0) {
-        console.log('⚠️  Aucune donnée à copier !\n');
-        return;
-    }
-    
-    // Copier par batch pour éviter les problèmes de mémoire et d'espace disque
-    // Utiliser INSERT INTO ... SELECT directement (plus efficace que charger en mémoire)
-    const BATCH_SIZE = 50000; // 50k lignes par batch (réduit pour éviter WAL trop gros)
-    let offset = 0;
-    let totalInsertedBatch = 0;
-    
-    // Désactiver temporairement le WAL pendant la copie massive pour éviter les fichiers WAL trop gros
-    console.log('   🔧 Désactivation temporaire du WAL pour la copie massive...');
-    db.pragma('journal_mode = DELETE'); // Mode DELETE au lieu de WAL pour éviter les fichiers WAL
-    
-    while (offset < totalRows) {
-        const batchSize = Math.min(BATCH_SIZE, totalRows - offset);
-        
-        try {
-            // Utiliser INSERT INTO ... SELECT directement (plus efficace)
-            // Calculer prix_m2 à la volée, mettre nom_commune à NULL
-            // Ne pas copier latitude/longitude (économie de ~30% d'espace)
-            db.exec(`
-                INSERT INTO terrains_batir_temp (
-                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-                    date_mutation, code_departement, code_commune, nom_commune,
-                    section_cadastrale, est_terrain_viabilise, id_pa,
-                    parcelle_suffixe
-                )
-                SELECT 
-                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                    CASE WHEN surface_totale > 0 THEN valeur_fonciere / surface_totale ELSE 0 END as prix_m2,
-                    date_mutation, code_departement, code_commune, NULL as nom_commune,
-                    section_cadastrale, 0, NULL,
-                    parcelle_suffixe
-                FROM dvf_temp_indexed
-                LIMIT ${batchSize} OFFSET ${offset}
-            `);
-            
-            totalInsertedBatch += batchSize;
-            offset += batchSize;
-            const progress = ((offset / totalRows) * 100).toFixed(1);
-            process.stdout.write(`\r   → ${totalInsertedBatch.toLocaleString()}/${totalRows.toLocaleString()} lignes copiées (${progress}%)...`);
-            
-            // Faire un checkpoint après chaque batch pour éviter que le journal devienne trop gros
-            if (offset % (BATCH_SIZE * 5) === 0 || offset >= totalRows) {
-                // Vérifier la taille du fichier de base de données
-                try {
-                    const stats = fs.statSync(DB_FILE);
-                    const sizeGB = (stats.size / (1024 * 1024 * 1024)).toFixed(2);
-                    if (offset % (BATCH_SIZE * 10) === 0) {
-                        process.stdout.write(` [${sizeGB} GB]`);
-                    }
-                } catch (statErr) {
-                    // Ignorer
-                }
-            }
-        } catch (err) {
-            if (err.code === 'SQLITE_FULL') {
-                console.error(`\n❌ Erreur : Espace disque insuffisant !`);
-                console.error(`   ${totalInsertedBatch.toLocaleString()} lignes copiées avant l'erreur`);
-                console.error(`   Libérez de l'espace disque et relancez le script.`);
-                // Réactiver le WAL avant de quitter
-                try {
-                    db.pragma('journal_mode = WAL');
-                } catch (walErr) {
-                    // Ignorer
-                }
-                throw err;
-            }
-            throw err;
-        }
-    }
-    
-    console.log(`\n✅ ${totalInsertedBatch.toLocaleString()} lignes copiées avec succès\n`);
-    
-    // IMPORTANT : Supprimer dvf_temp_indexed AVANT de créer les index
-    // Cela libère ~14GB et évite d'avoir les deux tables indexées en même temps
-    console.log('🧹 Suppression de la table DVF temporaire pour libérer de l\'espace...');
-    db.exec('DROP TABLE IF EXISTS dvf_temp_indexed;');
-    console.log('✅ ~14 GB libérés\n');
-    
-    // ÉTAPE 1.6 : Créer les index sur terrains_batir_temp (maintenant qu'on a libéré l'espace)
+    // ÉTAPE 2 : Créer les index sur terrains_batir_temp
     // ⚠️ CRITIQUE : Garder journal_mode=DELETE pendant TOUTE la création des index
     // Sinon les fichiers WAL temporaires dépassent l'espace disque disponible
-    console.log('⚡ Création des index sur terrains_batir_temp...');
+    console.log('⚡ ÉTAPE 2 : Création des index sur terrains_batir_temp...');
     console.log('   (4 index essentiels sur ~36M lignes, durée estimée : 5-10 min)');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour économiser l\'espace\n');
     
@@ -1386,11 +1335,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log('✅ Index créés sur terrains_batir_temp');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
 
-    // ÉTAPE 2 : Créer vue agrégée par id_mutation
+    // ÉTAPE 3 : Créer vue agrégée par id_mutation
     // Pour 2014-2018 : agrégation par date + prix + section (id_mutation créé artificiellement)
     // Pour 2020+ : agrégation par id_mutation réel
     // Les PA sont toujours dans la même commune et section, donc on peut simplifier
-    console.log('📊 ÉTAPE 2 : Création vue agrégée par mutation...');
+    console.log('📊 ÉTAPE 3 : Création vue agrégée par mutation...');
     
     // Créer d'abord une vue intermédiaire pour dédupliquer les parcelles par mutation
     // Si une parcelle apparaît plusieurs fois dans la même mutation, prendre MAX() des valeurs
@@ -1432,8 +1381,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     `);
     console.log('✅ Vue créée\n');
 
-    // ÉTAPE 3 : Charger les PA
-    console.log('📊 ÉTAPE 3 : Chargement de la liste des PA...');
+    // ÉTAPE 4 : Charger les PA
+    console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
     
     // Vérifier que le fichier existe
     if (!fs.existsSync(LISTE_PA_FILE)) {
@@ -1574,7 +1523,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // ========== ÉTAPE 4 : VERSION 3 - OPTIMISATION SQL RADICALE ==========
         // Au lieu de boucler sur chaque PA → on fait TOUT en SQL massivement
         // Gain estimé : ~10-30x plus rapide (de 2-5 minutes à 10-20 secondes)
-        console.log('📊 ÉTAPE 4 : Association PA-DVF par SQL massif (V3)...\n');
+        console.log('📊 ÉTAPE 5 : Association PA-DVF par SQL massif (V3)...\n');
         
         // SOUS-ÉTAPE 4.1 : Créer table temporaire des parcelles PA
         console.log('⚡ 4.1 - Explosion des parcelles PA...');
@@ -2074,10 +2023,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // FIN ÉTAPE 4 - Passer directement aux statistiques
         });
-    console.log('📊 ÉTAPE 5 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+    console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
     enrichirCoordonnees(db).then(() => {
-        // ÉTAPE 6 : Créer la table finale simplifiée
-        console.log('\n📊 ÉTAPE 6 : Création de la table finale simplifiée...');
+        // ÉTAPE 7 : Créer la table finale simplifiée
+        console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
         
         // ✅ Réactiver le WAL MAINTENANT (pour la table finale uniquement)
         console.log('   🔧 Réactivation du mode WAL pour la table finale...');

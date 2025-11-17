@@ -148,6 +148,16 @@ db.pragma('synchronous = NORMAL'); // Optimisation pour performance
 db.pragma('cache_size = -64000'); // 64 MB de cache
 db.pragma('temp_store = MEMORY'); // Utiliser la RAM pour les tables temporaires (économie disque)
 
+// 🔥 CRITIQUE : Changer le répertoire temporaire SQLite
+// Par défaut, SQLite utilise /tmp qui fait seulement 3.8 GB (tmpfs)
+// Les jointures massives créent des fichiers temporaires > 3.8 GB → SQLITE_FULL
+// Solution : Utiliser le répertoire de la base qui a 33 GB disponibles
+const tempDir = path.join(path.dirname(DB_FILE), 'sqlite_temp');
+if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+}
+db.pragma(`temp_store_directory = '${tempDir}'`);
+
 // Créer la structure de terrains_batir_temp (table temporaire pour le matching)
 db.exec(`
     DROP TABLE IF EXISTS terrains_batir_temp;

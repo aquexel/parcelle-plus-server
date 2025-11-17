@@ -146,6 +146,7 @@ const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL'); // Optimisation pour performance
 db.pragma('cache_size = -64000'); // 64 MB de cache
+db.pragma('temp_store = MEMORY'); // Utiliser la RAM pour les tables temporaires (économie disque)
 
 // Créer la structure de terrains_batir_temp (table temporaire pour le matching)
 db.exec(`
@@ -1639,7 +1640,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             const result = insertBatch.run(commune);
             totalMatches += result.changes;
             
-            if ((i + 1) % 10 === 0 || i === communesAvecPA.length - 1) {
+            // CHECKPOINT régulier pour libérer l'espace disque temporaire
+            // SQLite accumule des fichiers temporaires même avec journal_mode=DELETE
+            if ((i + 1) % 50 === 0) {
+                db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+            }
+            
+            if ((i + 1) % 100 === 0 || i === communesAvecPA.length - 1) {
                 console.log(`   → ${i + 1}/${communesAvecPA.length} communes traitées (${totalMatches} matches trouvés)`);
             }
         }
@@ -1910,7 +1917,12 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             const result = insertFillesBatch.run(commune);
             totalFillesMatches += result.changes;
             
-            if ((i + 1) % 10 === 0 || i === communesAvecFillesPA.length - 1) {
+            // CHECKPOINT régulier pour libérer l'espace disque temporaire
+            if ((i + 1) % 50 === 0) {
+                db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+            }
+            
+            if ((i + 1) % 100 === 0 || i === communesAvecFillesPA.length - 1) {
                 console.log(`   → ${i + 1}/${communesAvecFillesPA.length} communes traitées (${totalFillesMatches} matches trouvés)`);
             }
         }

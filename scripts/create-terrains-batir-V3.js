@@ -1354,42 +1354,104 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     // Matérialiser en TABLES au lieu de VIEWs pour éviter recalcul à chaque jointure
     console.log('   → Déduplication des parcelles (matérialisation)...');
+    db.exec(`DROP VIEW IF EXISTS terrains_batir_deduplique`);
+    db.exec(`DROP TABLE IF EXISTS terrains_batir_deduplique`);
+    
+    // Créer la table vide avec la structure
     db.exec(`
-    DROP VIEW IF EXISTS terrains_batir_deduplique;
-    DROP TABLE IF EXISTS terrains_batir_deduplique;
-    CREATE TEMP TABLE terrains_batir_deduplique AS
-    SELECT 
-        id_parcelle,
-        id_mutation,
-        MAX(valeur_fonciere) as valeur_fonciere,
-        MAX(surface_totale) as surface_totale,
-        MIN(date_mutation) as date_mutation,
-        code_departement,
-        MAX(nom_commune) as nom_commune,
-        MAX(section_cadastrale) as section_cadastrale,
-        SUBSTR(id_parcelle, 1, 5) as code_commune
-    FROM terrains_batir_temp
-    WHERE id_parcelle IS NOT NULL
-    GROUP BY id_parcelle, id_mutation, code_departement
+    CREATE TEMP TABLE terrains_batir_deduplique (
+        id_parcelle TEXT,
+        id_mutation TEXT,
+        valeur_fonciere REAL,
+        surface_totale REAL,
+        date_mutation TEXT,
+        code_departement TEXT,
+        nom_commune TEXT,
+        section_cadastrale TEXT,
+        code_commune TEXT
+    )
     `);
     
+    // Remplir par département pour éviter OOM sur 36M lignes
+    const departements = db.prepare(`SELECT DISTINCT code_departement FROM terrains_batir_temp ORDER BY code_departement`).all();
+    console.log(`   → Traitement de ${departements.length} départements...`);
+    
+    let deptIndex = 0;
+    for (const {code_departement} of departements) {
+        deptIndex++;
+        process.stdout.write(`\r   → Département ${deptIndex}/${departements.length} (${code_departement})...`);
+        
+        db.exec(`
+        INSERT INTO terrains_batir_deduplique
+        SELECT 
+            id_parcelle,
+            id_mutation,
+            MAX(valeur_fonciere) as valeur_fonciere,
+            MAX(surface_totale) as surface_totale,
+            MIN(date_mutation) as date_mutation,
+            code_departement,
+            MAX(nom_commune) as nom_commune,
+            MAX(section_cadastrale) as section_cadastrale,
+            SUBSTR(id_parcelle, 1, 5) as code_commune
+        FROM terrains_batir_temp
+        WHERE id_parcelle IS NOT NULL
+          AND code_departement = '${code_departement}'
+        GROUP BY id_parcelle, id_mutation, code_departement
+        `);
+        
+        // Checkpoint tous les 10 départements pour libérer la mémoire WAL
+        if (deptIndex % 10 === 0) {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+        }
+    }
+    console.log('');
+    
     console.log('   → Agrégation des mutations (matérialisation)...');
+    db.exec(`DROP VIEW IF EXISTS mutations_aggregees`);
+    db.exec(`DROP TABLE IF EXISTS mutations_aggregees`);
+    
+    // Créer la table vide avec la structure
     db.exec(`
-    DROP VIEW IF EXISTS mutations_aggregees;
-    DROP TABLE IF EXISTS mutations_aggregees;
-    CREATE TEMP TABLE mutations_aggregees AS
-    SELECT 
-        id_mutation,
-        SUM(surface_totale) as surface_totale_aggregee,
-        MAX(valeur_fonciere) as valeur_totale,
-        MIN(date_mutation) as date_mutation,
-        code_departement,
-        MIN(nom_commune) as nom_commune,
-        MIN(section_cadastrale) as section_cadastrale,
-        MIN(code_commune) as code_commune
-    FROM terrains_batir_deduplique
-    GROUP BY id_mutation, code_departement
+    CREATE TEMP TABLE mutations_aggregees (
+        id_mutation TEXT,
+        surface_totale_aggregee REAL,
+        valeur_totale REAL,
+        date_mutation TEXT,
+        code_departement TEXT,
+        nom_commune TEXT,
+        section_cadastrale TEXT,
+        code_commune TEXT
+    )
     `);
+    
+    // Remplir par département pour éviter OOM
+    deptIndex = 0;
+    for (const {code_departement} of departements) {
+        deptIndex++;
+        process.stdout.write(`\r   → Département ${deptIndex}/${departements.length} (${code_departement})...`);
+        
+        db.exec(`
+        INSERT INTO mutations_aggregees
+        SELECT 
+            id_mutation,
+            SUM(surface_totale) as surface_totale_aggregee,
+            MAX(valeur_fonciere) as valeur_totale,
+            MIN(date_mutation) as date_mutation,
+            code_departement,
+            MIN(nom_commune) as nom_commune,
+            MIN(section_cadastrale) as section_cadastrale,
+            MIN(code_commune) as code_commune
+        FROM terrains_batir_deduplique
+        WHERE code_departement = '${code_departement}'
+        GROUP BY id_mutation, code_departement
+        `);
+        
+        // Checkpoint tous les 10 départements
+        if (deptIndex % 10 === 0) {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+        }
+    }
+    console.log('');
     
     console.log('   → Création index sur mutations_aggregees...');
     db.exec(`

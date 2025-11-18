@@ -1312,10 +1312,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     // ⚠️ CRITIQUE : Garder journal_mode=DELETE pendant TOUTE la création des index
     // Sinon les fichiers WAL temporaires dépassent l'espace disque disponible
     console.log('⚡ ÉTAPE 2 : Création des index sur terrains_batir_temp...');
-    console.log('   (4 index essentiels sur ~36M lignes, durée estimée : 5-10 min)');
+    console.log('   (5 index essentiels sur ~36M lignes, durée estimée : 6-12 min)');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour économiser l\'espace\n');
     
     const indexesTBT = [
+        { name: 'idx_temp_departement', sql: 'CREATE INDEX idx_temp_departement ON terrains_batir_temp(code_departement)', desc: 'Filtre département (GROUP BY optimisé)' },
         { name: 'idx_temp_commune_section', sql: 'CREATE INDEX idx_temp_commune_section ON terrains_batir_temp(code_commune, section_cadastrale)', desc: 'Jointures parcelles mères' },
         { name: 'idx_temp_commune_section_suffixe', sql: 'CREATE INDEX idx_temp_commune_section_suffixe ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe)', desc: 'Jointures parcelles filles' },
         { name: 'idx_temp_mutation', sql: 'CREATE INDEX idx_temp_mutation ON terrains_batir_temp(id_mutation)', desc: 'Agrégations par mutation' },

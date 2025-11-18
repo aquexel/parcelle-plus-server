@@ -912,6 +912,34 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             const { path: filePath, name, year } = fichiers[index];
             console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
             
+            // 🔥 OPTIMISATION CRITIQUE : Créer une table temporaire par fichier
+            // On insère dans cette table, on agrège, puis on fusionne dans terrains_batir_temp
+            // Cela évite de faire un GROUP BY sur toutes les lignes accumulées
+            db.exec(`
+            DROP TABLE IF EXISTS temp_csv_file;
+            CREATE TEMP TABLE temp_csv_file (
+                id_parcelle TEXT,
+                id_mutation TEXT,
+                valeur_fonciere REAL,
+                surface_totale REAL,
+                surface_reelle_bati REAL,
+                date_mutation TEXT,
+                code_departement TEXT,
+                code_commune TEXT,
+                nom_commune TEXT,
+                section_cadastrale TEXT,
+                parcelle_suffixe TEXT
+            );
+            `);
+            
+            // Préparer l'insertion dans la table temporaire du fichier
+            const insertTempFile = db.prepare(`
+                INSERT INTO temp_csv_file (
+                    id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                    date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            
             // Réinitialiser le mapping des colonnes pour ce fichier
             let columnMapping = null;
             
@@ -1233,18 +1261,16 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
                     
                     try {
-                        insertStmt.run(
+                        // Insérer dans temp_csv_file (table temporaire du fichier en cours)
+                        insertTempFile.run(
                             idParcelle,
                             idMutation,
                             valeurFonciere,
                             surfaceTerrain,
                             surfaceBati,
-                            // prixM2 supprimé (calculé à la volée)
                             dateMutation,
-                            // latitude, longitude supprimés (seront enrichis à la fin pour économiser espace)
                             codeDept,
                             codeCommune,
-                            // nomCommune supprimé (peut être récupéré depuis code_commune si nécessaire)
                             section,
                             parcelleSuffixe
                         );
@@ -1271,51 +1297,56 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     console.log(`      ✅ ${count} transactions insérées depuis ${name}`);
                     totalInserted += count;
                     
-                    // 🔥 OPTIMISATION MAJEURE : Agréger immédiatement après chaque fichier
-                    // Au lieu de faire 1 énorme GROUP BY sur 36M lignes, on fait 12 petits GROUP BY
-                    console.log(`      ⚡ Agrégation immédiate (économise 80% de mémoire)...`);
-                    const avant = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
+                    // 🔥 OPTIMISATION CRITIQUE : Agréger SEULEMENT le fichier en cours (temp_csv_file)
+                    // Puis fusionner dans terrains_batir_temp
+                    console.log(`      ⚡ Agrégation du fichier (${count} lignes)...`);
+                    const avant = count;
                     
+                    // Agréger SEULEMENT temp_csv_file (pas terrains_batir_temp !)
                     db.exec(`
-                    CREATE TEMP TABLE temp_deduplique_partial AS
+                    CREATE TEMP TABLE temp_agregated AS
                     SELECT 
                         id_parcelle,
                         id_mutation,
                         MAX(valeur_fonciere) as valeur_fonciere,
                         MAX(surface_totale) as surface_totale,
                         MAX(surface_reelle_bati) as surface_reelle_bati,
-                        MAX(prix_m2) as prix_m2,
                         MIN(date_mutation) as date_mutation,
                         code_departement,
                         MAX(code_commune) as code_commune,
                         MAX(nom_commune) as nom_commune,
                         MAX(section_cadastrale) as section_cadastrale,
-                        MAX(est_terrain_viabilise) as est_terrain_viabilise,
-                        MAX(id_pa) as id_pa,
                         MAX(parcelle_suffixe) as parcelle_suffixe
-                    FROM terrains_batir_temp
+                    FROM temp_csv_file
                     WHERE id_parcelle IS NOT NULL
                     GROUP BY id_parcelle, id_mutation, code_departement;
+                    `);
                     
-                    DELETE FROM terrains_batir_temp;
+                    const apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
+                    const reduction = Math.round((1 - apres/avant) * 100);
+                    console.log(`      📉 Réduction: ${avant.toLocaleString()} → ${apres.toLocaleString()} lignes (${reduction}%)`);
                     
+                    // Fusionner dans terrains_batir_temp (pas de GROUP BY ici)
+                    console.log(`      ⬆️  Fusion dans terrains_batir_temp...`);
+                    db.exec(`
                     INSERT INTO terrains_batir_temp (
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                        prix_m2, date_mutation, code_departement, code_commune, nom_commune,
-                        section_cadastrale, est_terrain_viabilise, id_pa, parcelle_suffixe
+                        date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
                     )
                     SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                        prix_m2, date_mutation, code_departement, code_commune, nom_commune,
-                        section_cadastrale, est_terrain_viabilise, id_pa, parcelle_suffixe
-                    FROM temp_deduplique_partial;
-                    
-                    DROP TABLE temp_deduplique_partial;
+                        date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
+                    FROM temp_agregated;
                     `);
                     
-                    const apres = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
-                    const reduction = Math.round((1 - apres/avant) * 100);
-                    console.log(`      📉 Lignes: ${avant.toLocaleString()} → ${apres.toLocaleString()} (${reduction}% de réduction)\n`);
+                    // Nettoyer
+                    db.exec(`
+                    DROP TABLE temp_agregated;
+                    DROP TABLE temp_csv_file;
+                    `);
+                    
+                    const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
+                    console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);
                     
                     // Passer au fichier suivant
                     traiterFichierSequentiel(index + 1);

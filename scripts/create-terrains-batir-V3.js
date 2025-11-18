@@ -911,6 +911,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             
             const { path: filePath, name, year } = fichiers[index];
             console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
+            console.log(`      🔍 DEBUG: Mémoire au démarrage: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
             
             // 🔥 SOLUTION OOM : Approche du script DPE qui fonctionne
             // 1. INSERT OR IGNORE simple (pas de calculs MAX/MIN coûteux)
@@ -1325,9 +1326,13 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     const avantAgreg = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file').get().c;
                     console.log(`      ⚡ Agrégation de ${avantAgreg.toLocaleString()} lignes par département...`);
+                    console.log(`      🔍 DEBUG: Mémoire avant index: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
                     // Créer index pour accélérer les WHERE par département
+                    console.log(`      📊 Création index sur code_departement...`);
                     db.exec(`CREATE INDEX idx_temp_dept ON temp_csv_file(code_departement)`);
+                    console.log(`      ✅ Index créé`);
+                    console.log(`      🔍 DEBUG: Mémoire après index: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
                     // Liste fixe des départements (éviter SELECT DISTINCT qui cause OOM)
                     const tousLesDepartements = [
@@ -1379,15 +1384,25 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     for (const dept of tousLesDepartements) {
                         deptIdx++;
                         if (deptIdx % 10 === 0 || deptIdx === tousLesDepartements.length) {
-                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} depts...`);
+                            const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} depts (Mem: ${memMB} MB)...`);
                         }
-                        insertAgrege.run(dept);
+                        try {
+                            const result = insertAgrege.run(dept);
+                            if (deptIdx <= 3 || (result.changes > 0 && deptIdx <= 10)) {
+                                console.log(`\n      🔍 DEBUG: Dept ${dept} → ${result.changes} lignes agrégées`);
+                            }
+                        } catch (error) {
+                            console.error(`\n      ❌ ERREUR au département ${dept} (${deptIdx}/${tousLesDepartements.length}):`, error.message);
+                            throw error;
+                        }
                     }
                     console.log('');
                     
                     const apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
                     const reduction = Math.round((1 - apres/avantAgreg) * 100);
                     console.log(`      📉 Réduction: ${avantAgreg.toLocaleString()} → ${apres.toLocaleString()} lignes (${reduction}%)`);
+                    console.log(`      🔍 DEBUG: Mémoire avant fusion: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
                     // Fusionner dans terrains_batir_temp
                     console.log(`      ⬆️  Fusion dans terrains_batir_temp...`);
@@ -1401,10 +1416,15 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
                     FROM temp_agregated;
                     `);
+                    console.log(`      ✅ Fusion terminée`);
+                    console.log(`      🔍 DEBUG: Mémoire après fusion: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
                     // Nettoyer
+                    console.log(`      🧹 Nettoyage des tables temporaires...`);
                     db.exec(`DROP TABLE temp_csv_file`);
+                    console.log(`      🔍 DEBUG: temp_csv_file supprimée, Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     db.exec(`DROP TABLE temp_agregated`);
+                    console.log(`      🔍 DEBUG: temp_agregated supprimée, Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
                     const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
                     console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);

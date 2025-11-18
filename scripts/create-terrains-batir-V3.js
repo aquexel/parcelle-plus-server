@@ -1302,6 +1302,22 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     console.log(`      ⚡ Agrégation du fichier par département (${count} lignes)...`);
                     const avant = count;
                     
+                    // 🔍 DEBUG : Vérifier les données dans temp_csv_file
+                    const totalInTemp = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file').get().c;
+                    const withParcelle = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file WHERE id_parcelle IS NOT NULL').get().c;
+                    const withDept = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file WHERE code_departement IS NOT NULL').get().c;
+                    const withBoth = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file WHERE id_parcelle IS NOT NULL AND code_departement IS NOT NULL').get().c;
+                    
+                    console.log(`      🔍 DEBUG temp_csv_file:`);
+                    console.log(`         - Total lignes: ${totalInTemp}`);
+                    console.log(`         - Avec id_parcelle: ${withParcelle}`);
+                    console.log(`         - Avec code_departement: ${withDept}`);
+                    console.log(`         - Avec les deux: ${withBoth}`);
+                    
+                    // Exemple de quelques lignes
+                    const exemples = db.prepare('SELECT id_parcelle, code_departement FROM temp_csv_file LIMIT 3').all();
+                    console.log(`         - Exemples: ${JSON.stringify(exemples)}`);
+                    
                     // Créer index sur code_departement pour accélérer le WHERE
                     db.exec(`CREATE INDEX idx_temp_dept ON temp_csv_file(code_departement)`);
                     
@@ -1360,6 +1376,17 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     let deptsTraites = 0;
                     for (const code_departement of tousLesDepartements) {
                         deptIdx++;
+                        
+                        // 🔍 DEBUG : Pour les 3 premiers départements, afficher des infos
+                        if (deptIdx <= 3) {
+                            const countDept = db.prepare(`
+                                SELECT COUNT(*) as c 
+                                FROM temp_csv_file 
+                                WHERE id_parcelle IS NOT NULL AND code_departement = ?
+                            `).get(code_departement);
+                            console.log(`      🔍 Dept ${code_departement}: ${countDept.c} lignes à agréger`);
+                        }
+                        
                         if (deptIdx % 10 === 0 || deptIdx === tousLesDepartements.length) {
                             process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} (${deptsTraites} avec données)...`);
                         }
@@ -1369,6 +1396,10 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         const result = insertAgrege.run(code_departement);
                         if (result.changes > 0) {
                             deptsTraites++;
+                            // 🔍 DEBUG : Afficher les premiers qui ont des données
+                            if (deptsTraites <= 3) {
+                                console.log(`      ✅ Dept ${code_departement}: ${result.changes} lignes agrégées`);
+                            }
                         }
                     }
                     console.log('');

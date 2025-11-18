@@ -1283,11 +1283,15 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         id_mutation,
                         MAX(valeur_fonciere) as valeur_fonciere,
                         MAX(surface_totale) as surface_totale,
+                        MAX(surface_reelle_bati) as surface_reelle_bati,
+                        MAX(prix_m2) as prix_m2,
                         MIN(date_mutation) as date_mutation,
                         code_departement,
+                        MAX(code_commune) as code_commune,
                         MAX(nom_commune) as nom_commune,
                         MAX(section_cadastrale) as section_cadastrale,
-                        MAX(code_commune) as code_commune,
+                        MAX(est_terrain_viabilise) as est_terrain_viabilise,
+                        MAX(id_pa) as id_pa,
                         MAX(parcelle_suffixe) as parcelle_suffixe
                     FROM terrains_batir_temp
                     WHERE id_parcelle IS NOT NULL
@@ -1295,8 +1299,16 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     DELETE FROM terrains_batir_temp;
                     
-                    INSERT INTO terrains_batir_temp 
-                    SELECT * FROM temp_deduplique_partial;
+                    INSERT INTO terrains_batir_temp (
+                        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                        prix_m2, date_mutation, code_departement, code_commune, nom_commune,
+                        section_cadastrale, est_terrain_viabilise, id_pa, parcelle_suffixe
+                    )
+                    SELECT 
+                        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                        prix_m2, date_mutation, code_departement, code_commune, nom_commune,
+                        section_cadastrale, est_terrain_viabilise, id_pa, parcelle_suffixe
+                    FROM temp_deduplique_partial;
                     
                     DROP TABLE temp_deduplique_partial;
                     `);

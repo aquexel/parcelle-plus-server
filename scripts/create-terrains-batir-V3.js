@@ -1305,15 +1305,17 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     // Créer index sur code_departement pour accélérer le WHERE
                     db.exec(`CREATE INDEX idx_temp_dept ON temp_csv_file(code_departement)`);
                     
-                    // Récupérer la liste des départements dans ce fichier
-                    const deptsInFile = db.prepare(`
-                        SELECT DISTINCT code_departement 
-                        FROM temp_csv_file 
-                        WHERE code_departement IS NOT NULL 
-                        ORDER BY code_departement
-                    `).all();
-                    
-                    console.log(`      📊 ${deptsInFile.length} départements dans ce fichier`);
+                    // ⚠️ PROBLÈME : SELECT DISTINCT sur 4.6M lignes → OOM
+                    // SOLUTION : Utiliser liste fixe des départements français (101 départements)
+                    // On itère sur tous, SQLite ignore ceux sans données (très rapide avec index)
+                    const tousLesDepartements = [
+                        '01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17','18','19',
+                        '21','22','23','24','25','26','27','28','29','2A','2B','30','31','32','33','34','35','36','37','38','39',
+                        '40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59',
+                        '60','61','62','63','64','65','66','67','68','69','70','71','72','73','74','75','76','77','78','79',
+                        '80','81','82','83','84','85','86','87','88','89','90','91','92','93','94','95',
+                        '971','972','973','974','976' // DOM-TOM
+                    ];
                     
                     // Créer table agrégée vide
                     db.exec(`
@@ -1332,15 +1334,16 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     );
                     `);
                     
-                    // Agréger département par département
+                    // Agréger département par département (101 départements possibles)
                     let deptIdx = 0;
-                    for (const {code_departement} of deptsInFile) {
+                    for (const code_departement of tousLesDepartements) {
                         deptIdx++;
-                        if (deptIdx % 10 === 0 || deptIdx === deptsInFile.length) {
-                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${deptsInFile.length} depts...`);
+                        if (deptIdx % 10 === 0 || deptIdx === tousLesDepartements.length) {
+                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} depts...`);
                         }
                         
                         // GROUP BY sur ~48k lignes (4.6M ÷ 96) → très gérable
+                        // Si le département n'a pas de données, l'INSERT ne fait rien (très rapide avec index)
                         db.exec(`
                         INSERT INTO temp_agregated
                         SELECT 

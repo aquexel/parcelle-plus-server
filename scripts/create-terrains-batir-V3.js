@@ -1334,17 +1334,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     );
                     `);
                     
-                    // Agréger département par département (101 départements possibles)
-                    let deptIdx = 0;
-                    for (const code_departement of tousLesDepartements) {
-                        deptIdx++;
-                        if (deptIdx % 10 === 0 || deptIdx === tousLesDepartements.length) {
-                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} depts...`);
-                        }
-                        
-                        // GROUP BY sur ~48k lignes (4.6M ÷ 96) → très gérable
-                        // Si le département n'a pas de données, l'INSERT ne fait rien (très rapide avec index)
-                        db.exec(`
+                    // Préparer le statement pour éviter accumulation mémoire avec 101 db.exec()
+                    const insertAgrege = db.prepare(`
                         INSERT INTO temp_agregated
                         SELECT 
                             id_parcelle,
@@ -1360,9 +1351,25 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             MAX(parcelle_suffixe) as parcelle_suffixe
                         FROM temp_csv_file
                         WHERE id_parcelle IS NOT NULL
-                          AND code_departement = '${code_departement}'
-                        GROUP BY id_parcelle, id_mutation, code_departement;
-                        `);
+                          AND code_departement = ?
+                        GROUP BY id_parcelle, id_mutation, code_departement
+                    `);
+                    
+                    // Agréger département par département (101 départements possibles)
+                    let deptIdx = 0;
+                    let deptsTraites = 0;
+                    for (const code_departement of tousLesDepartements) {
+                        deptIdx++;
+                        if (deptIdx % 10 === 0 || deptIdx === tousLesDepartements.length) {
+                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} (${deptsTraites} avec données)...`);
+                        }
+                        
+                        // GROUP BY sur ~48k lignes (4.6M ÷ 96) → très gérable
+                        // Prepared statement évite accumulation mémoire
+                        const result = insertAgrege.run(code_departement);
+                        if (result.changes > 0) {
+                            deptsTraites++;
+                        }
                     }
                     console.log('');
                     

@@ -1355,6 +1355,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     // Matérialiser en TABLES au lieu de VIEWs pour éviter recalcul à chaque jointure
     console.log('   → Déduplication des parcelles (matérialisation)...');
     db.exec(`
+    DROP VIEW IF EXISTS terrains_batir_deduplique;
     DROP TABLE IF EXISTS terrains_batir_deduplique;
     CREATE TEMP TABLE terrains_batir_deduplique AS
     SELECT 
@@ -1374,6 +1375,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     console.log('   → Agrégation des mutations (matérialisation)...');
     db.exec(`
+    DROP VIEW IF EXISTS mutations_aggregees;
     DROP TABLE IF EXISTS mutations_aggregees;
     CREATE TEMP TABLE mutations_aggregees AS
     SELECT 

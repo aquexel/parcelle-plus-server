@@ -1297,30 +1297,71 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     console.log(`      ✅ ${count} transactions insérées depuis ${name}`);
                     totalInserted += count;
                     
-                    // 🔥 OPTIMISATION CRITIQUE : Agréger SEULEMENT le fichier en cours (temp_csv_file)
-                    // Puis fusionner dans terrains_batir_temp
-                    console.log(`      ⚡ Agrégation du fichier (${count} lignes)...`);
+                    // 🔥 OPTIMISATION ULTIME : Agréger par département pour éviter OOM sur gros fichiers
+                    // Même 4.6M lignes → OOM kill. Solution : 96 petits GROUP BY au lieu d'1 gros
+                    console.log(`      ⚡ Agrégation du fichier par département (${count} lignes)...`);
                     const avant = count;
                     
-                    // Agréger SEULEMENT temp_csv_file (pas terrains_batir_temp !)
+                    // Créer index sur code_departement pour accélérer le WHERE
+                    db.exec(`CREATE INDEX idx_temp_dept ON temp_csv_file(code_departement)`);
+                    
+                    // Récupérer la liste des départements dans ce fichier
+                    const deptsInFile = db.prepare(`
+                        SELECT DISTINCT code_departement 
+                        FROM temp_csv_file 
+                        WHERE code_departement IS NOT NULL 
+                        ORDER BY code_departement
+                    `).all();
+                    
+                    console.log(`      📊 ${deptsInFile.length} départements dans ce fichier`);
+                    
+                    // Créer table agrégée vide
                     db.exec(`
-                    CREATE TEMP TABLE temp_agregated AS
-                    SELECT 
-                        id_parcelle,
-                        id_mutation,
-                        MAX(valeur_fonciere) as valeur_fonciere,
-                        MAX(surface_totale) as surface_totale,
-                        MAX(surface_reelle_bati) as surface_reelle_bati,
-                        MIN(date_mutation) as date_mutation,
-                        code_departement,
-                        MAX(code_commune) as code_commune,
-                        MAX(nom_commune) as nom_commune,
-                        MAX(section_cadastrale) as section_cadastrale,
-                        MAX(parcelle_suffixe) as parcelle_suffixe
-                    FROM temp_csv_file
-                    WHERE id_parcelle IS NOT NULL
-                    GROUP BY id_parcelle, id_mutation, code_departement;
+                    CREATE TEMP TABLE temp_agregated (
+                        id_parcelle TEXT,
+                        id_mutation TEXT,
+                        valeur_fonciere REAL,
+                        surface_totale REAL,
+                        surface_reelle_bati REAL,
+                        date_mutation TEXT,
+                        code_departement TEXT,
+                        code_commune TEXT,
+                        nom_commune TEXT,
+                        section_cadastrale TEXT,
+                        parcelle_suffixe TEXT
+                    );
                     `);
+                    
+                    // Agréger département par département
+                    let deptIdx = 0;
+                    for (const {code_departement} of deptsInFile) {
+                        deptIdx++;
+                        if (deptIdx % 10 === 0 || deptIdx === deptsInFile.length) {
+                            process.stdout.write(`\r      → Agrégation: ${deptIdx}/${deptsInFile.length} depts...`);
+                        }
+                        
+                        // GROUP BY sur ~48k lignes (4.6M ÷ 96) → très gérable
+                        db.exec(`
+                        INSERT INTO temp_agregated
+                        SELECT 
+                            id_parcelle,
+                            id_mutation,
+                            MAX(valeur_fonciere) as valeur_fonciere,
+                            MAX(surface_totale) as surface_totale,
+                            MAX(surface_reelle_bati) as surface_reelle_bati,
+                            MIN(date_mutation) as date_mutation,
+                            code_departement,
+                            MAX(code_commune) as code_commune,
+                            MAX(nom_commune) as nom_commune,
+                            MAX(section_cadastrale) as section_cadastrale,
+                            MAX(parcelle_suffixe) as parcelle_suffixe
+                        FROM temp_csv_file
+                        WHERE id_parcelle IS NOT NULL
+                          AND code_departement = '${code_departement}'
+                        GROUP BY id_parcelle, id_mutation, code_departement;
+                        `);
+                    }
+                    console.log('');
                     
                     const apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
                     const reduction = Math.round((1 - apres/avant) * 100);

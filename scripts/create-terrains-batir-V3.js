@@ -912,8 +912,10 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             const { path: filePath, name, year } = fichiers[index];
             console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
             
-            // 🔥 SOLUTION OOM : Agréger PENDANT l'insertion avec INSERT OR REPLACE
-            // Au lieu de 4.6M lignes puis GROUP BY, on agrège au fur et à mesure
+            // 🔥 SOLUTION OOM : Approche du script DPE qui fonctionne
+            // 1. INSERT OR IGNORE simple (pas de calculs MAX/MIN coûteux)
+            // 2. Batch de 5000 lignes avec TRANSACTION
+            // 3. GROUP BY une seule fois à la fin
             db.exec(`
             DROP TABLE IF EXISTS temp_csv_file;
             CREATE TEMP TABLE temp_csv_file (
@@ -926,28 +928,31 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 date_mutation TEXT,
                 code_commune TEXT,
                 section_cadastrale TEXT,
-                parcelle_suffixe TEXT,
-                PRIMARY KEY (id_parcelle, id_mutation, code_departement)
-            ) WITHOUT ROWID;
+                parcelle_suffixe TEXT
+            );
             `);
             
-            // INSERT OR REPLACE : si (id_parcelle, id_mutation, code_departement) existe,
-            // on prend les MAX/MIN automatiquement
+            // INSERT simple (INSERT OR IGNORE pour éviter erreur, mais on garde les doublons pour GROUP BY)
             const insertTempFile = db.prepare(`
                 INSERT INTO temp_csv_file (
                     id_parcelle, id_mutation, code_departement,
                     valeur_fonciere, surface_totale, surface_reelle_bati,
                     date_mutation, code_commune, section_cadastrale, parcelle_suffixe
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id_parcelle, id_mutation, code_departement) DO UPDATE SET
-                    valeur_fonciere = MAX(valeur_fonciere, excluded.valeur_fonciere),
-                    surface_totale = MAX(surface_totale, excluded.surface_totale),
-                    surface_reelle_bati = MAX(surface_reelle_bati, excluded.surface_reelle_bati),
-                    date_mutation = MIN(date_mutation, excluded.date_mutation),
-                    code_commune = MAX(code_commune, excluded.code_commune),
-                    section_cadastrale = MAX(section_cadastrale, excluded.section_cadastrale),
-                    parcelle_suffixe = MAX(parcelle_suffixe, excluded.parcelle_suffixe)
             `);
+            
+            // Batch transaction pour performance (comme script DPE)
+            let batch = [];
+            const BATCH_SIZE = 5000;
+            const insertBatch = db.transaction((rows) => {
+                for (const row of rows) {
+                    try {
+                        insertTempFile.run(...row);
+                    } catch (e) {
+                        // Ignorer erreurs
+                    }
+                }
+            });
             
             // Réinitialiser le mapping des colonnes pour ce fichier
             let columnMapping = null;
@@ -1270,11 +1275,11 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
                     
                     try {
-                        // Insérer dans temp_csv_file avec agrégation automatique (INSERT OR REPLACE)
-                        insertTempFile.run(
+                        // Ajouter au batch (comme script DPE)
+                        batch.push([
                             idParcelle,
                             idMutation,
-                            codeDept,           // code_departement (3ème position)
+                            codeDept,
                             valeurFonciere,
                             surfaceTerrain,
                             surfaceBati,
@@ -1282,8 +1287,14 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             codeCommune,
                             section,
                             parcelleSuffixe
-                        );
+                        ]);
                         count++;
+                        
+                        // Insérer par batch de 5000 (comme script DPE)
+                        if (batch.length >= BATCH_SIZE) {
+                            insertBatch(batch);
+                            batch = [];
+                        }
                         
                         // Log de progression toutes les 10 secondes
                         if (Date.now() - lastLog > 10000) {
@@ -1306,13 +1317,39 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     console.log(`      ✅ ${count} transactions insérées depuis ${name}`);
                     totalInserted += count;
                     
-                    // ✅ Agrégation déjà faite pendant l'insertion (INSERT OR REPLACE avec PRIMARY KEY)
-                    // Pas besoin de GROUP BY massif → Pas d'OOM !
-                    const apres = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file').get().c;
-                    const reduction = Math.round((1 - apres/count) * 100);
-                    console.log(`      📉 Réduction automatique: ${count.toLocaleString()} → ${apres.toLocaleString()} lignes (${reduction}%)`);
+                    // Insérer le dernier batch (comme script DPE)
+                    if (batch.length > 0) {
+                        insertBatch(batch);
+                        batch = [];
+                    }
                     
-                    // Fusionner dans terrains_batir_temp (simple INSERT, pas de GROUP BY)
+                    const avantAgreg = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file').get().c;
+                    console.log(`      ⚡ Agrégation de ${avantAgreg.toLocaleString()} lignes...`);
+                    
+                    // Agrégation finale avec GROUP BY (comme script DPE, mais une seule fois)
+                    db.exec(`
+                    CREATE TEMP TABLE temp_agregated AS
+                    SELECT 
+                        id_parcelle,
+                        id_mutation,
+                        MAX(valeur_fonciere) as valeur_fonciere,
+                        MAX(surface_totale) as surface_totale,
+                        MAX(surface_reelle_bati) as surface_reelle_bati,
+                        MIN(date_mutation) as date_mutation,
+                        code_departement,
+                        MAX(code_commune) as code_commune,
+                        MAX(section_cadastrale) as section_cadastrale,
+                        MAX(parcelle_suffixe) as parcelle_suffixe
+                    FROM temp_csv_file
+                    WHERE id_parcelle IS NOT NULL
+                    GROUP BY id_parcelle, id_mutation, code_departement;
+                    `);
+                    
+                    const apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
+                    const reduction = Math.round((1 - apres/avantAgreg) * 100);
+                    console.log(`      📉 Réduction: ${avantAgreg.toLocaleString()} → ${apres.toLocaleString()} lignes (${reduction}%)`);
+                    
+                    // Fusionner dans terrains_batir_temp
                     console.log(`      ⬆️  Fusion dans terrains_batir_temp...`);
                     db.exec(`
                     INSERT INTO terrains_batir_temp (
@@ -1322,11 +1359,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
-                    FROM temp_csv_file;
+                    FROM temp_agregated;
                     `);
                     
                     // Nettoyer
                     db.exec(`DROP TABLE temp_csv_file`);
+                    db.exec(`DROP TABLE temp_agregated`);
                     
                     const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
                     console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);

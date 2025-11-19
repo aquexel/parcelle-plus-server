@@ -985,15 +985,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // Réinitialiser le mapping des colonnes pour ce fichier
             let columnMapping = null;
             
-            // Utiliser le séparateur par défaut (virgule)
-            // La bibliothèque csv-parser gère automatiquement la détection
-            console.log(`      🚀 Parsing CSV avec configuration par défaut...`);
+            // ⚡ CRITIQUE : csv-parser NE détecte PAS automatiquement le séparateur !
+            // Il faut le détecter manuellement (simple lecture de la première ligne)
+            const separator = detecterSeparateur(filePath);
+            console.log(`      🚀 Parsing CSV (séparateur: "${separator}")...`);
             
-            // Plus besoin de logique complexe de détection d'en-tête
-            // csv-parser gère cela automatiquement
-            
-            // 🔥 SIMPLIFIÉ : Utiliser directement le fichier sans modification
-            // Comme dans le script qui fonctionne (create-dvf-dpe-annexes-db-optimized.js)
+            // 🔥 SIMPLIFIÉ : Stream direct SANS modification
             const stream = fs.createReadStream(filePath);
             
             let count = 0;
@@ -1007,8 +1004,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             let firstRowColumns = null;
             let firstRowData = null;
             
-            // Configuration CSV minimal - laisser csv-parser gérer tout
+            // Configuration CSV avec séparateur détecté
             const csvOptions = {
+                separator: separator,
                 skipLinesWithError: true
             };
             

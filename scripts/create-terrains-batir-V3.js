@@ -46,6 +46,16 @@ const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
 
+// Helper pour afficher la taille de la DB
+function getDbSizeMB(dbPath) {
+    try {
+        const stats = fs.statSync(dbPath);
+        return Math.round(stats.size / 1024 / 1024);
+    } catch (e) {
+        return 0;
+    }
+}
+
 let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
 // Plus de filtre département - France entière
@@ -820,7 +830,7 @@ function detecterSeparateur(filePath) {
             return ',';
         }
         if (partsPipe.length > partsComma.length && partsPipe.length > partsSemicolon.length) {
-            return '|';
+        return '|';
         }
         if (partsSemicolon.length > partsComma.length && partsSemicolon.length > partsPipe.length) {
             return ';';
@@ -913,13 +923,19 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
             console.log(`      🔍 DEBUG: Mémoire au démarrage: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
             
-            // 🔥 SOLUTION OOM : Approche du script DPE qui fonctionne
-            // 1. INSERT OR IGNORE simple (pas de calculs MAX/MIN coûteux)
-            // 2. Batch de 5000 lignes avec TRANSACTION
-            // 3. GROUP BY une seule fois à la fin
+            // 🔥 NOUVELLE SOLUTION OOM : Utiliser le DISQUE, pas la RAM
+            // PROBLÈME IDENTIFIÉ:
+            // - CREATE TEMP TABLE = stockage RAM → OOM sur 4.6M lignes
+            // - CREATE INDEX sur 4.6M lignes = trop lourd
+            // 
+            // SOLUTION:
+            // 1. Table NORMALE sur disque (pas TEMP)
+            // 2. Créer INDEX sur table VIDE (rapide)
+            // 3. Insérer avec index déjà en place
+            // 4. Surveiller taille DB
             db.exec(`
             DROP TABLE IF EXISTS temp_csv_file;
-            CREATE TEMP TABLE temp_csv_file (
+            CREATE TABLE temp_csv_file (
                 id_parcelle TEXT,
                 id_mutation TEXT,
                 code_departement TEXT,
@@ -932,6 +948,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 parcelle_suffixe TEXT
             );
             `);
+            
+            // Créer l'index sur table VIDE (instantané)
+            console.log(`      📊 Création index sur table vide...`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dept ON temp_csv_file(code_departement)`);
+            const dbSizeAfterIndex = getDbSizeMB(DB_FILE);
+            console.log(`      ✅ Index créé - Taille DB: ${dbSizeAfterIndex} MB`);
             
             // INSERT simple (INSERT OR IGNORE pour éviter erreur, mais on garde les doublons pour GROUP BY)
             const insertTempFile = db.prepare(`
@@ -1184,21 +1206,21 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         if (deptRaw && deptRaw.length >= 1 && commRaw && commRaw.length >= 1 && sectionRaw && noPlanRaw && noPlanRaw.length >= 1) {
                             const dept = deptRaw.padStart(2, '0');
                             const comm = commRaw.padStart(3, '0');
-                            const prefixeSection = prefixeSectionRaw ? prefixeSectionRaw.padStart(3, '0') : '000';
+                        const prefixeSection = prefixeSectionRaw ? prefixeSectionRaw.padStart(3, '0') : '000';
                             const noPlan = noPlanRaw.padStart(4, '0');
-                            
+                        
                             if (dept.length === 2 && comm.length === 3 && noPlan.length === 4) {
-                                // Normaliser la section (1-2 caractères, peut être alphanumérique)
-                                let sectionNorm = sectionRaw.toUpperCase();
-                                if (sectionNorm.length === 1) {
-                                    sectionNorm = '0' + sectionNorm;
-                                } else if (sectionNorm.length === 0) {
+                            // Normaliser la section (1-2 caractères, peut être alphanumérique)
+                            let sectionNorm = sectionRaw.toUpperCase();
+                            if (sectionNorm.length === 1) {
+                                sectionNorm = '0' + sectionNorm;
+                            } else if (sectionNorm.length === 0) {
                                     skippedNoSection++;
-                                    return; // Skip si pas de section
-                                }
-                                // S'assurer que la section fait 2 caractères
-                                sectionNorm = sectionNorm.padStart(2, '0').substring(0, 2);
-                                idParcelle = dept + comm + prefixeSection + sectionNorm + noPlan;
+                                return; // Skip si pas de section
+                            }
+                            // S'assurer que la section fait 2 caractères
+                            sectionNorm = sectionNorm.padStart(2, '0').substring(0, 2);
+                            idParcelle = dept + comm + prefixeSection + sectionNorm + noPlan;
                             } else {
                                 skippedConstructionFailed++;
                                 return;
@@ -1275,6 +1297,11 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     const parcelleSuffixe = idParcelle.length >= 6 ? idParcelle.substring(5) : null;
                     const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
                     
+                    // DEBUG: Afficher les 3 premières lignes pour vérifier code_departement
+                    if (count < 3) {
+                        console.log(`\n      🔍 DEBUG ligne ${count + 1}: codeDept="${codeDept}", idParcelle="${idParcelle}", valeurFonciere="${valeurFonciere}"`);
+                    }
+                    
                     try {
                         // Ajouter au batch (comme script DPE)
                         batch.push([
@@ -1325,14 +1352,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     }
                     
                     const avantAgreg = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file').get().c;
+                    const dbSizeAfterInsert = getDbSizeMB(DB_FILE);
                     console.log(`      ⚡ Agrégation de ${avantAgreg.toLocaleString()} lignes par département...`);
-                    console.log(`      🔍 DEBUG: Mémoire avant index: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
-                    
-                    // Créer index pour accélérer les WHERE par département
-                    console.log(`      📊 Création index sur code_departement...`);
-                    db.exec(`CREATE INDEX idx_temp_dept ON temp_csv_file(code_departement)`);
-                    console.log(`      ✅ Index créé`);
-                    console.log(`      🔍 DEBUG: Mémoire après index: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+                    console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB, Taille DB: ${dbSizeAfterInsert} MB`);
                     
                     // Liste fixe des départements (éviter SELECT DISTINCT qui cause OOM)
                     const tousLesDepartements = [
@@ -1344,22 +1366,23 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         '971','972','973','974','976'
                     ];
                     
-                    // Créer table agrégée vide
-                    db.exec(`
-                    CREATE TEMP TABLE temp_agregated (
-                        id_parcelle TEXT,
-                        id_mutation TEXT,
-                        valeur_fonciere REAL,
-                        surface_totale REAL,
-                        surface_reelle_bati REAL,
-                        date_mutation TEXT,
-                        code_departement TEXT,
-                        code_commune TEXT,
-                        section_cadastrale TEXT,
-                        parcelle_suffixe TEXT
-                    );
-                    `);
-                    
+                    // Créer table agrégée vide (table NORMALE, pas TEMP = sur DISQUE)
+db.exec(`
+                    DROP TABLE IF EXISTS temp_agregated;
+                    CREATE TABLE temp_agregated (
+        id_parcelle TEXT,
+        id_mutation TEXT,
+        valeur_fonciere REAL,
+        surface_totale REAL,
+        surface_reelle_bati REAL,
+        date_mutation TEXT,
+        code_departement TEXT,
+        code_commune TEXT,
+        section_cadastrale TEXT,
+        parcelle_suffixe TEXT
+    );
+`);
+
                     // Agréger département par département (101 petits GROUP BY au lieu d'1 énorme)
                     const insertAgrege = db.prepare(`
                         INSERT INTO temp_agregated
@@ -1401,30 +1424,36 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     const apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
                     const reduction = Math.round((1 - apres/avantAgreg) * 100);
+                    const dbSizeAfterAgreg = getDbSizeMB(DB_FILE);
                     console.log(`      📉 Réduction: ${avantAgreg.toLocaleString()} → ${apres.toLocaleString()} lignes (${reduction}%)`);
-                    console.log(`      🔍 DEBUG: Mémoire avant fusion: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+                    console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB, Taille DB: ${dbSizeAfterAgreg} MB`);
                     
                     // Fusionner dans terrains_batir_temp
                     console.log(`      ⬆️  Fusion dans terrains_batir_temp...`);
-                    db.exec(`
-                    INSERT INTO terrains_batir_temp (
+    db.exec(`
+        INSERT INTO terrains_batir_temp (
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
-                    )
-                    SELECT 
+        )
+        SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
                     FROM temp_agregated;
                     `);
-                    console.log(`      ✅ Fusion terminée`);
-                    console.log(`      🔍 DEBUG: Mémoire après fusion: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+                    const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
+                    console.log(`      ✅ Fusion terminée - Taille DB: ${dbSizeAfterFusion} MB`);
+                    console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
-                    // Nettoyer
+                    // Nettoyer et RÉCUPÉRER l'espace disque
                     console.log(`      🧹 Nettoyage des tables temporaires...`);
                     db.exec(`DROP TABLE temp_csv_file`);
-                    console.log(`      🔍 DEBUG: temp_csv_file supprimée, Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     db.exec(`DROP TABLE temp_agregated`);
-                    console.log(`      🔍 DEBUG: temp_agregated supprimée, Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
+                    const dbSizeBeforeVacuum = getDbSizeMB(DB_FILE);
+                    console.log(`      🔄 VACUUM pour récupérer l'espace disque... (DB: ${dbSizeBeforeVacuum} MB)`);
+                    db.exec(`VACUUM`);
+                    const dbSizeAfterVacuum = getDbSizeMB(DB_FILE);
+                    const espaceLibereMB = dbSizeBeforeVacuum - dbSizeAfterVacuum;
+                    console.log(`      ✅ VACUUM terminé - Taille DB: ${dbSizeAfterVacuum} MB (${espaceLibereMB} MB libérés)`);
                     
                     const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
                     console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);

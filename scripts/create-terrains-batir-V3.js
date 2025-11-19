@@ -45,8 +45,6 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
-const { Transform, Readable } = require('stream');
-const readline = require('readline');
 
 // Helper pour afficher la taille de la DB
 function getDbSizeMB(dbPath) {

@@ -1005,6 +1005,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 }
                 
                 firstLineContent = buffer.toString('utf8', startOffset, bytesRead).split('\n')[0];
+                
+                // 🔧 CRITIQUE : Nettoyer les guillemets doubles AVANT la détection de l'en-tête
+                if (firstLineContent.startsWith('""')) {
+                    firstLineContent = firstLineContent.slice(1);
+                    console.log(`      🔧 Guillemets doubles nettoyés dans l'en-tête`);
+                }
             } catch (err) {
                 // Ignorer l'erreur, on utilisera le parsing par défaut
             }

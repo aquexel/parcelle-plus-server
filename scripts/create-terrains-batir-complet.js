@@ -1917,9 +1917,9 @@ function fusionnerBases() {
                     SUM(surface_reelle_bati) as surface_reelle_bati,
                     MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,
                     MIN(date_mutation) as date_mutation,
-                    NULL as latitude,
-                    NULL as longitude,
-                    NULL as nom_commune,
+                    AVG(latitude) as latitude,
+                    AVG(longitude) as longitude,
+                    MAX(nom_commune) as nom_commune,
                     CASE 
                         WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
                         WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
@@ -1952,8 +1952,8 @@ function fusionnerBases() {
             surface_reelle_bati, 
             prix_m2,
             date_mutation, 
-            NULL as latitude, 
-            NULL as longitude, 
+            latitude, 
+            longitude, 
             nom_commune,
             type_terrain
         FROM db_pa.terrains_batir;

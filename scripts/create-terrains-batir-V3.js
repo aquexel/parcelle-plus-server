@@ -181,6 +181,8 @@ db.exec(`
         surface_reelle_bati REAL,
         prix_m2 REAL,
         date_mutation TEXT,
+        latitude REAL,
+        longitude REAL,
         code_departement TEXT,
         code_commune TEXT,
         nom_commune TEXT,
@@ -943,6 +945,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 surface_totale REAL,
                 surface_reelle_bati REAL,
                 date_mutation TEXT,
+                latitude REAL,
+                longitude REAL,
                 code_commune TEXT,
                 section_cadastrale TEXT,
                 parcelle_suffixe TEXT
@@ -960,8 +964,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 INSERT INTO temp_csv_file (
                     id_parcelle, id_mutation, code_departement,
                     valeur_fonciere, surface_totale, surface_reelle_bati,
-                    date_mutation, code_commune, section_cadastrale, parcelle_suffixe
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    date_mutation, latitude, longitude,
+                    code_commune, section_cadastrale, parcelle_suffixe
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             // Batch transaction pour performance (comme script DPE)
@@ -1312,6 +1317,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             surfaceTerrain,
                             surfaceBati,
                             dateMutation,
+                            latitude,
+                            longitude,
                             codeCommune,
                             section,
                             parcelleSuffixe
@@ -1367,21 +1374,23 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     ];
                     
                     // Créer table agrégée vide (table NORMALE, pas TEMP = sur DISQUE)
-db.exec(`
+                    db.exec(`
                     DROP TABLE IF EXISTS temp_agregated;
                     CREATE TABLE temp_agregated (
-        id_parcelle TEXT,
-        id_mutation TEXT,
-        valeur_fonciere REAL,
-        surface_totale REAL,
-        surface_reelle_bati REAL,
-        date_mutation TEXT,
-        code_departement TEXT,
-        code_commune TEXT,
-        section_cadastrale TEXT,
-        parcelle_suffixe TEXT
-    );
-`);
+                        id_parcelle TEXT,
+                        id_mutation TEXT,
+                        valeur_fonciere REAL,
+                        surface_totale REAL,
+                        surface_reelle_bati REAL,
+                        date_mutation TEXT,
+                        latitude REAL,
+                        longitude REAL,
+                        code_departement TEXT,
+                        code_commune TEXT,
+                        section_cadastrale TEXT,
+                        parcelle_suffixe TEXT
+                    );
+                    `);
 
                     // Agréger département par département (101 petits GROUP BY au lieu d'1 énorme)
                     const insertAgrege = db.prepare(`
@@ -1393,6 +1402,8 @@ db.exec(`
                             MAX(surface_totale) as surface_totale,
                             MAX(surface_reelle_bati) as surface_reelle_bati,
                             MIN(date_mutation) as date_mutation,
+                            AVG(latitude) as latitude,
+                            AVG(longitude) as longitude,
                             code_departement,
                             MAX(code_commune) as code_commune,
                             MAX(section_cadastrale) as section_cadastrale,
@@ -1433,11 +1444,13 @@ db.exec(`
     db.exec(`
         INSERT INTO terrains_batir_temp (
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                        date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
+                        date_mutation, latitude, longitude,
+                        code_departement, code_commune, section_cadastrale, parcelle_suffixe
         )
         SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                        date_mutation, code_departement, code_commune, section_cadastrale, parcelle_suffixe
+                        date_mutation, latitude, longitude,
+                        code_departement, code_commune, section_cadastrale, parcelle_suffixe
                     FROM temp_agregated;
                     `);
                     const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
@@ -2297,8 +2310,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 SUM(surface_reelle_bati) as surface_reelle_bati,  -- SOMME du bâti
                 MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,  -- Recalculer le prix/m²
                 MIN(date_mutation) as date_mutation,      -- Date la plus ancienne
-                NULL as latitude,                          -- Sera enrichi plus tard si nécessaire
-                NULL as longitude,                         -- Sera enrichi plus tard si nécessaire
+                AVG(latitude) as latitude,                 -- Moyenne des coordonnées GPS
+                AVG(longitude) as longitude,               -- Moyenne des coordonnées GPS
                 MAX(nom_commune) as nom_commune,
                 CASE 
                     WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'

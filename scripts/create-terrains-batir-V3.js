@@ -1363,6 +1363,21 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     console.log(`      ⚡ Agrégation de ${avantAgreg.toLocaleString()} lignes par département...`);
                     console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB, Taille DB: ${dbSizeAfterInsert} MB`);
                     
+                    // DEBUG: Afficher les départements uniques présents
+                    const deptsPresents = db.prepare(`
+                        SELECT code_departement, COUNT(*) as nb 
+                        FROM temp_csv_file 
+                        WHERE code_departement IS NOT NULL 
+                        GROUP BY code_departement 
+                        ORDER BY code_departement
+                        LIMIT 10
+                    `).all();
+                    console.log(`      🔍 DEBUG: Premiers départements présents:`, deptsPresents.map(d => `${d.code_departement}(${d.nb})`).join(', '));
+                    
+                    // DEBUG: Vérifier une ligne exemple
+                    const exempleRow = db.prepare('SELECT * FROM temp_csv_file LIMIT 1').get();
+                    console.log(`      🔍 DEBUG: Exemple ligne - code_dept="${exempleRow?.code_departement}", id_parcelle="${exempleRow?.id_parcelle}"`);
+                    
                     // Liste fixe des départements (éviter SELECT DISTINCT qui cause OOM)
                     const tousLesDepartements = [
                         '01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17','18','19',
@@ -1422,9 +1437,13 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             process.stdout.write(`\r      → Agrégation: ${deptIdx}/${tousLesDepartements.length} depts (Mem: ${memMB} MB)...`);
                         }
                         try {
+                            // Compter combien de lignes existent pour ce département
+                            const countAvant = db.prepare('SELECT COUNT(*) as c FROM temp_csv_file WHERE code_departement = ?').get(dept);
+                            
                             const result = insertAgrege.run(dept);
-                            if (deptIdx <= 3 || (result.changes > 0 && deptIdx <= 10)) {
-                                console.log(`\n      🔍 DEBUG: Dept ${dept} → ${result.changes} lignes agrégées`);
+                            
+                            if (deptIdx <= 5 || (result.changes > 0 && deptIdx <= 15)) {
+                                console.log(`\n      🔍 DEBUG: Dept ${dept} → ${countAvant.c} lignes source → ${result.changes} lignes agrégées`);
                             }
                         } catch (error) {
                             console.error(`\n      ❌ ERREUR au département ${dept} (${deptIdx}/${tousLesDepartements.length}):`, error.message);

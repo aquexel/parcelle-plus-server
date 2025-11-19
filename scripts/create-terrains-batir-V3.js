@@ -1074,35 +1074,49 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
             
             // Nettoyer les guillemets doubles au début de la première ligne
-            let isFirstLine = true;
+            // Bufferiser jusqu'à avoir la première ligne complète, la nettoyer, puis laisser passer le reste
+            let buffer = '';
+            let firstLineProcessed = false;
             const cleanStream = new Transform({
                 transform(chunk, encoding, callback) {
-                    let str = chunk.toString();
-                    
-                    if (isFirstLine) {
-                        // Enlever le BOM UTF-8 si présent
-                        if (str.charCodeAt(0) === 0xFEFF) {
-                            str = str.slice(1);
-                        }
-                        
-                        // Enlever les guillemets doubles au début de la première ligne
-                        // Ex: ""id_mutation,date..." → "id_mutation,date..."
-                        if (str.startsWith('""')) {
-                            str = str.slice(1);
-                        } else if (str.startsWith('"') && str.indexOf(separator) > 0) {
-                            // Si commence par " et contient le séparateur, vérifier si c'est un guillemet mal placé
-                            const firstSep = str.indexOf(separator);
-                            const firstQuote = str.indexOf('"', 1);
-                            // Si le premier séparateur arrive avant le guillemet fermant, enlever le premier guillemet
-                            if (firstSep < firstQuote || firstQuote === -1) {
-                                str = str.slice(1);
-                            }
-                        }
-                        
-                        isFirstLine = false;
+                    if (firstLineProcessed) {
+                        // Après la première ligne, on laisse passer tel quel
+                        callback(null, chunk);
+                        return;
                     }
                     
-                    callback(null, str);
+                    // Ajouter le chunk au buffer
+                    buffer += chunk.toString();
+                    
+                    // Chercher le premier saut de ligne
+                    const newlineIndex = buffer.indexOf('\n');
+                    
+                    if (newlineIndex === -1) {
+                        // Pas encore de saut de ligne, continuer à bufferiser
+                        callback(null, '');
+                        return;
+                    }
+                    
+                    // On a la première ligne complète !
+                    let firstLine = buffer.substring(0, newlineIndex + 1);
+                    let rest = buffer.substring(newlineIndex + 1);
+                    
+                    // Enlever le BOM UTF-8 si présent
+                    if (firstLine.charCodeAt(0) === 0xFEFF) {
+                        firstLine = firstLine.slice(1);
+                    }
+                    
+                    // Enlever les guillemets doubles au début
+                    if (firstLine.startsWith('""')) {
+                        firstLine = firstLine.slice(1);
+                        console.log(`      🔧 Guillemet double nettoyé du stream`);
+                    }
+                    
+                    firstLineProcessed = true;
+                    buffer = '';
+                    
+                    // Envoyer la première ligne nettoyée + le reste
+                    callback(null, firstLine + rest);
                 }
             });
             

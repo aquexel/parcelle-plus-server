@@ -985,14 +985,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // Réinitialiser le mapping des colonnes pour ce fichier
             let columnMapping = null;
             
-            // ⚡ CRITIQUE : csv-parser NE détecte PAS automatiquement le séparateur !
-            // Il faut le détecter manuellement (simple lecture de la première ligne)
-            const separator = detecterSeparateur(filePath);
-            console.log(`      🚀 Parsing CSV (séparateur: "${separator}")...`);
-            
-            // 🔥 SIMPLIFIÉ : Stream direct SANS modification
-            const stream = fs.createReadStream(filePath);
-            
             let count = 0;
             let totalRows = 0;
             let lastLog = Date.now();
@@ -1003,12 +995,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             let skippedNoSectionExtracted = 0;
             let firstRowColumns = null;
             let firstRowData = null;
-            
-            // Configuration CSV avec séparateur détecté
-            const csvOptions = {
-                separator: separator,
-                skipLinesWithError: true
-            };
             
             // Fonction helper pour mapper les colonnes avec des noms alternatifs
             function getColumnValue(row, possibleNames) {
@@ -1062,8 +1048,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 return '';
             }
             
-            stream
-                .pipe(csv(csvOptions))
+            fs.createReadStream(filePath)
+                .pipe(csv())
                 .on('data', (row) => {
                     totalRows++;
                     

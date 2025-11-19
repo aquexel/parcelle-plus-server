@@ -45,7 +45,8 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
-const { Transform } = require('stream');
+const { Transform, Readable } = require('stream');
+const readline = require('readline');
 
 // Helper pour afficher la taille de la DB
 function getDbSizeMB(dbPath) {
@@ -1070,55 +1071,62 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 console.log(`      🔍 Détection en-tête: ${isHeader ? 'OUI (en-tête détecté)' : 'NON (données, colonnes définies manuellement)'}`);
             }
             
-            // Créer le stream avec gestion du BOM UTF-8 et guillemets doubles problématiques
-            const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
-            
-            // Nettoyer les guillemets doubles au début de la première ligne
-            // Bufferiser jusqu'à avoir la première ligne complète, la nettoyer, puis laisser passer le reste
-            let buffer = '';
-            let firstLineProcessed = false;
-            const cleanStream = new Transform({
-                transform(chunk, encoding, callback) {
-                    if (firstLineProcessed) {
-                        // Après la première ligne, on laisse passer tel quel
-                        callback(null, chunk);
-                        return;
-                    }
-                    
-                    // Ajouter le chunk au buffer
-                    buffer += chunk.toString();
-                    
-                    // Chercher le premier saut de ligne
-                    const newlineIndex = buffer.indexOf('\n');
-                    
-                    if (newlineIndex === -1) {
-                        // Pas encore de saut de ligne, continuer à bufferiser
-                        callback(null, '');
-                        return;
-                    }
-                    
-                    // On a la première ligne complète !
-                    let firstLine = buffer.substring(0, newlineIndex + 1);
-                    let rest = buffer.substring(newlineIndex + 1);
-                    
-                    // Enlever le BOM UTF-8 si présent
-                    if (firstLine.charCodeAt(0) === 0xFEFF) {
-                        firstLine = firstLine.slice(1);
-                    }
-                    
-                    // Enlever les guillemets doubles au début
-                    if (firstLine.startsWith('""')) {
-                        firstLine = firstLine.slice(1);
-                        console.log(`      🔧 Guillemet double nettoyé du stream`);
-                    }
-                    
-                    firstLineProcessed = true;
-                    buffer = '';
-                    
-                    // Envoyer la première ligne nettoyée + le reste
-                    callback(null, firstLine + rest);
-                }
+            // 🔧 SOLUTION : Lire la première ligne avec readline, la nettoyer, puis créer un stream composite
+            // Lire juste la première ligne
+            let firstLineOriginal = '';
+            const rl = readline.createInterface({
+                input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+                crlfDelay: Infinity
             });
+            
+            // Promesse pour lire la première ligne
+            const readFirstLine = new Promise((resolve) => {
+                rl.on('line', (line) => {
+                    firstLineOriginal = line;
+                    rl.close();
+                    resolve();
+                });
+            });
+            
+            await readFirstLine;
+            
+            // Nettoyer la première ligne
+            let firstLineCleaned = firstLineOriginal;
+            
+            // Enlever le BOM UTF-8 si présent
+            if (firstLineCleaned.charCodeAt(0) === 0xFEFF) {
+                firstLineCleaned = firstLineCleaned.slice(1);
+            }
+            
+            // Enlever les guillemets doubles au début ET à la fin
+            if (firstLineCleaned.startsWith('""')) {
+                firstLineCleaned = firstLineCleaned.slice(1);
+                console.log(`      🔧 Guillemet double de début nettoyé`);
+            }
+            if (firstLineCleaned.endsWith('"') && !firstLineCleaned.endsWith('""')) {
+                firstLineCleaned = firstLineCleaned.slice(0, -1);
+                console.log(`      🔧 Guillemet double de fin nettoyé`);
+            }
+            
+            // Créer un stream qui commence par la ligne nettoyée, puis le reste du fichier
+            const firstLinePosition = Buffer.from(firstLineOriginal + '\n', 'utf8').length;
+            
+            const stream = new Readable({
+                read() {}
+            });
+            
+            // Envoyer la première ligne nettoyée
+            stream.push(firstLineCleaned + '\n');
+            
+            // Puis streamer le reste du fichier
+            const restStream = fs.createReadStream(filePath, { 
+                encoding: 'utf8',
+                start: firstLinePosition
+            });
+            
+            restStream.on('data', (chunk) => stream.push(chunk));
+            restStream.on('end', () => stream.push(null));
+            restStream.on('error', (err) => stream.destroy(err));
             
             let count = 0;
             let totalRows = 0;
@@ -1203,7 +1211,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             }
             
             stream
-                .pipe(cleanStream)
                 .pipe(csv(csvOptions))
                 .on('data', (row) => {
                     totalRows++;

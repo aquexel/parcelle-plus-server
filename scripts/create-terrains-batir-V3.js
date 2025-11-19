@@ -45,6 +45,7 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
+const { Transform } = require('stream');
 
 // Helper pour afficher la taille de la DB
 function getDbSizeMB(dbPath) {
@@ -1063,8 +1064,41 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 console.log(`      🔍 Détection en-tête: ${isHeader ? 'OUI (en-tête détecté)' : 'NON (données, colonnes définies manuellement)'}`);
             }
             
-            // Créer le stream avec gestion du BOM UTF-8
+            // Créer le stream avec gestion du BOM UTF-8 et guillemets doubles problématiques
             const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+            
+            // Nettoyer les guillemets doubles au début de la première ligne
+            let isFirstLine = true;
+            const cleanStream = new Transform({
+                transform(chunk, encoding, callback) {
+                    let str = chunk.toString();
+                    
+                    if (isFirstLine) {
+                        // Enlever le BOM UTF-8 si présent
+                        if (str.charCodeAt(0) === 0xFEFF) {
+                            str = str.slice(1);
+                        }
+                        
+                        // Enlever les guillemets doubles au début de la première ligne
+                        // Ex: ""id_mutation,date..." → "id_mutation,date..."
+                        if (str.startsWith('""')) {
+                            str = str.slice(1);
+                        } else if (str.startsWith('"') && str.indexOf(separator) > 0) {
+                            // Si commence par " et contient le séparateur, vérifier si c'est un guillemet mal placé
+                            const firstSep = str.indexOf(separator);
+                            const firstQuote = str.indexOf('"', 1);
+                            // Si le premier séparateur arrive avant le guillemet fermant, enlever le premier guillemet
+                            if (firstSep < firstQuote || firstQuote === -1) {
+                                str = str.slice(1);
+                            }
+                        }
+                        
+                        isFirstLine = false;
+                    }
+                    
+                    callback(null, str);
+                }
+            });
             
             let count = 0;
             let totalRows = 0;
@@ -1149,6 +1183,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             }
             
             stream
+                .pipe(cleanStream)
                 .pipe(csv(csvOptions))
                 .on('data', (row) => {
                     totalRows++;

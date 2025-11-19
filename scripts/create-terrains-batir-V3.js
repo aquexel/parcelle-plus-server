@@ -987,146 +987,16 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // Réinitialiser le mapping des colonnes pour ce fichier
             let columnMapping = null;
             
-            // Détecter automatiquement le séparateur en analysant la première ligne
-            const separator = detecterSeparateur(filePath);
-            console.log(`      🔍 Séparateur détecté: "${separator}"`);
+            // Utiliser le séparateur par défaut (virgule)
+            // La bibliothèque csv-parser gère automatiquement la détection
+            console.log(`      🚀 Parsing CSV avec configuration par défaut...`);
             
-            // Lire la première ligne pour détecter si c'est un en-tête ou des données
-            let firstLineContent = '';
-            try {
-                const fd = fs.openSync(filePath, 'r');
-                const buffer = Buffer.alloc(1024);
-                const bytesRead = fs.readSync(fd, buffer, 0, 1024, 0);
-                fs.closeSync(fd);
-                
-                // Gérer le BOM UTF-8
-                let startOffset = 0;
-                if (bytesRead >= 3 && buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
-                    startOffset = 3;
-                }
-                
-                firstLineContent = buffer.toString('utf8', startOffset, bytesRead).split('\n')[0];
-                
-                // 🔧 CRITIQUE : Nettoyer les guillemets doubles AVANT la détection de l'en-tête
-                if (firstLineContent.startsWith('""')) {
-                    firstLineContent = firstLineContent.slice(1);
-                    console.log(`      🔧 Guillemets doubles nettoyés dans l'en-tête`);
-                }
-            } catch (err) {
-                // Ignorer l'erreur, on utilisera le parsing par défaut
-            }
+            // Plus besoin de logique complexe de détection d'en-tête
+            // csv-parser gère cela automatiquement
             
-            // Détecter si la première ligne est un en-tête
-            // Critères multiples pour détecter différents formats d'en-tête
-            let isHeader = false;
-            if (firstLineContent) {
-                const trimmed = firstLineContent.trim();
-                
-                // Critère 1 : Commence par "id_mutation" (format normalisé standard)
-                if (trimmed.startsWith('id_mutation')) {
-                    isHeader = true;
-                }
-                // Critère 2 : Pattern d'en-tête numéroté (ex: "1_articles_cgi,2_articles_cgi...")
-                else if (/^\d+_[a-z_]+/i.test(trimmed)) {
-                    // Vérifier que plusieurs colonnes suivent ce pattern
-                    const parts = trimmed.split(separator);
-                    const numberedColumns = parts.filter(p => /^\d+_[a-z_]+/i.test(p.trim())).length;
-                    if (numberedColumns >= 3) {
-                        isHeader = true;
-                    }
-                }
-                // Critère 3 : Contient plusieurs mots-clés d'en-tête typiques
-                else {
-                    const headerKeywords = ['id_mutation', 'id_parcelle', 'valeur_fonciere', 'code_departement', 
-                                          'date_mutation', 'adresse_code_voie', 'adresse_nom_voie', 'code_commune',
-                                          'nom_commune', 'identifiant_local', 'articles_cgi'];
-                    const keywordCount = headerKeywords.filter(kw => trimmed.toLowerCase().includes(kw.toLowerCase())).length;
-                    
-                    // Vérifier que ce n'est PAS une ligne de données (pas de dates/nombres au début)
-                    const startsWithNumberOrDate = /^\d{4}-\d{2}-\d{2}/.test(trimmed) || /^\d+[,\s]/.test(trimmed);
-                    
-                    // Si on trouve au moins 3 mots-clés ET pas de valeurs numériques/dates au début
-                    if (keywordCount >= 3 && !startsWithNumberOrDate) {
-                        isHeader = true;
-                    }
-                }
-            }
-            
-            // Si ce n'est pas un en-tête, définir les colonnes manuellement
-            const columnNames = isHeader ? null : [
-                'id_mutation', 'date_mutation', 'numero_disposition', 'nature_mutation', 'valeur_fonciere',
-                'adresse_numero', 'adresse_suffixe', 'adresse_nom_voie', 'adresse_code_voie', 'code_postal',
-                'code_commune', 'nom_commune', 'code_departement', 'ancien_code_commune', 'ancien_nom_commune',
-                'id_parcelle', 'ancien_id_parcelle', 'numero_volume', 'lot1_numero', 'lot1_surface_carrez',
-                'lot2_numero', 'lot2_surface_carrez', 'lot3_numero', 'lot3_surface_carrez', 'lot4_numero',
-                'lot4_surface_carrez', 'lot5_numero', 'lot5_surface_carrez', 'nombre_lots', 'code_type_local',
-                'type_local', 'surface_reelle_bati', 'nombre_pieces_principales', 'code_nature_culture',
-                'nature_culture', 'code_nature_culture_speciale', 'nature_culture_speciale', 'surface_terrain',
-                'longitude', 'latitude'
-            ];
-            
-            // Log pour debug
-            if (firstLineContent) {
-                console.log(`      🔍 Première ligne (100 premiers caractères): "${firstLineContent.substring(0, 100)}"`);
-                console.log(`      🔍 Détection en-tête: ${isHeader ? 'OUI (en-tête détecté)' : 'NON (données, colonnes définies manuellement)'}`);
-            }
-            
-            // 🔧 SOLUTION : Lire la première ligne avec readline, la nettoyer, puis créer un stream composite
-            // Lire juste la première ligne
-            let firstLineOriginal = '';
-            const rl = readline.createInterface({
-                input: fs.createReadStream(filePath, { encoding: 'utf8' }),
-                crlfDelay: Infinity
-            });
-            
-            // Promesse pour lire la première ligne
-            const readFirstLine = new Promise((resolve) => {
-                rl.on('line', (line) => {
-                    firstLineOriginal = line;
-                    rl.close();
-                    resolve();
-                });
-            });
-            
-            await readFirstLine;
-            
-            // Nettoyer la première ligne
-            let firstLineCleaned = firstLineOriginal;
-            
-            // Enlever le BOM UTF-8 si présent
-            if (firstLineCleaned.charCodeAt(0) === 0xFEFF) {
-                firstLineCleaned = firstLineCleaned.slice(1);
-            }
-            
-            // Enlever les guillemets doubles au début ET à la fin
-            if (firstLineCleaned.startsWith('""')) {
-                firstLineCleaned = firstLineCleaned.slice(1);
-                console.log(`      🔧 Guillemet double de début nettoyé`);
-            }
-            if (firstLineCleaned.endsWith('"') && !firstLineCleaned.endsWith('""')) {
-                firstLineCleaned = firstLineCleaned.slice(0, -1);
-                console.log(`      🔧 Guillemet double de fin nettoyé`);
-            }
-            
-            // Créer un stream qui commence par la ligne nettoyée, puis le reste du fichier
-            const firstLinePosition = Buffer.from(firstLineOriginal + '\n', 'utf8').length;
-            
-            const stream = new Readable({
-                read() {}
-            });
-            
-            // Envoyer la première ligne nettoyée
-            stream.push(firstLineCleaned + '\n');
-            
-            // Puis streamer le reste du fichier
-            const restStream = fs.createReadStream(filePath, { 
-                encoding: 'utf8',
-                start: firstLinePosition
-            });
-            
-            restStream.on('data', (chunk) => stream.push(chunk));
-            restStream.on('end', () => stream.push(null));
-            restStream.on('error', (err) => stream.destroy(err));
+            // 🔥 SIMPLIFIÉ : Utiliser directement le fichier sans modification
+            // Comme dans le script qui fonctionne (create-dvf-dpe-annexes-db-optimized.js)
+            const stream = fs.createReadStream(filePath);
             
             let count = 0;
             let totalRows = 0;
@@ -1139,24 +1009,10 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             let firstRowColumns = null;
             let firstRowData = null;
             
-            const csvOptions = { 
-                separator, 
-                skipLinesWithError: true,
-                skipEmptyLines: true,
-                quote: '"',
-                escape: '"'
+            // Configuration CSV minimal - laisser csv-parser gérer tout
+            const csvOptions = {
+                skipLinesWithError: true
             };
-            
-            // Si on a défini les colonnes manuellement, utiliser headers: columnNames
-            // Cela indique à csv-parser d'utiliser ces noms comme en-têtes et de ne PAS lire la première ligne comme un en-tête
-            if (columnNames) {
-                csvOptions.headers = columnNames;
-                csvOptions.skipLinesWithError = true;
-                console.log(`      🔧 Utilisation de ${columnNames.length} colonnes définies manuellement (pas d'en-tête dans le fichier)`);
-            } else {
-                // Si c'est un en-tête, laisser csv-parser le détecter automatiquement
-                console.log(`      🔧 Détection automatique des colonnes depuis l'en-tête`);
-            }
             
             // Fonction helper pour mapper les colonnes avec des noms alternatifs
             function getColumnValue(row, possibleNames) {
@@ -1224,17 +1080,13 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         // Créer le mapping des colonnes
                         getColumnValue(row, ['id_mutation']); // Initialiser le mapping
                         
-                        // Si on n'a qu'une seule colonne, essayer de parser manuellement
-                        if (firstRowColumns.length === 1 && columnNames) {
-                            // On a déjà défini les colonnes manuellement, donc ça devrait fonctionner
-                            console.log(`      ✅ Colonnes définies manuellement (${columnNames.length} colonnes)`);
-                        } else if (firstRowColumns.length === 1) {
+                        // Vérifier si le parsing est correct
+                        if (firstRowColumns.length === 1) {
                             const firstColName = firstRowColumns[0];
                             const firstColValue = row[firstColName];
                             console.log(`      ⚠️  PROBLÈME : Une seule colonne détectée !`);
                             console.log(`      ⚠️  Nom colonne: "${firstColName.substring(0, 100)}"`);
                             console.log(`      ⚠️  Valeur (100 premiers caractères): "${(firstColValue || '').substring(0, 100)}"`);
-                            console.log(`      ⚠️  Séparateur utilisé: "${separator}"`);
                             if (firstColValue && firstColValue.includes(',')) {
                                 const manualParts = firstColValue.split(',');
                                 console.log(`      💡 Si séparateur = ",", on aurait ${manualParts.length} colonnes`);

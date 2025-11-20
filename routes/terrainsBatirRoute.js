@@ -35,21 +35,12 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Route principale
+ * Route principale - ACTIVÉE ✅
  * 
- * ⚠️ ROUTE TEMPORAIREMENT DÉSACTIVÉE
- * La base de données pour les PC (Permis de Construire) issue de PA (Permis d'Aménager)
- * n'est pas encore opérationnelle.
+ * La base de données terrains_batir.db est maintenant opérationnelle !
+ * Cette route permet de rechercher des terrains à bâtir avec filtre viabilisation.
  */
 module.exports = (req, res) => {
-    // Route temporairement désactivée
-    return res.status(503).json({
-        success: false,
-        error: 'Service non disponible',
-        message: 'La base de données pour les terrains à bâtir (PC issue de PA) n\'est pas encore opérationnelle. Ce service sera disponible prochainement.'
-    });
-    
-    /* CODE DÉSACTIVÉ - À RÉACTIVER QUAND LA BASE SERA PRÊTE
     try {
         const startTime = Date.now();
         // Récupérer les paramètres
@@ -210,6 +201,5 @@ module.exports = (req, res) => {
             message: error.message
         });
     }
-    */
 };
 

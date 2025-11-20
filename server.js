@@ -183,6 +183,9 @@ app.get('/', (req, res) => {
             users: '/api/users',
             offers: '/api/offers',
             conversations: '/api/conversations',
+            dvf_with_features: '/api/dvf/search-with-features',
+            safer_prix: '/api/safer/prix',
+            terrains_batir: '/api/terrains-batir/search',
             websocket: 'ws://149.202.33.164:3000'
         }
     });
@@ -1185,6 +1188,10 @@ app.get('/api/dvf/search-with-features', dvfWithFeaturesRoute);
 
 const saferRoute = require('./routes/saferRoute');
 app.get('/api/safer/prix', saferRoute);
+
+// Route Terrains à Bâtir (PC issue de PA)
+const terrainsBatirRoute = require('./routes/terrainsBatirRoute');
+app.get('/api/terrains-batir/search', terrainsBatirRoute);
 
 // Gestion des erreurs
 app.use((err, req, res, next) => {

@@ -832,8 +832,8 @@ function normaliserFichierDVF(filePath) {
             const columns = Array.from(allColumnsSet).sort();
             const writeStream = fs.createWriteStream(tempFile, { encoding: 'utf8' });
             
-            // Écrire l'en-tête
-            writeStream.write(columns.map(escapeCSV).join(',') + '\n');
+            // Écrire l'en-tête (sans escapeCSV qui ajouterait des guillemets)
+            writeStream.write(columns.join(',') + '\n');
             
             let count = 0;
             
@@ -866,8 +866,8 @@ function normaliserFichierDVF(filePath) {
                         }
                     }
                     
-                    // Écrire la ligne normalisée
-                    const values = columns.map(col => escapeCSV(normalizedRow[col] || ''));
+                    // Écrire la ligne normalisée (sans escapeCSV qui ajouterait des guillemets)
+                    const values = columns.map(col => normalizedRow[col] || '');
                     writeStream.write(values.join(',') + '\n');
                     
                     count++;

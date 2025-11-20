@@ -874,75 +874,41 @@ function detecterSeparateurPA(filePath) {
     }
 }
 
-// 🧹 Fonction pour nettoyer les guillemets des DVF 2021+
+// 🧹 Fonction simple : enlever tous les " du fichier
 function nettoyerGuillemetsDVF(filePath) {
-    const readline = require('readline');
-    
-    // Lire les 2 premières lignes pour détecter le problème
-    const rl = readline.createInterface({
-        input: fs.createReadStream(filePath),
-        crlfDelay: Infinity
-    });
-    
-    let firstLine = '';
-    let secondLine = '';
-    let lineCount = 0;
-    
     return new Promise((resolve, reject) => {
+        console.log(`      🧹 Nettoyage des guillemets...`);
+        
+        const readline = require('readline');
+        const tempFile = filePath + '.tmp';
+        const writeStream = fs.createWriteStream(tempFile);
+        const rl = readline.createInterface({
+            input: fs.createReadStream(filePath),
+            crlfDelay: Infinity
+        });
+        
+        let count = 0;
+        
         rl.on('line', (line) => {
-            if (lineCount === 0) firstLine = line;
-            else if (lineCount === 1) {
-                secondLine = line;
-                rl.close();
-            }
-            lineCount++;
+            // Remplacer " par rien
+            const cleanedLine = line.replace(/"/g, '');
+            writeStream.write(cleanedLine + '\n');
+            count++;
         });
         
         rl.on('close', () => {
-            // Vérifier si le fichier contient des guillemets (solution simple)
-            // On nettoie si on détecte des guillemets dans les 2 premières lignes
-            const needsCleaning = firstLine.includes('"') && secondLine.includes('"');
+            writeStream.end();
             
-            if (!needsCleaning) {
+            writeStream.on('finish', () => {
+                // Remplacer l'original
+                fs.unlinkSync(filePath);
+                fs.renameSync(tempFile, filePath);
+                
+                console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
                 resolve();
-                return;
-            }
-            
-            console.log(`      🧹 Nettoyage des guillemets...`);
-            
-            const tempFile = filePath + '.cleaning';
-            const writeStream = fs.createWriteStream(tempFile);
-            const rlFull = readline.createInterface({
-                input: fs.createReadStream(filePath),
-                crlfDelay: Infinity
             });
             
-            let count = 0;
-            
-            rlFull.on('line', (line) => {
-                // Enlever TOUS les guillemets (solution simple et robuste)
-                const cleanedLine = line.replace(/"/g, '');
-                
-                writeStream.write(cleanedLine + '\n');
-                count++;
-            });
-            
-            rlFull.on('close', () => {
-                writeStream.end();
-                
-                writeStream.on('finish', () => {
-                    // Remplacer le fichier original
-                    fs.unlinkSync(filePath);
-                    fs.renameSync(tempFile, filePath);
-                    
-                    console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
-                    resolve();
-                });
-                
-                writeStream.on('error', reject);
-            });
-            
-            rlFull.on('error', reject);
+            writeStream.on('error', reject);
         });
         
         rl.on('error', reject);

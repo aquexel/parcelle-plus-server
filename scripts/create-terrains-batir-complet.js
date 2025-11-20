@@ -713,131 +713,45 @@ function estDejaNormalise(filePath) {
     }
 }
 
-// 🧹 Fonction pour nettoyer les guillemets des DVF 2021+
-// Problème : DVF 2021-2025 ont chaque ligne entre guillemets : "id_mutation,date_mutation,..."
-// Solution : Enlever les guillemets au début et à la fin de chaque ligne
+// 🧹 Fonction simple : enlever tous les " du fichier
 async function nettoyerGuillemetsDVF(filePath) {
     return new Promise((resolve, reject) => {
-        const readline = require('readline');
+        console.log(`   🧹 Nettoyage de ${path.basename(filePath)}...`);
         
-        // Lire les 2 premières lignes pour détecter le problème
+        const readline = require('readline');
+        const tempFile = filePath + '.tmp';
+        const writeStream = fs.createWriteStream(tempFile);
         const rl = readline.createInterface({
             input: fs.createReadStream(filePath),
             crlfDelay: Infinity
         });
         
-        let firstLine = '';
-        let secondLine = '';
-        let lineCount = 0;
+        let count = 0;
         
         rl.on('line', (line) => {
-            if (lineCount === 0) firstLine = line;
-            else if (lineCount === 1) {
-                secondLine = line;
-                rl.close();
+            // Remplacer " par rien
+            const cleanedLine = line.replace(/"/g, '');
+            writeStream.write(cleanedLine + '\n');
+            count++;
+            
+            if (count % 500000 === 0) {
+                process.stdout.write(`\r      → ${count.toLocaleString()} lignes...`);
             }
-            lineCount++;
         });
         
         rl.on('close', () => {
-            // Vérifier si le fichier contient des guillemets (solution simple)
-            // On nettoie si on détecte des guillemets dans les 2 premières lignes
-            const needsCleaning = firstLine.includes('"') && secondLine.includes('"');
+            writeStream.end();
             
-            if (!needsCleaning) {
-                console.log(`   ✅ ${path.basename(filePath)} - Pas de guillemets à nettoyer`);
+            writeStream.on('finish', () => {
+                // Remplacer l'original
+                fs.unlinkSync(filePath);
+                fs.renameSync(tempFile, filePath);
+                
+                console.log(`\r   ✅ ${count.toLocaleString()} lignes nettoyées`);
                 resolve();
-                return;
-            }
-            
-            console.log(`   🧹 ${path.basename(filePath)} - Nettoyage des guillemets...`);
-            console.log(`   🔍 AVANT nettoyage ligne 1: "${firstLine.substring(0, 80)}..."`);
-            console.log(`   🔍 AVANT nettoyage ligne 2: "${secondLine.substring(0, 80)}..."`);
-            
-            const tempFile = filePath + '.cleaning';
-            const writeStream = fs.createWriteStream(tempFile);
-            const rlFull = readline.createInterface({
-                input: fs.createReadStream(filePath),
-                crlfDelay: Infinity
             });
             
-            let count = 0;
-            
-            rlFull.on('line', (line) => {
-                // Enlever TOUS les guillemets (solution simple et robuste)
-                const cleanedLine = line.replace(/"/g, '');
-                
-                writeStream.write(cleanedLine + '\n');
-                count++;
-                
-                if (count % 500000 === 0) {
-                    process.stdout.write(`\r      → ${count.toLocaleString()} lignes nettoyées...`);
-                }
-            });
-            
-            rlFull.on('close', () => {
-                writeStream.end();
-                
-                writeStream.on('finish', () => {
-                    try {
-                        // Vérifier que le fichier temporaire existe
-                        if (!fs.existsSync(tempFile)) {
-                            throw new Error(`Fichier temporaire ${tempFile} non trouvé`);
-                        }
-                        
-                        const tempSize = fs.statSync(tempFile).size;
-                        const origSize = fs.statSync(filePath).size;
-                        
-                        console.log(`\r   📊 Remplacement: ${origSize} bytes → ${tempSize} bytes`);
-                        
-                        // Remplacer le fichier original
-                        fs.unlinkSync(filePath);
-                        fs.renameSync(tempFile, filePath);
-                        
-                        // Vérifier que le remplacement a réussi
-                        if (!fs.existsSync(filePath)) {
-                            throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
-                        }
-                        
-                        // Vérifier le contenu du fichier après nettoyage (sans charger tout le fichier)
-                        const rlVerif = require('readline').createInterface({
-                            input: fs.createReadStream(filePath),
-                            crlfDelay: Infinity
-                        });
-                        
-                        const verifLines = [];
-                        rlVerif.on('line', (line) => {
-                            if (verifLines.length < 2) {
-                                verifLines.push(line);
-                            }
-                            if (verifLines.length === 2) {
-                                rlVerif.close();
-                            }
-                        });
-                        
-                        rlVerif.on('close', () => {
-                            console.log(`   ✅ ${count.toLocaleString()} lignes nettoyées - Fichier remplacé`);
-                            if (verifLines.length >= 2) {
-                                console.log(`   🔍 Vérif ligne 1 après nettoyage: "${verifLines[0].substring(0, 80)}..."`);
-                                console.log(`   🔍 Vérif ligne 2 après nettoyage: "${verifLines[1].substring(0, 80)}..."`);
-                            }
-                            resolve();
-                        });
-                        
-                        rlVerif.on('error', reject);
-                    } catch (err) {
-                        console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}`);
-                        reject(err);
-                    }
-                });
-                
-                writeStream.on('error', (err) => {
-                    console.error(`\n   ❌ Erreur écriture: ${err.message}`);
-                    reject(err);
-                });
-            });
-            
-            rlFull.on('error', reject);
+            writeStream.on('error', reject);
         });
         
         rl.on('error', reject);

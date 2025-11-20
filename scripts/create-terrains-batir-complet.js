@@ -763,6 +763,8 @@ async function nettoyerGuillemetsDVF(filePath) {
             }
             
             console.log(`   🧹 ${path.basename(filePath)} - Nettoyage des guillemets...`);
+            console.log(`   🔍 AVANT nettoyage ligne 1: "${firstLine.substring(0, 80)}..."`);
+            console.log(`   🔍 AVANT nettoyage ligne 2: "${secondLine.substring(0, 80)}..."`);
             
             const tempFile = filePath + '.cleaning';
             const writeStream = fs.createWriteStream(tempFile);
@@ -812,7 +814,11 @@ async function nettoyerGuillemetsDVF(filePath) {
                             throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
                         }
                         
+                        // Vérifier le contenu du fichier après nettoyage
+                        const verif = fs.readFileSync(filePath, 'utf8').split('\n').slice(0, 2);
                         console.log(`   ✅ ${count.toLocaleString()} lignes nettoyées - Fichier remplacé`);
+                        console.log(`   🔍 Vérif ligne 1 après nettoyage: "${verif[0].substring(0, 80)}..."`);
+                        console.log(`   🔍 Vérif ligne 2 après nettoyage: "${verif[1].substring(0, 80)}..."`);
                         resolve();
                     } catch (err) {
                         console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}`);
@@ -844,6 +850,11 @@ function normaliserFichierDVF(filePath) {
         }
         
         console.log(`   🔄 Normalisation du fichier ${path.basename(filePath)}...`);
+        
+        // Log du contenu AVANT normalisation
+        const verifAvant = fs.readFileSync(filePath, 'utf8').split('\n').slice(0, 2);
+        console.log(`   🔍 AVANT normalisation ligne 1: "${verifAvant[0].substring(0, 80)}..."`);
+        console.log(`   🔍 AVANT normalisation ligne 2: "${verifAvant[1].substring(0, 80)}..."`);
         
         const separator = detecterSeparateur(filePath);
         const tempFile = filePath + '.tmp';
@@ -944,7 +955,11 @@ function normaliserFichierDVF(filePath) {
                                 throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
                             }
                             
-                            console.log(`   ✅ ${count} lignes normalisées - Fichier remplacé\n`);
+                            // Vérifier le contenu du fichier après normalisation
+                            const verif = fs.readFileSync(filePath, 'utf8').split('\n').slice(0, 2);
+                            console.log(`   ✅ ${count} lignes normalisées - Fichier remplacé`);
+                            console.log(`   🔍 Vérif ligne 1 après normalisation: "${verif[0].substring(0, 80)}..."`);
+                            console.log(`   🔍 Vérif ligne 2 après normalisation: "${verif[1].substring(0, 80)}..."\n`);
                             resolve();
                         } catch (err) {
                             console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}\n`);

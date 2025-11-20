@@ -1,7 +1,10 @@
 /**
- * 📡 ROUTE API : Recherche terrains à bâtir avec filtre viabilisation
+ * 📡 ROUTE API : Recherche terrains à bâtir avec filtre viabilisation + rénovation
  * 
- * Utilise la base terrains_batir.db pour filtrer terrains viabilisés/non-viabilisés
+ * Utilise la base terrains_batir_complet.db avec type_terrain:
+ * - NON_VIABILISE : Achat lotisseur (terrain brut)
+ * - VIABILISE : Lot vendu + construction neuve
+ * - RENOVATION : Biens à rénover
  */
 
 const Database = require('better-sqlite3');
@@ -9,7 +12,7 @@ const path = require('path');
 const fs = require('fs');
 
 const DB_DIR = path.join(__dirname, '..', 'database');
-const DB_PATH = path.join(DB_DIR, 'terrains_batir.db');
+const DB_PATH = path.join(DB_DIR, 'terrains_batir_complet.db');
 
 // Créer le répertoire database s'il n'existe pas
 if (!fs.existsSync(DB_DIR)) {
@@ -50,11 +53,19 @@ module.exports = (req, res) => {
         const monthsBack = parseInt(req.query.months_back) || 36;
         const minSurface = parseFloat(req.query.min_surface) || null;
         const maxSurface = parseFloat(req.query.max_surface) || null;
-        const estViabilise = req.query.est_terrain_viabilise === 'true' ? 1 : 0;
+        const etatBien = req.query.etat_bien || 'neuf'; // neuf, a_renover, gros_travaux
         const limit = parseInt(req.query.limit) || 30;
         
+        // Mapper état bien → type_terrain
+        let typeTerrain;
+        if (etatBien === 'a_renover' || etatBien === 'gros_travaux') {
+            typeTerrain = 'RENOVATION';
+        } else {
+            typeTerrain = 'VIABILISE'; // neuf/bon état = construction neuve
+        }
+        
         console.log('\n[TERRAIN][REQ] ---------------------------------------------------------------');
-        console.log('[TERRAIN][REQ] Params:', { lat, lon, radius, estViabilise, limit });
+        console.log('[TERRAIN][REQ] Params:', { lat, lon, radius, etatBien, typeTerrain, limit });
 
         // Validation
         if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
@@ -84,24 +95,25 @@ module.exports = (req, res) => {
         // Construire la requête SQL
         let query = `
             SELECT 
-                id_parcelle,
+                id,
                 valeur_fonciere,
                 surface_totale,
+                surface_reelle_bati,
                 prix_m2,
                 date_mutation,
                 latitude,
                 longitude,
                 nom_commune,
-                est_terrain_viabilise
+                type_terrain
             FROM terrains_batir
             WHERE latitude BETWEEN ? AND ?
               AND longitude BETWEEN ? AND ?
-              AND est_terrain_viabilise = ?
+              AND type_terrain = ?
               AND valeur_fonciere > 0
               AND prix_m2 BETWEEN 5 AND 5000
         `;
         
-        const params = [minLat, maxLat, minLon, maxLon, estViabilise];
+        const params = [minLat, maxLat, minLon, maxLon, typeTerrain];
         
         // Filtres optionnels de surface
         if (minSurface !== null && minSurface > 0) {
@@ -129,15 +141,17 @@ module.exports = (req, res) => {
             .map(row => {
                 const distance = calculateDistance(lat, lon, row.latitude, row.longitude);
                 return {
-                    id_mutation: `TERRAIN_${row.id_parcelle}`,
+                    id_mutation: `TERRAIN_${row.id}`,
                     valeur_fonciere: row.valeur_fonciere,
                     date_mutation: row.date_mutation,
                     surface_terrain: row.surface_totale,
+                    surface_reelle_bati: row.surface_reelle_bati || 0,
                     prix_m2_terrain: row.prix_m2,
                     latitude: row.latitude,
                     longitude: row.longitude,
                     nom_commune: row.nom_commune,
-                    est_terrain_viabilise: row.est_terrain_viabilise === 1,
+                    type_terrain: row.type_terrain,
+                    est_bien_a_renover: row.type_terrain === 'RENOVATION',
                     distance_meters: Math.round(distance)
                 };
             })
@@ -172,8 +186,9 @@ module.exports = (req, res) => {
             avg_prix_m2: prixM2.length > 0
                 ? Math.round(prixM2.reduce((a, b) => a + b, 0) / prixM2.length)
                 : null,
-            count_with_viabilise: transactions.filter(t => t.est_terrain_viabilise).length,
-            count_without_viabilise: transactions.filter(t => !t.est_terrain_viabilise).length
+            count_viabilise: transactions.filter(t => t.type_terrain === 'VIABILISE').length,
+            count_renovation: transactions.filter(t => t.type_terrain === 'RENOVATION').length,
+            count_non_viabilise: transactions.filter(t => t.type_terrain === 'NON_VIABILISE').length
         };
         
         db.close();
@@ -184,7 +199,8 @@ module.exports = (req, res) => {
             count: transactions.length,
             radius_used: radius,
             filters: {
-                est_terrain_viabilise: estViabilise === 1,
+                etat_bien: etatBien,
+                type_terrain: typeTerrain,
                 months_back: monthsBack,
                 min_surface: minSurface,
                 max_surface: maxSurface

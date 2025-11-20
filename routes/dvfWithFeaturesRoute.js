@@ -54,6 +54,7 @@ module.exports = (req, res) => {
         const classeDPE = req.query.classe_dpe ? req.query.classe_dpe.split(',') : null;
         const avecPiscine = req.query.avec_piscine ? parseInt(req.query.avec_piscine) : null;
         const avecGarage = req.query.avec_garage ? parseInt(req.query.avec_garage) : null;
+        const etatBien = req.query.etat_bien || null; // neuf, a_renover, gros_travaux
         const limit = parseInt(req.query.limit) || 100;
         
         console.log('\n[DVF][REQ] =================================================================');
@@ -68,7 +69,8 @@ module.exports = (req, res) => {
             maxSurface,
             classeDPE,
             avecPiscine,
-            avecGarage
+            avecGarage,
+            etatBien
         });
         
         // Validation

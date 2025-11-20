@@ -899,18 +899,9 @@ function nettoyerGuillemetsDVF(filePath) {
         });
         
         rl.on('close', () => {
-            // Vérifier si les lignes sont ENTIÈREMENT entre guillemets (problème DVF 2021+)
-            // Format problématique : "id_mutation,date_mutation,..."
-            // MEILLEURE DÉTECTION : ligne commence par ", finit par ", et contient beaucoup de virgules
-            const firstLineHasQuoteProblem = firstLine.startsWith('"') && 
-                                            firstLine.endsWith('"') &&
-                                            (firstLine.match(/,/g) || []).length > 10;
-            
-            const secondLineHasQuoteProblem = secondLine.startsWith('"') && 
-                                             secondLine.endsWith('"') &&
-                                             (secondLine.match(/,/g) || []).length > 10;
-            
-            const needsCleaning = firstLineHasQuoteProblem && secondLineHasQuoteProblem;
+            // Vérifier si le fichier contient des guillemets (solution simple)
+            // On nettoie si on détecte des guillemets dans les 2 premières lignes
+            const needsCleaning = firstLine.includes('"') && secondLine.includes('"');
             
             if (!needsCleaning) {
                 resolve();
@@ -929,11 +920,8 @@ function nettoyerGuillemetsDVF(filePath) {
             let count = 0;
             
             rlFull.on('line', (line) => {
-                // Enlever les guillemets au début et à la fin
-                let cleanedLine = line;
-                if (line.startsWith('"') && line.endsWith('"')) {
-                    cleanedLine = line.substring(1, line.length - 1);
-                }
+                // Enlever TOUS les guillemets (solution simple et robuste)
+                const cleanedLine = line.replace(/"/g, '');
                 
                 writeStream.write(cleanedLine + '\n');
                 count++;

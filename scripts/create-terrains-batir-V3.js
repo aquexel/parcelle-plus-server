@@ -45,7 +45,7 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
-const { Transform } = require('stream');
+const { Readable } = require('stream');
 
 // Helper pour afficher la taille de la DB
 function getDbSizeMB(dbPath) {
@@ -1049,28 +1049,50 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 return '';
             }
             
-            // 🔧 Transform stream pour nettoyer le header entre guillemets
+            // 🔧 Lire et nettoyer la première ligne (header) manuellement
             // Problème : DVF 2021+ a un header comme : "id_mutation,date_mutation,..."
-            // Solution : Enlever les guillemets autour de la première ligne uniquement
-            let isFirstLine = true;
-            const cleanHeaderTransform = new Transform({
-                transform(chunk, encoding, callback) {
-                    if (isFirstLine) {
-                        let line = chunk.toString();
-                        // Si la ligne commence par " et finit par " (ou "\n ou "\r\n), enlever les guillemets
-                        if (line.startsWith('"') && (line.endsWith('"\n') || line.endsWith('"\r\n') || line.endsWith('"'))) {
-                            line = line.replace(/^"/, '').replace(/"(\r?\n)?$/, '$1');
-                        }
-                        isFirstLine = false;
-                        callback(null, line);
-                    } else {
-                        callback(null, chunk);
-                    }
+            // Solution : Lire la première ligne, enlever les guillemets, puis streamer le reste
+            const fd = fs.openSync(filePath, 'r');
+            const buffer = Buffer.alloc(2000); // Lire les premiers 2000 bytes (largement suffisant pour le header)
+            const bytesRead = fs.readSync(fd, buffer, 0, 2000, 0);
+            const firstChunk = buffer.toString('utf8', 0, bytesRead);
+            const firstLineEnd = firstChunk.indexOf('\n');
+            
+            if (firstLineEnd === -1) {
+                console.log(`      ⚠️  Impossible de trouver la fin de la première ligne !`);
+                fs.closeSync(fd);
+                return;
+            }
+            
+            let firstLine = firstChunk.substring(0, firstLineEnd + 1); // Inclure le \n
+            const restStartPos = firstLineEnd + 1;
+            
+            // Nettoyer la première ligne si elle est entre guillemets
+            if (firstLine.startsWith('"') && firstLine.trim().endsWith('"')) {
+                firstLine = firstLine.trim().replace(/^"/, '').replace(/"$/, '') + '\n';
+                console.log(`      🧹 Header nettoyé (guillemets enlevés)`);
+            }
+            
+            fs.closeSync(fd);
+            
+            // Créer un Readable stream composite : première ligne nettoyée + reste du fichier
+            const compositeStream = new Readable({
+                read() {
+                    // Émettre la première ligne nettoyée
+                    this.push(firstLine);
+                    
+                    // Puis streamer le reste du fichier
+                    const fileStream = fs.createReadStream(filePath, { start: restStartPos });
+                    fileStream.on('data', (chunk) => this.push(chunk));
+                    fileStream.on('end', () => this.push(null));
+                    fileStream.on('error', (err) => this.destroy(err));
+                    
+                    // Ne lire qu'une seule fois
+                    this.read = () => {};
                 }
             });
             
-            fs.createReadStream(filePath)
-                .pipe(cleanHeaderTransform)
+            compositeStream
                 .pipe(csv())
                 .on('data', (row) => {
                     totalRows++;

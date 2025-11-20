@@ -874,6 +874,84 @@ function detecterSeparateurPA(filePath) {
     }
 }
 
+// 🧹 Fonction pour nettoyer les guillemets des DVF 2021+
+function nettoyerGuillemetsDVF(filePath) {
+    const readline = require('readline');
+    
+    // Lire les 2 premières lignes pour détecter le problème
+    const rl = readline.createInterface({
+        input: fs.createReadStream(filePath),
+        crlfDelay: Infinity
+    });
+    
+    let firstLine = '';
+    let secondLine = '';
+    let lineCount = 0;
+    
+    return new Promise((resolve, reject) => {
+        rl.on('line', (line) => {
+            if (lineCount === 0) firstLine = line;
+            else if (lineCount === 1) {
+                secondLine = line;
+                rl.close();
+            }
+            lineCount++;
+        });
+        
+        rl.on('close', () => {
+            // Vérifier si les lignes sont entre guillemets
+            const needsCleaning = firstLine.startsWith('"') && firstLine.endsWith('"') &&
+                                secondLine.startsWith('"') && secondLine.endsWith('"');
+            
+            if (!needsCleaning) {
+                resolve();
+                return;
+            }
+            
+            console.log(`      🧹 Nettoyage des guillemets...`);
+            
+            const tempFile = filePath + '.cleaning';
+            const writeStream = fs.createWriteStream(tempFile);
+            const rlFull = readline.createInterface({
+                input: fs.createReadStream(filePath),
+                crlfDelay: Infinity
+            });
+            
+            let count = 0;
+            
+            rlFull.on('line', (line) => {
+                // Enlever les guillemets au début et à la fin
+                let cleanedLine = line;
+                if (line.startsWith('"') && line.endsWith('"')) {
+                    cleanedLine = line.substring(1, line.length - 1);
+                }
+                
+                writeStream.write(cleanedLine + '\n');
+                count++;
+            });
+            
+            rlFull.on('close', () => {
+                writeStream.end();
+                
+                writeStream.on('finish', () => {
+                    // Remplacer le fichier original
+                    fs.unlinkSync(filePath);
+                    fs.renameSync(tempFile, filePath);
+                    
+                    console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
+                    resolve();
+                });
+                
+                writeStream.on('error', reject);
+            });
+            
+            rlFull.on('error', reject);
+        });
+        
+        rl.on('error', reject);
+    });
+}
+
 // Fonction pour charger tous les CSV depuis dvf_data/
 // departementFiltre: code département à charger (ex: "40"), ou null pour tous
 function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
@@ -923,6 +1001,14 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             
             const { path: filePath, name, year } = fichiers[index];
             console.log(`   📄 Traitement ${index + 1}/${fichiers.length} : ${name} (${year})...`);
+            
+            // 🧹 Nettoyer les guillemets (DVF 2021+)
+            try {
+                await nettoyerGuillemetsDVF(filePath);
+            } catch (err) {
+                console.error(`      ❌ Erreur nettoyage guillemets: ${err.message}`);
+            }
+            
             console.log(`      🔍 DEBUG: Mémoire au démarrage: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
             
             // 🔥 NOUVELLE SOLUTION OOM : Utiliser le DISQUE, pas la RAM
@@ -1051,8 +1137,11 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // 📝 Note : Les fichiers DVF sont maintenant pré-nettoyés par create-terrains-batir-complet.js
             // (enlève les guillemets des DVF 2021+)
             
+            const separateurDVF = detecterSeparateur(filePath);
+            console.log(`\n      🔧 Séparateur détecté: "${separateurDVF}"\n`);
+            
             fs.createReadStream(filePath)
-                .pipe(csv())
+                .pipe(csv({ separator: separateurDVF, skipLinesWithError: true }))
                 .on('data', (row) => {
                     totalRows++;
                     

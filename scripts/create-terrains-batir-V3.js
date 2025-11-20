@@ -45,6 +45,7 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
+const { Transform } = require('stream');
 
 // Helper pour afficher la taille de la DB
 function getDbSizeMB(dbPath) {
@@ -1048,7 +1049,28 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 return '';
             }
             
+            // 🔧 Transform stream pour nettoyer le header entre guillemets
+            // Problème : DVF 2021+ a un header comme : "id_mutation,date_mutation,..."
+            // Solution : Enlever les guillemets autour de la première ligne uniquement
+            let isFirstLine = true;
+            const cleanHeaderTransform = new Transform({
+                transform(chunk, encoding, callback) {
+                    if (isFirstLine) {
+                        let line = chunk.toString();
+                        // Si la ligne commence par " et finit par " (ou "\n ou "\r\n), enlever les guillemets
+                        if (line.startsWith('"') && (line.endsWith('"\n') || line.endsWith('"\r\n') || line.endsWith('"'))) {
+                            line = line.replace(/^"/, '').replace(/"(\r?\n)?$/, '$1');
+                        }
+                        isFirstLine = false;
+                        callback(null, line);
+                    } else {
+                        callback(null, chunk);
+                    }
+                }
+            });
+            
             fs.createReadStream(filePath)
+                .pipe(cleanHeaderTransform)
                 .pipe(csv())
                 .on('data', (row) => {
                     totalRows++;

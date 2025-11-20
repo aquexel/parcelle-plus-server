@@ -814,12 +814,32 @@ async function nettoyerGuillemetsDVF(filePath) {
                             throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
                         }
                         
-                        // Vérifier le contenu du fichier après nettoyage
-                        const verif = fs.readFileSync(filePath, 'utf8').split('\n').slice(0, 2);
-                        console.log(`   ✅ ${count.toLocaleString()} lignes nettoyées - Fichier remplacé`);
-                        console.log(`   🔍 Vérif ligne 1 après nettoyage: "${verif[0].substring(0, 80)}..."`);
-                        console.log(`   🔍 Vérif ligne 2 après nettoyage: "${verif[1].substring(0, 80)}..."`);
-                        resolve();
+                        // Vérifier le contenu du fichier après nettoyage (sans charger tout le fichier)
+                        const rlVerif = require('readline').createInterface({
+                            input: fs.createReadStream(filePath),
+                            crlfDelay: Infinity
+                        });
+                        
+                        const verifLines = [];
+                        rlVerif.on('line', (line) => {
+                            if (verifLines.length < 2) {
+                                verifLines.push(line);
+                            }
+                            if (verifLines.length === 2) {
+                                rlVerif.close();
+                            }
+                        });
+                        
+                        rlVerif.on('close', () => {
+                            console.log(`   ✅ ${count.toLocaleString()} lignes nettoyées - Fichier remplacé`);
+                            if (verifLines.length >= 2) {
+                                console.log(`   🔍 Vérif ligne 1 après nettoyage: "${verifLines[0].substring(0, 80)}..."`);
+                                console.log(`   🔍 Vérif ligne 2 après nettoyage: "${verifLines[1].substring(0, 80)}..."`);
+                            }
+                            resolve();
+                        });
+                        
+                        rlVerif.on('error', reject);
                     } catch (err) {
                         console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}`);
                         reject(err);
@@ -851,10 +871,38 @@ function normaliserFichierDVF(filePath) {
         
         console.log(`   🔄 Normalisation du fichier ${path.basename(filePath)}...`);
         
-        // Log du contenu AVANT normalisation
-        const verifAvant = fs.readFileSync(filePath, 'utf8').split('\n').slice(0, 2);
-        console.log(`   🔍 AVANT normalisation ligne 1: "${verifAvant[0].substring(0, 80)}..."`);
-        console.log(`   🔍 AVANT normalisation ligne 2: "${verifAvant[1].substring(0, 80)}..."`);
+        // Log du contenu AVANT normalisation (sans charger tout le fichier)
+        const rlAvant = require('readline').createInterface({
+            input: fs.createReadStream(filePath),
+            crlfDelay: Infinity
+        });
+        
+        const avantLines = [];
+        let lineCountAvant = 0;
+        
+        rlAvant.on('line', (line) => {
+            if (lineCountAvant < 2) {
+                avantLines.push(line);
+                lineCountAvant++;
+            }
+            if (lineCountAvant === 2) {
+                rlAvant.close();
+            }
+        });
+        
+        return new Promise((resolvePrelim) => {
+            rlAvant.on('close', () => {
+                if (avantLines.length >= 2) {
+                    console.log(`   🔍 AVANT normalisation ligne 1: "${avantLines[0].substring(0, 80)}..."`);
+                    console.log(`   🔍 AVANT normalisation ligne 2: "${avantLines[1].substring(0, 80)}..."`);
+                }
+                resolvePrelim();
+            });
+            
+            rlAvant.on('error', () => {
+                resolvePrelim(); // Continue même en cas d'erreur
+            });
+        }).then(() => {
         
         const separator = detecterSeparateur(filePath);
         const tempFile = filePath + '.tmp';
@@ -955,12 +1003,32 @@ function normaliserFichierDVF(filePath) {
                                 throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
                             }
                             
-                            // Vérifier le contenu du fichier après normalisation
-                            const verif = fs.readFileSync(filePath, 'utf8').split('\n').slice(0, 2);
-                            console.log(`   ✅ ${count} lignes normalisées - Fichier remplacé`);
-                            console.log(`   🔍 Vérif ligne 1 après normalisation: "${verif[0].substring(0, 80)}..."`);
-                            console.log(`   🔍 Vérif ligne 2 après normalisation: "${verif[1].substring(0, 80)}..."\n`);
-                            resolve();
+                            // Vérifier le contenu du fichier après normalisation (sans charger tout le fichier)
+                            const rlVerifNorm = require('readline').createInterface({
+                                input: fs.createReadStream(filePath),
+                                crlfDelay: Infinity
+                            });
+                            
+                            const verifNormLines = [];
+                            rlVerifNorm.on('line', (line) => {
+                                if (verifNormLines.length < 2) {
+                                    verifNormLines.push(line);
+                                }
+                                if (verifNormLines.length === 2) {
+                                    rlVerifNorm.close();
+                                }
+                            });
+                            
+                            rlVerifNorm.on('close', () => {
+                                console.log(`   ✅ ${count} lignes normalisées - Fichier remplacé`);
+                                if (verifNormLines.length >= 2) {
+                                    console.log(`   🔍 Vérif ligne 1 après normalisation: "${verifNormLines[0].substring(0, 80)}..."`);
+                                    console.log(`   🔍 Vérif ligne 2 après normalisation: "${verifNormLines[1].substring(0, 80)}..."\n`);
+                                }
+                                resolve();
+                            });
+                            
+                            rlVerifNorm.on('error', reject);
                         } catch (err) {
                             console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}\n`);
                             reject(err);
@@ -980,6 +1048,7 @@ function normaliserFichierDVF(filePath) {
                     reject(err);
                 });
         }).catch(reject);
+        }); // Fermeture du .then()
     });
 }
 

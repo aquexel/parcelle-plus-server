@@ -745,14 +745,16 @@ async function nettoyerGuillemetsDVF(filePath) {
             // Format OK : id_mutation,date_mutation,...
             // Format OK aussi : id_mutation,"rue avec, virgule",latitude
             
-            // Le vrai problème : la première ligne (header) commence et finit par " ET ne contient pas d'autres "
+            // MEILLEURE DÉTECTION : 
+            // Si la ligne commence par " et contient beaucoup de virgules MAIS qu'on ne peut pas splitter correctement
+            // alors c'est que toute la ligne est entre guillemets
             const firstLineHasQuoteProblem = firstLine.startsWith('"') && 
-                                            firstLine.endsWith('"') && 
-                                            firstLine.indexOf('"', 1) === firstLine.length - 1; // Seulement 2 guillemets (début + fin)
+                                            firstLine.endsWith('"') &&
+                                            (firstLine.match(/,/g) || []).length > 10; // Beaucoup de virgules
             
             const secondLineHasQuoteProblem = secondLine.startsWith('"') && 
-                                             secondLine.endsWith('"') && 
-                                             secondLine.indexOf('"', 1) === secondLine.length - 1;
+                                             secondLine.endsWith('"') &&
+                                             (secondLine.match(/,/g) || []).length > 10;
             
             const needsCleaning = firstLineHasQuoteProblem && secondLineHasQuoteProblem;
             

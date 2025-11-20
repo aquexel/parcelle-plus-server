@@ -899,9 +899,18 @@ function nettoyerGuillemetsDVF(filePath) {
         });
         
         rl.on('close', () => {
-            // Vérifier si les lignes sont entre guillemets
-            const needsCleaning = firstLine.startsWith('"') && firstLine.endsWith('"') &&
-                                secondLine.startsWith('"') && secondLine.endsWith('"');
+            // Vérifier si les lignes sont ENTIÈREMENT entre guillemets (problème DVF 2021+)
+            // Format problématique : "id_mutation,date_mutation,..."
+            // MEILLEURE DÉTECTION : ligne commence par ", finit par ", et contient beaucoup de virgules
+            const firstLineHasQuoteProblem = firstLine.startsWith('"') && 
+                                            firstLine.endsWith('"') &&
+                                            (firstLine.match(/,/g) || []).length > 10;
+            
+            const secondLineHasQuoteProblem = secondLine.startsWith('"') && 
+                                             secondLine.endsWith('"') &&
+                                             (secondLine.match(/,/g) || []).length > 10;
+            
+            const needsCleaning = firstLineHasQuoteProblem && secondLineHasQuoteProblem;
             
             if (!needsCleaning) {
                 resolve();

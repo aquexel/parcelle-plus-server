@@ -713,6 +713,91 @@ function estDejaNormalise(filePath) {
     }
 }
 
+// 🧹 Fonction pour nettoyer les guillemets des DVF 2021+
+// Problème : DVF 2021-2025 ont chaque ligne entre guillemets : "id_mutation,date_mutation,..."
+// Solution : Enlever les guillemets au début et à la fin de chaque ligne
+async function nettoyerGuillemetsDVF(filePath) {
+    return new Promise((resolve, reject) => {
+        const readline = require('readline');
+        
+        // Lire les 2 premières lignes pour détecter le problème
+        const rl = readline.createInterface({
+            input: fs.createReadStream(filePath),
+            crlfDelay: Infinity
+        });
+        
+        let firstLine = '';
+        let secondLine = '';
+        let lineCount = 0;
+        
+        rl.on('line', (line) => {
+            if (lineCount === 0) firstLine = line;
+            else if (lineCount === 1) {
+                secondLine = line;
+                rl.close();
+            }
+            lineCount++;
+        });
+        
+        rl.on('close', () => {
+            // Vérifier si les lignes sont entre guillemets
+            const needsCleaning = firstLine.startsWith('"') && firstLine.endsWith('"') &&
+                                secondLine.startsWith('"') && secondLine.endsWith('"');
+            
+            if (!needsCleaning) {
+                console.log(`   ✅ ${path.basename(filePath)} - Pas de guillemets à nettoyer`);
+                resolve();
+                return;
+            }
+            
+            console.log(`   🧹 ${path.basename(filePath)} - Nettoyage des guillemets...`);
+            
+            const tempFile = filePath + '.cleaning';
+            const writeStream = fs.createWriteStream(tempFile);
+            const rlFull = readline.createInterface({
+                input: fs.createReadStream(filePath),
+                crlfDelay: Infinity
+            });
+            
+            let count = 0;
+            
+            rlFull.on('line', (line) => {
+                // Enlever les guillemets au début et à la fin
+                let cleanedLine = line;
+                if (line.startsWith('"') && line.endsWith('"')) {
+                    cleanedLine = line.substring(1, line.length - 1);
+                }
+                
+                writeStream.write(cleanedLine + '\n');
+                count++;
+                
+                if (count % 500000 === 0) {
+                    process.stdout.write(`\r      → ${count.toLocaleString()} lignes nettoyées...`);
+                }
+            });
+            
+            rlFull.on('close', () => {
+                writeStream.end();
+                
+                writeStream.on('finish', () => {
+                    // Remplacer le fichier original
+                    fs.unlinkSync(filePath);
+                    fs.renameSync(tempFile, filePath);
+                    
+                    console.log(`\r   ✅ ${count.toLocaleString()} lignes nettoyées    `);
+                    resolve();
+                });
+                
+                writeStream.on('error', reject);
+            });
+            
+            rlFull.on('error', reject);
+        });
+        
+        rl.on('error', reject);
+    });
+}
+
 // Fonction pour normaliser un fichier DVF (convertir au format uniforme) - Version streaming optimisée
 function normaliserFichierDVF(filePath) {
     return new Promise((resolve, reject) => {
@@ -847,6 +932,10 @@ async function normaliserTousLesDVF() {
     
     for (const fichier of fichiers) {
         try {
+            // 🧹 Étape 1 : Nettoyer les guillemets (DVF 2021+)
+            await nettoyerGuillemetsDVF(fichier);
+            
+            // 🔄 Étape 2 : Normaliser le format
             await normaliserFichierDVF(fichier);
         } catch (err) {
             console.error(`   ❌ Erreur normalisation ${path.basename(fichier)}: ${err.message}\n`);
@@ -1990,8 +2079,8 @@ function fusionnerBases() {
             surface_reelle_bati, 
             prix_m2,
             date_mutation, 
-            NULL as latitude, 
-            NULL as longitude, 
+            latitude, 
+            longitude, 
             nom_commune,
             type_terrain
         FROM db_pc.terrains_pc_sans_pa;

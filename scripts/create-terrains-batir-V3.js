@@ -45,7 +45,6 @@ const path = require('path');
 const csv = require('csv-parser');
 const Database = require('better-sqlite3');
 const { execSync } = require('child_process');
-const { Readable } = require('stream');
 
 // Helper pour afficher la taille de la DB
 function getDbSizeMB(dbPath) {
@@ -1049,50 +1048,10 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 return '';
             }
             
-            // 🔧 Lire et nettoyer la première ligne (header) manuellement
-            // Problème : DVF 2021+ a un header comme : "id_mutation,date_mutation,..."
-            // Solution : Lire la première ligne, enlever les guillemets, puis streamer le reste
-            const fd = fs.openSync(filePath, 'r');
-            const buffer = Buffer.alloc(2000); // Lire les premiers 2000 bytes (largement suffisant pour le header)
-            const bytesRead = fs.readSync(fd, buffer, 0, 2000, 0);
-            const firstChunk = buffer.toString('utf8', 0, bytesRead);
-            const firstLineEnd = firstChunk.indexOf('\n');
+            // 📝 Note : Les fichiers DVF sont maintenant pré-nettoyés par create-terrains-batir-complet.js
+            // (enlève les guillemets des DVF 2021+)
             
-            if (firstLineEnd === -1) {
-                console.log(`      ⚠️  Impossible de trouver la fin de la première ligne !`);
-                fs.closeSync(fd);
-                return;
-            }
-            
-            let firstLine = firstChunk.substring(0, firstLineEnd + 1); // Inclure le \n
-            const restStartPos = firstLineEnd + 1;
-            
-            // Nettoyer la première ligne si elle est entre guillemets
-            if (firstLine.startsWith('"') && firstLine.trim().endsWith('"')) {
-                firstLine = firstLine.trim().replace(/^"/, '').replace(/"$/, '') + '\n';
-                console.log(`      🧹 Header nettoyé (guillemets enlevés)`);
-            }
-            
-            fs.closeSync(fd);
-            
-            // Créer un Readable stream composite : première ligne nettoyée + reste du fichier
-            const compositeStream = new Readable({
-                read() {
-                    // Émettre la première ligne nettoyée
-                    this.push(firstLine);
-                    
-                    // Puis streamer le reste du fichier
-                    const fileStream = fs.createReadStream(filePath, { start: restStartPos });
-                    fileStream.on('data', (chunk) => this.push(chunk));
-                    fileStream.on('end', () => this.push(null));
-                    fileStream.on('error', (err) => this.destroy(err));
-                    
-                    // Ne lire qu'une seule fois
-                    this.read = () => {};
-                }
-            });
-            
-            compositeStream
+            fs.createReadStream(filePath)
                 .pipe(csv())
                 .on('data', (row) => {
                     totalRows++;

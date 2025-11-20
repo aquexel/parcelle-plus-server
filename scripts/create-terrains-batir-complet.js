@@ -740,9 +740,21 @@ async function nettoyerGuillemetsDVF(filePath) {
         });
         
         rl.on('close', () => {
-            // Vérifier si les lignes sont entre guillemets
-            const needsCleaning = firstLine.startsWith('"') && firstLine.endsWith('"') &&
-                                secondLine.startsWith('"') && secondLine.endsWith('"');
+            // Vérifier si les lignes sont ENTIÈREMENT entre guillemets (problème DVF 2021+)
+            // Format problématique : "id_mutation,date_mutation,..."
+            // Format OK : id_mutation,date_mutation,...
+            // Format OK aussi : id_mutation,"rue avec, virgule",latitude
+            
+            // Le vrai problème : la première ligne (header) commence et finit par " ET ne contient pas d'autres "
+            const firstLineHasQuoteProblem = firstLine.startsWith('"') && 
+                                            firstLine.endsWith('"') && 
+                                            firstLine.indexOf('"', 1) === firstLine.length - 1; // Seulement 2 guillemets (début + fin)
+            
+            const secondLineHasQuoteProblem = secondLine.startsWith('"') && 
+                                             secondLine.endsWith('"') && 
+                                             secondLine.indexOf('"', 1) === secondLine.length - 1;
+            
+            const needsCleaning = firstLineHasQuoteProblem && secondLineHasQuoteProblem;
             
             if (!needsCleaning) {
                 console.log(`   ✅ ${path.basename(filePath)} - Pas de guillemets à nettoyer`);
@@ -780,15 +792,38 @@ async function nettoyerGuillemetsDVF(filePath) {
                 writeStream.end();
                 
                 writeStream.on('finish', () => {
-                    // Remplacer le fichier original
-                    fs.unlinkSync(filePath);
-                    fs.renameSync(tempFile, filePath);
-                    
-                    console.log(`\r   ✅ ${count.toLocaleString()} lignes nettoyées    `);
-                    resolve();
+                    try {
+                        // Vérifier que le fichier temporaire existe
+                        if (!fs.existsSync(tempFile)) {
+                            throw new Error(`Fichier temporaire ${tempFile} non trouvé`);
+                        }
+                        
+                        const tempSize = fs.statSync(tempFile).size;
+                        const origSize = fs.statSync(filePath).size;
+                        
+                        console.log(`\r   📊 Remplacement: ${origSize} bytes → ${tempSize} bytes`);
+                        
+                        // Remplacer le fichier original
+                        fs.unlinkSync(filePath);
+                        fs.renameSync(tempFile, filePath);
+                        
+                        // Vérifier que le remplacement a réussi
+                        if (!fs.existsSync(filePath)) {
+                            throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
+                        }
+                        
+                        console.log(`   ✅ ${count.toLocaleString()} lignes nettoyées - Fichier remplacé`);
+                        resolve();
+                    } catch (err) {
+                        console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}`);
+                        reject(err);
+                    }
                 });
                 
-                writeStream.on('error', reject);
+                writeStream.on('error', (err) => {
+                    console.error(`\n   ❌ Erreur écriture: ${err.message}`);
+                    reject(err);
+                });
             });
             
             rlFull.on('error', reject);
@@ -887,16 +922,40 @@ function normaliserFichierDVF(filePath) {
                     writeStream.end();
                     
                     writeStream.on('finish', () => {
-                        if (fs.existsSync(filePath)) {
-                            fs.unlinkSync(filePath);
+                        try {
+                            // Vérifier que le fichier temporaire existe
+                            if (!fs.existsSync(tempFile)) {
+                                throw new Error(`Fichier temporaire ${tempFile} non trouvé`);
+                            }
+                            
+                            const tempSize = fs.statSync(tempFile).size;
+                            const origSize = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+                            
+                            console.log(`\n   📊 Remplacement: ${origSize} bytes → ${tempSize} bytes`);
+                            
+                            // Remplacer le fichier original
+                            if (fs.existsSync(filePath)) {
+                                fs.unlinkSync(filePath);
+                            }
+                            fs.renameSync(tempFile, filePath);
+                            
+                            // Vérifier que le remplacement a réussi
+                            if (!fs.existsSync(filePath)) {
+                                throw new Error(`Échec du remplacement de ${path.basename(filePath)}`);
+                            }
+                            
+                            console.log(`   ✅ ${count} lignes normalisées - Fichier remplacé\n`);
+                            resolve();
+                        } catch (err) {
+                            console.error(`\n   ❌ Erreur remplacement fichier: ${err.message}\n`);
+                            reject(err);
                         }
-                        fs.renameSync(tempFile, filePath);
-                        
-                        console.log(`\n   ✅ ${count} lignes normalisées (format uniforme: virgule, colonnes en minuscules)\n`);
-                        resolve();
                     });
                     
-                    writeStream.on('error', reject);
+                    writeStream.on('error', (err) => {
+                        console.error(`\n   ❌ Erreur écriture: ${err.message}\n`);
+                        reject(err);
+                    });
                 })
                 .on('error', (err) => {
                     writeStream.destroy();

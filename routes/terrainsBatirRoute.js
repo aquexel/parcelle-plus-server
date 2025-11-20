@@ -53,19 +53,26 @@ module.exports = (req, res) => {
         const monthsBack = parseInt(req.query.months_back) || 36;
         const minSurface = parseFloat(req.query.min_surface) || null;
         const maxSurface = parseFloat(req.query.max_surface) || null;
-        const etatBien = req.query.etat_bien || 'neuf'; // neuf, a_renover, gros_travaux
+        const estTerrainViabilise = req.query.est_terrain_viabilise === 'true';
+        const etatBien = req.query.etat_bien || 'neuf'; // neuf, a_renover, gros_travaux, non_viabilise
         const limit = parseInt(req.query.limit) || 30;
         
-        // Mapper état bien → type_terrain
+        // Mapper viabilisation + état bien → type_terrain
         let typeTerrain;
-        if (etatBien === 'a_renover' || etatBien === 'gros_travaux') {
-            typeTerrain = 'RENOVATION';
+        if (!estTerrainViabilise) {
+            // NON-VIABILISÉ : terrain avant PA (achat lotisseur)
+            typeTerrain = 'NON_VIABILISE';
         } else {
-            typeTerrain = 'VIABILISE'; // neuf/bon état = construction neuve
+            // VIABILISÉ : distinguer construction neuve vs rénovation
+            if (etatBien === 'a_renover' || etatBien === 'gros_travaux') {
+                typeTerrain = 'RENOVATION';
+            } else {
+                typeTerrain = 'VIABILISE'; // neuf/bon état = construction neuve
+            }
         }
         
         console.log('\n[TERRAIN][REQ] ---------------------------------------------------------------');
-        console.log('[TERRAIN][REQ] Params:', { lat, lon, radius, etatBien, typeTerrain, limit });
+        console.log('[TERRAIN][REQ] Params:', { lat, lon, radius, estTerrainViabilise, etatBien, typeTerrain, limit });
 
         // Validation
         if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
@@ -199,6 +206,7 @@ module.exports = (req, res) => {
             count: transactions.length,
             radius_used: radius,
             filters: {
+                est_terrain_viabilise: estTerrainViabilise,
                 etat_bien: etatBien,
                 type_terrain: typeTerrain,
                 months_back: monthsBack,

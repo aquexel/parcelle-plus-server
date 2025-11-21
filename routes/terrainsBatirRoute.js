@@ -149,15 +149,19 @@ module.exports = (req, res) => {
                 const distance = calculateDistance(lat, lon, row.latitude, row.longitude);
                 return {
                     id_mutation: `TERRAIN_${row.id}`,
+                    id_parcelle: `TERRAIN_${row.id}`, // Utiliser id_mutation comme id_parcelle pour compatibilité
                     valeur_fonciere: row.valeur_fonciere,
                     date_mutation: row.date_mutation,
                     surface_terrain: row.surface_totale,
+                    surface_totale: row.surface_totale, // Ajouter pour compatibilité
                     surface_reelle_bati: row.surface_reelle_bati || 0,
                     prix_m2_terrain: row.prix_m2,
+                    prix_m2: row.prix_m2, // Ajouter pour compatibilité
                     latitude: row.latitude,
                     longitude: row.longitude,
                     nom_commune: row.nom_commune,
                     type_terrain: row.type_terrain,
+                    est_terrain_viabilise: row.type_terrain === 'VIABILISE', // Ajouter pour compatibilité
                     est_bien_a_renover: row.type_terrain === 'RENOVATION',
                     distance_meters: Math.round(distance)
                 };
@@ -170,13 +174,13 @@ module.exports = (req, res) => {
         console.log(`[TERRAIN][RESP] ${transactions.length} terrains retournés en ${durationMs} ms`);
         if (transactions.length > 0) {
             const preview = transactions.slice(0, 3).map(t => ({
-                id_parcelle: t.id_parcelle,
-                prix_m2: t.prix_m2,
+                id_mutation: t.id_mutation,
+                prix_m2: t.prix_m2_terrain,
                 valeur_fonciere: t.valeur_fonciere,
-                surface_totale: t.surface_totale,
+                surface_totale: t.surface_terrain,
                 distance_m: t.distance_meters,
-                est_viabilise: t.est_terrain_viabilise,
-                type_permis: t.type_permis,
+                est_viabilise: t.type_terrain === 'VIABILISE',
+                type_terrain: t.type_terrain,
                 nom_commune: t.nom_commune
             }));
             console.table(preview);

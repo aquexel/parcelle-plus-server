@@ -56,12 +56,14 @@ function getDbSizeMB(dbPath) {
     }
 }
 
-let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
+let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir_dept40.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
-// Plus de filtre département - France entière
+// FILTRE DÉPARTEMENT 40 (Landes) - ANALYSE UNIQUEMENT
+const DEPARTEMENT_FILTRE = '40';
 const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)
 
-console.log('🏗️  === CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 ===\n');
+console.log('🏗️  === CRÉATION BASE TERRAINS À BÂTIR - VERSION 3 - DÉPARTEMENT 40 ===\n');
+console.log(`📌 FILTRE ACTIVÉ : Département ${DEPARTEMENT_FILTRE} (Landes) uniquement\n`);
 
 // ===== DÉBUT DU SCRIPT =====
 
@@ -80,6 +82,108 @@ function verifierEspaceDisque(chemin) {
         // Si df échoue, essayer une autre méthode ou retourner null
         console.log('⚠️  Impossible de vérifier l\'espace disque, continuation...');
         return null;
+    }
+}
+
+function creerTableFinale(db) {
+    try {
+        console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
+        
+        // ✅ Réactiver le WAL MAINTENANT (pour la table finale uniquement)
+        console.log('   🔧 Réactivation du mode WAL pour la table finale...');
+        db.pragma('journal_mode = WAL');
+        
+        db.exec(`
+            CREATE TABLE terrains_batir (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                valeur_fonciere REAL,
+                surface_totale REAL,
+                surface_reelle_bati REAL,
+                prix_m2 REAL,
+                date_mutation TEXT,
+                latitude REAL,
+                longitude REAL,
+                nom_commune TEXT,
+                type_terrain TEXT,
+                id_pa TEXT
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_coords ON terrains_batir(latitude, longitude);
+            CREATE INDEX IF NOT EXISTS idx_date ON terrains_batir(date_mutation);
+            CREATE INDEX IF NOT EXISTS idx_type_terrain ON terrains_batir(type_terrain);
+            CREATE INDEX IF NOT EXISTS idx_commune ON terrains_batir(nom_commune);
+            CREATE INDEX IF NOT EXISTS idx_pa ON terrains_batir(id_pa);
+        `);
+        
+        // Copier les données en AGRÉGEANT par mutation
+        // FILTRE 1 : Ne garder QUE les transactions rattachées à un PA
+        // FILTRE 2 : Exclure les transactions NON géolocalisées ⚠️
+        // IMPORTANT : Une mutation = plusieurs parcelles → AGRÉGER !
+        db.exec(`
+            INSERT INTO terrains_batir (
+                valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
+                date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa
+            )
+            SELECT 
+                MAX(valeur_fonciere) as valeur_fonciere,  -- Valeur UNIQUE (même pour toutes les parcelles)
+                SUM(surface_totale) as surface_totale,    -- SOMME des surfaces
+                SUM(surface_reelle_bati) as surface_reelle_bati,  -- SOMME du bâti
+                MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,  -- Recalculer le prix/m²
+                MIN(date_mutation) as date_mutation,      -- Date la plus ancienne
+                AVG(latitude) as latitude,                 -- Moyenne des coordonnées GPS
+                AVG(longitude) as longitude,               -- Moyenne des coordonnées GPS
+                MAX(nom_commune) as nom_commune,
+                CASE 
+                    WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
+                    WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
+                    ELSE NULL
+                END as type_terrain,
+                id_pa
+            FROM terrains_batir_temp
+            WHERE id_pa IS NOT NULL
+            GROUP BY id_mutation, est_terrain_viabilise, id_pa;
+        `);
+        
+        // Checkpoint après INSERT massif
+        try {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+        } catch (checkpointErr) {
+            // Ignorer
+        }
+        
+        // Supprimer la table temporaire
+        db.exec(`DROP TABLE terrains_batir_temp;`);
+        
+        // Checkpoint final pour nettoyer le WAL après toutes les opérations
+        try {
+            db.pragma('wal_checkpoint(TRUNCATE)');
+            console.log('🧹 Checkpoint WAL final effectué\n');
+        } catch (checkpointErr) {
+            // Ignorer les erreurs de checkpoint
+        }
+        
+        const finalStats = db.prepare(`
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN type_terrain = 'VIABILISE' THEN 1 ELSE 0 END) as viabilises,
+                SUM(CASE WHEN type_terrain = 'NON_VIABILISE' THEN 1 ELSE 0 END) as non_viabilises,
+                COUNT(DISTINCT id_pa) as nb_pa
+            FROM terrains_batir
+        `).get();
+        
+        console.log(`✅ Table finale créée :`);
+        console.log(`   - Total : ${finalStats.total} transactions`);
+        console.log(`   - VIABILISE : ${finalStats.viabilises}`);
+        console.log(`   - NON_VIABILISE : ${finalStats.non_viabilises}`);
+        console.log(`   - PA distincts : ${finalStats.nb_pa}\n`);
+        
+        console.log('✅ Base terrains_batir créée avec succès !\n');
+        db.close();
+        process.exit(0);
+    } catch (err) {
+        console.error('❌ Erreur lors de la création de la table finale:', err);
+        db.close();
+        process.exit(1);
     }
 }
 
@@ -237,7 +341,8 @@ if (!dbExisteAvecDFI) {
                 date_validation,
                 parcelles_meres,
                 parcelles_filles
-            FROM dfi_lotissements;
+            FROM dfi_lotissements
+            WHERE code_departement = '${DEPARTEMENT_FILTRE}';
             
             CREATE INDEX idx_dfi_idx_commune ON dfi_indexed(code_commune);
             CREATE INDEX idx_dfi_idx_meres ON dfi_indexed(parcelles_meres);
@@ -383,10 +488,15 @@ function attribuerTypeUsage(db) {
             .pipe(csv({ separator: ';', skipLinesWithError: true }))
             .on('data', (row) => {
                 const dept = row.DEP_CODE || row.DEP || '';
+                const codeDept = dept.length >= 2 ? dept.substring(0, 2) : dept;
                 const typeDau = row.TYPE_DAU || '';
                 const numDau = row.NUM_DAU || '';
                 
-                // France entière - pas de filtre département
+                // FILTRE DÉPARTEMENT 40 : Ne garder que les PC du département 40
+                if (codeDept !== DEPARTEMENT_FILTRE) {
+                    return; // Skip les PC d'autres départements
+                }
+                
                 if (typeDau !== 'PC' || !numDau) return;
                 
                 // FILTRES POUR NOUVELLE CONSTRUCTION HABITATION INDIVIDUELLE
@@ -928,7 +1038,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
         
         const fichiers = fs.readdirSync(dvfDir)
             .filter(f => {
-                // Accepter tous les fichiers dvf_YYYY.csv (France entière)
+                // FILTRE DÉPARTEMENT 40 : Accepter les fichiers DVF complets (dvf_YYYY.csv)
+                // Le filtrage par département se fera lors de l'insertion via code_departement
                 return f.startsWith('dvf_') && f.endsWith('.csv');
             })
             .map(f => {
@@ -1142,6 +1253,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     // Utiliser la fonction helper pour mapper les colonnes
                     const codeDept = getColumnValue(row, ['code_departement']) || '';
+                    
+                    // FILTRE DÉPARTEMENT 40 : Ne traiter que les lignes du département 40
+                    if (departementFiltre && codeDept !== departementFiltre) {
+                        return; // Skip les lignes d'autres départements
+                    }
+                    
                     const valeurFonciereStr = getColumnValue(row, ['valeur_fonciere']) || '0';
                     const surfaceTerrain = parseFloat(getColumnValue(row, ['surface_terrain']) || 0);
                     const surfaceBati = parseFloat(getColumnValue(row, ['surface_reelle_bati']) || 0);
@@ -1475,7 +1592,7 @@ const insertDvfTemp = db.prepare(`
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)
 `);
 
-chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
+chargerTousLesCSV(db, insertDvfTemp, DEPARTEMENT_FILTRE).then((totalInserted) => {
     console.log(`✅ ${totalInserted.toLocaleString()} transactions DVF chargées dans terrains_batir_temp\n`);
     
     // ⚡ Données déjà dans terrains_batir_temp, on passe directement à l'indexation
@@ -1617,11 +1734,17 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             }
             
             // Utiliser directement la première ligne comme en-tête (comme le script PC)
-            // France entière - pas de filtre département
+            // FILTRE DÉPARTEMENT 40 : Extraire le code département depuis le code commune
+            const comm = row.COMM || '';
+            const codeDept = comm.length >= 2 ? comm.substring(0, 2) : '';
+            
+            // Ne garder que les PA du département 40
+            if (codeDept !== DEPARTEMENT_FILTRE) {
+                return; // Skip les PA d'autres départements
+            }
             
             const numPA = row.NUM_PA;
             const dateAuth = row.DATE_REELLE_AUTORISATION;
-            const comm = row.COMM;
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -1747,12 +1870,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 
                 for (const parcelle of pa.parcelles) {
                     const parcelleStr = String(parcelle).trim().toUpperCase();
-                    // Extraire section + numéro : "40088000BL0056" → "BL56"
-                    const match = parcelleStr.match(/([A-Z]{1,2})(\d+p?)$/i);
+                    // Extraire section + numéro : "40088000BL0056" → "BL0056" (avec padding)
+                    // Format: codeCommune(5) + "000" + section(1-3) + numero(4)
+                    const match = parcelleStr.match(/^\d{5}000([A-Z]{1,3})(\d{4})$/);
                     if (match) {
                         const [, section, numero] = match;
-                        const numeroClean = String(parseInt(numero.replace(/p$/i, ''), 10));
-                        const parcelleNormalisee = section + numeroClean;
+                        // Garder le numéro avec padding (4 chiffres)
+                        const parcelleNormalisee = section + numero;
                         
                         for (const sect of pa.sections) {
                             insertPA.run(
@@ -1764,6 +1888,27 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                 pa.superficie,
                                 pa.dateAuth
                             );
+                        }
+                    } else {
+                        // Format alternatif : essayer avec section de 1-2 caractères
+                        const matchAlt = parcelleStr.match(/^\d{5}000([A-Z]{1,2})(\d+)$/);
+                        if (matchAlt) {
+                            const [, section, numero] = matchAlt;
+                            // Padding du numéro sur 4 chiffres
+                            const numeroPad = numero.padStart(4, '0');
+                            const parcelleNormalisee = section + numeroPad;
+                            
+                            for (const sect of pa.sections) {
+                                insertPA.run(
+                                    pa.numPA,
+                                    codeCommuneDFI,
+                                    codeCommuneDVF,
+                                    sect,
+                                    parcelleNormalisee,
+                                    pa.superficie,
+                                    pa.dateAuth
+                                );
+                            }
                         }
                     }
                 }
@@ -2232,112 +2377,22 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   - ${nbAchatsMeres + nbAchatsFilles} achats lotisseurs (non-viabilisés)`);
         console.log(`   - ${nbLotsVendus} lots vendus (viabilisés)\n`);
         
-        // FIN ÉTAPE 4 - Passer directement aux statistiques
+        // FIN ÉTAPE 4 - Passer à l'enrichissement des coordonnées
+        console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+        enrichirCoordonnees(db).then(() => {
+            // ÉTAPE 7 : Créer la table finale simplifiée
+            creerTableFinale(db);
+        }).catch((err) => {
+            console.error('⚠️  Erreur lors de l\'enrichissement des coordonnées:', err.message);
+            console.log('   → Continuation avec création de la table finale...\n');
+            // Continuer même en cas d'erreur
+            creerTableFinale(db);
         });
-    console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
-    enrichirCoordonnees(db).then(() => {
-        // ÉTAPE 7 : Créer la table finale simplifiée
-        console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
-        
-        // ✅ Réactiver le WAL MAINTENANT (pour la table finale uniquement)
-        console.log('   🔧 Réactivation du mode WAL pour la table finale...');
-        db.pragma('journal_mode = WAL');
-        
-        db.exec(`
-            CREATE TABLE terrains_batir (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                valeur_fonciere REAL,
-                surface_totale REAL,
-                surface_reelle_bati REAL,
-                prix_m2 REAL,
-                date_mutation TEXT,
-                latitude REAL,
-                longitude REAL,
-                nom_commune TEXT,
-                type_terrain TEXT,
-                id_pa TEXT
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_coords ON terrains_batir(latitude, longitude);
-            CREATE INDEX IF NOT EXISTS idx_date ON terrains_batir(date_mutation);
-            CREATE INDEX IF NOT EXISTS idx_type_terrain ON terrains_batir(type_terrain);
-            CREATE INDEX IF NOT EXISTS idx_commune ON terrains_batir(nom_commune);
-            CREATE INDEX IF NOT EXISTS idx_pa ON terrains_batir(id_pa);
-        `);
-        
-        // Copier les données en AGRÉGEANT par mutation
-        // FILTRE 1 : Ne garder QUE les transactions rattachées à un PA
-        // FILTRE 2 : Exclure les transactions NON géolocalisées ⚠️
-        // IMPORTANT : Une mutation = plusieurs parcelles → AGRÉGER !
-        db.exec(`
-            INSERT INTO terrains_batir (
-                valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-                date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa
-            )
-            SELECT 
-                MAX(valeur_fonciere) as valeur_fonciere,  -- Valeur UNIQUE (même pour toutes les parcelles)
-                SUM(surface_totale) as surface_totale,    -- SOMME des surfaces
-                SUM(surface_reelle_bati) as surface_reelle_bati,  -- SOMME du bâti
-                MAX(valeur_fonciere) / SUM(surface_totale) as prix_m2,  -- Recalculer le prix/m²
-                MIN(date_mutation) as date_mutation,      -- Date la plus ancienne
-                AVG(latitude) as latitude,                 -- Moyenne des coordonnées GPS
-                AVG(longitude) as longitude,               -- Moyenne des coordonnées GPS
-                MAX(nom_commune) as nom_commune,
-                CASE 
-                    WHEN est_terrain_viabilise = 0 THEN 'NON_VIABILISE'
-                    WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
-                    ELSE NULL
-                END as type_terrain,
-                id_pa
-            FROM terrains_batir_temp
-            WHERE id_pa IS NOT NULL
-            GROUP BY id_mutation, est_terrain_viabilise, id_pa;
-        `);
-        
-        // Checkpoint après INSERT massif
-        try {
-            db.pragma('wal_checkpoint(TRUNCATE)');
-        } catch (checkpointErr) {
-            // Ignorer
-        }
-        
-        // Supprimer la table temporaire
-        db.exec(`DROP TABLE terrains_batir_temp;`);
-        
-        // Checkpoint final pour nettoyer le WAL après toutes les opérations
-        try {
-            db.pragma('wal_checkpoint(TRUNCATE)');
-            console.log('🧹 Checkpoint WAL final effectué\n');
-        } catch (checkpointErr) {
-            // Ignorer les erreurs de checkpoint
-        }
-        
-        const finalStats = db.prepare(`
-            SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN type_terrain = 'VIABILISE' THEN 1 ELSE 0 END) as viabilises,
-                SUM(CASE WHEN type_terrain = 'NON_VIABILISE' THEN 1 ELSE 0 END) as non_viabilises,
-                COUNT(DISTINCT id_pa) as nb_pa
-            FROM terrains_batir
-        `).get();
-        
-        console.log(`✅ Table finale créée :`);
-        console.log(`   - Total : ${finalStats.total} transactions`);
-        console.log(`   - VIABILISE : ${finalStats.viabilises}`);
-        console.log(`   - NON_VIABILISE : ${finalStats.non_viabilises}`);
-        console.log(`   - PA distincts : ${finalStats.nb_pa}\n`);
-        
-        console.log('✅ Base terrains_batir créée avec succès !\n');
-        db.close();
-        process.exit(0);
-    }).catch(err => {
-        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
-        db.close();
-        process.exit(1);
     });
-});
+    }); // Fin du .then() de la ligne 1825 (après chargement PA)
 }).catch(err => {
-    console.error('❌ Erreur:', err);
+    console.error('❌ Erreur lors de l\'exécution du script:', err);
+    db.close();
     process.exit(1);
 });
 } // Fin de demarrerCreationBase()

@@ -286,24 +286,30 @@ function extraireCentroideLambert(wkt) {
     if (!wkt || typeof wkt !== 'string') return null;
     
     // Extraire toutes les coordonnées du MULTIPOLYGON
-    const coordMatch = wkt.match(/\(\(\(([^)]+)\)\)/);
-    if (!coordMatch) return null;
+    // Format WKT: MULTIPOLYGON(((x1 y1, x2 y2, ...)), ((x3 y3, x4 y4, ...)), ...)
+    // On extrait toutes les paires de coordonnées, peu importe la structure des polygones
     
-    const coordsStr = coordMatch[1];
-    const points = coordsStr.split(',').map(p => {
-        const parts = p.trim().split(/\s+/);
-        if (parts.length >= 2) {
-            return {
-                x: parseFloat(parts[0]),
-                y: parseFloat(parts[1])
-            };
+    // Supprimer le préfixe MULTIPOLYGON
+    let coordsStr = wkt.replace(/^MULTIPOLYGON\s*\(/i, '');
+    if (!coordsStr) return null;
+    
+    // Extraire toutes les paires de nombres (coordonnées x y)
+    // Pattern: nombre nombre (séparés par des espaces, potentiellement entre parenthèses)
+    const coordPattern = /(-?\d+\.?\d*)\s+(-?\d+\.?\d*)/g;
+    const points = [];
+    let match;
+    
+    while ((match = coordPattern.exec(coordsStr)) !== null) {
+        const x = parseFloat(match[1]);
+        const y = parseFloat(match[2]);
+        if (!isNaN(x) && !isNaN(y)) {
+            points.push({ x, y });
         }
-        return null;
-    }).filter(p => p !== null);
+    }
     
     if (points.length === 0) return null;
     
-    // Calculer le centroïde (moyenne des coordonnées)
+    // Calculer le centroïde (moyenne des coordonnées de tous les polygones)
     const centroid = {
         x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
         y: points.reduce((sum, p) => sum + p.y, 0) / points.length
@@ -1990,16 +1996,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         return new Promise((resolve) => {
             if (fs.existsSync(PARCELLE_FILE)) {
-                // Créer une table temporaire avec les superficies depuis parcelle.csv
-                // ⚡ OPTIMISATION : PRIMARY KEY créée APRÈS insertion
-                db.exec(`
-                    DROP TABLE IF EXISTS parcelle_superficies;
-                    CREATE TEMP TABLE parcelle_superficies (
-                        id_parcelle TEXT,
-                        superficie REAL
-                    );
-                `);
-                
                 const insertSuperficie = db.prepare(`INSERT INTO parcelle_superficies VALUES (?, ?)`);
                 let countSuperficies = 0;
                 

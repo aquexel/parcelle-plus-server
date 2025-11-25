@@ -1996,6 +1996,15 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         return new Promise((resolve) => {
             if (fs.existsSync(PARCELLE_FILE)) {
+                // Créer la table temporaire pour stocker les superficies
+                db.exec(`
+                    DROP TABLE IF EXISTS parcelle_superficies;
+                    CREATE TEMP TABLE parcelle_superficies (
+                        id_parcelle TEXT,
+                        superficie REAL
+                    );
+                `);
+                
                 const insertSuperficie = db.prepare(`INSERT INTO parcelle_superficies VALUES (?, ?)`);
                 let countSuperficies = 0;
                 
@@ -2003,7 +2012,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     .pipe(csv())
                     .on('data', (row) => {
                         const idParcelle = row.parcelle_id || row.id_parcelle;
-                        const superficie = parseFloat(row.superficie || row.surface || row.surface_terrain || 0);
+                        // s_geom_parcelle est la superficie de la géométrie de la parcelle
+                        const superficie = parseFloat(row.s_geom_parcelle || row.superficie || row.surface || row.surface_terrain || 0);
                         if (idParcelle && superficie > 0) {
                             insertSuperficie.run(idParcelle, superficie);
                             countSuperficies++;

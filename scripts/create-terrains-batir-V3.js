@@ -1657,17 +1657,31 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     // Nettoyer et RÉCUPÉRER l'espace disque
                     console.log(`      🧹 Nettoyage des tables temporaires...`);
-                    db.exec(`DROP TABLE temp_csv_file`);
-                    db.exec(`DROP TABLE temp_agregated`);
+                    try {
+                        db.exec(`DROP TABLE temp_csv_file`);
+                        db.exec(`DROP TABLE temp_agregated`);
+                    } catch (dropErr) {
+                        console.log(`      ⚠️  Erreur lors de la suppression des tables temporaires: ${dropErr.message}`);
+                    }
+                    
                     const dbSizeBeforeVacuum = getDbSizeMB(DB_FILE);
                     console.log(`      🔄 VACUUM pour récupérer l'espace disque... (DB: ${dbSizeBeforeVacuum} MB)`);
-                    db.exec(`VACUUM`);
-                    const dbSizeAfterVacuum = getDbSizeMB(DB_FILE);
-                    const espaceLibereMB = dbSizeBeforeVacuum - dbSizeAfterVacuum;
-                    console.log(`      ✅ VACUUM terminé - Taille DB: ${dbSizeAfterVacuum} MB (${espaceLibereMB} MB libérés)`);
                     
-                    const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
-                    console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);
+                    try {
+                        db.exec(`VACUUM`);
+                        const dbSizeAfterVacuum = getDbSizeMB(DB_FILE);
+                        const espaceLibereMB = dbSizeBeforeVacuum - dbSizeAfterVacuum;
+                        console.log(`      ✅ VACUUM terminé - Taille DB: ${dbSizeAfterVacuum} MB (${espaceLibereMB} MB libérés)`);
+                    } catch (vacuumErr) {
+                        console.log(`      ⚠️  Erreur lors du VACUUM: ${vacuumErr.message} (continuation...)`);
+                    }
+                    
+                    try {
+                        const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
+                        console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);
+                    } catch (countErr) {
+                        console.log(`      ⚠️  Erreur lors du comptage: ${countErr.message}`);
+                    }
                     
                     // Passer au fichier suivant
                     traiterFichierSequentiel(index + 1);

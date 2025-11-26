@@ -700,37 +700,37 @@ function estDejaNormalise(filePath) {
         // Vérifier que les colonnes sont en minuscules avec underscores (pas d'espaces, pas de majuscules)
         const colonnes = firstLine.split(',');
         
-        // Liste des colonnes normalisées attendues
+        // Liste des colonnes normalisées attendues (noms normalisés ET noms alternatifs acceptables)
         const colonnesNormaliseesAttendues = [
             'id_mutation', 'date_mutation', 'valeur_fonciere', 'code_departement',
-            'code_commune', 'nom_commune', 'id_parcelle', 'section_cadastrale'
+            'code_commune', 'nom_commune', 'id_parcelle', 'section_cadastrale',
+            'numero_disposition', 'nature_mutation', 'surface_terrain', 'surface_reelle_bati'
         ];
         
         let colonnesNormaliseesTrouvees = 0;
+        let toutesEnMinuscules = true;
         
         for (const col of colonnes) {
-            const colClean = col.trim().replace(/"/g, '').toLowerCase();
+            const colClean = col.trim().replace(/"/g, '');
+            const colLower = colClean.toLowerCase();
             
-            // Si la colonne contient des espaces ou des majuscules dans le nom (pas dans les valeurs), ce n'est pas normalisé
-            if (colClean.includes(' ') && !colClean.match(/^[a-z_]+$/)) {
-                return false;
+            // Vérifier que le nom de la colonne est en minuscules avec underscores (pas d'espaces, pas de majuscules)
+            // Extraire seulement le nom de la colonne (avant le premier caractère qui pourrait être une valeur)
+            const nomColonne = colClean.split(/[^a-z_]/i)[0];
+            
+            if (nomColonne && (nomColonne !== nomColonne.toLowerCase() || nomColonne.includes(' '))) {
+                toutesEnMinuscules = false;
+                break;
             }
             
-            // Vérifier si c'est une colonne normalisée attendue
-            if (colonnesNormaliseesAttendues.some(attendu => colClean === attendu || colClean.startsWith(attendu))) {
+            // Vérifier si c'est une colonne normalisée attendue (nom normalisé ou alternatif acceptable)
+            if (colonnesNormaliseesAttendues.some(attendu => colLower === attendu || colLower.startsWith(attendu))) {
                 colonnesNormaliseesTrouvees++;
             }
         }
         
-        // Si on trouve au moins 5 colonnes normalisées attendues, le fichier est probablement normalisé
-        // Et si aucune colonne ne contient d'espaces ou de majuscules dans le nom
-        const toutesEnMinuscules = colonnes.every(col => {
-            const colClean = col.trim().replace(/"/g, '');
-            // Vérifier seulement le nom de la colonne (avant le premier caractère qui pourrait être une valeur)
-            const nomColonne = colClean.split(/[^a-z_]/)[0];
-            return nomColonne === nomColonne.toLowerCase() && !nomColonne.includes(' ');
-        });
-        
+        // Si toutes les colonnes sont en minuscules avec underscores ET qu'on trouve au moins 5 colonnes connues,
+        // le fichier est probablement déjà normalisé (même avec des noms alternatifs comme numero_disposition)
         return toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5;
     } catch (err) {
         return false;

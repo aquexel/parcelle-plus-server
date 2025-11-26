@@ -748,14 +748,17 @@ function estDejaNormalise(filePath) {
         // OU si on trouve au moins 7 colonnes connues (fichier très probablement normalisé)
         // OU si on trouve au moins 5 colonnes connues et moins de 3 colonnes avec espaces/majuscules (tolérance)
         // OU si on trouve les colonnes clés id_mutation, date_mutation, valeur_fonciere (fichier normalisé)
-        const aColonnesCles = firstLine.toLowerCase().includes('id_mutation') && 
-                              firstLine.toLowerCase().includes('date_mutation') && 
-                              firstLine.toLowerCase().includes('valeur_fonciere');
+        const firstLineLower = firstLine.toLowerCase();
+        const aColonnesCles = firstLineLower.includes('id_mutation') && 
+                              firstLineLower.includes('date_mutation') && 
+                              firstLineLower.includes('valeur_fonciere');
         
+        // Si on a les 3 colonnes clés ET que la plupart des colonnes sont en minuscules avec underscores
+        // (tolérance de 3 colonnes avec espaces/majuscules max), c'est normalisé
         const estNormalise = (toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5) || 
                              colonnesNormaliseesTrouvees >= 7 ||
                              (colonnesNormaliseesTrouvees >= 5 && colonnesAvecEspacesOuMajuscules <= 2) ||
-                             (aColonnesCles && colonnesNormaliseesTrouvees >= 3);
+                             (aColonnesCles && colonnesNormaliseesTrouvees >= 3 && colonnesAvecEspacesOuMajuscules <= 3);
         
         return estNormalise;
     } catch (err) {

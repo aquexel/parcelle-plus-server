@@ -1668,12 +1668,32 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     console.log(`      🔄 VACUUM pour récupérer l'espace disque... (DB: ${dbSizeBeforeVacuum} MB)`);
                     
                     try {
+                        // Détacher la base parcelles_db avant le VACUUM pour éviter les blocages
+                        try {
+                            db.exec(`DETACH DATABASE parcelles_db;`);
+                        } catch (detachErr) {
+                            // Ignorer si déjà détachée
+                        }
+                        
+                        // VACUUM sur la base principale uniquement
                         db.exec(`VACUUM`);
+                        
+                        // Réattacher la base parcelles_db après le VACUUM
+                        const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
+                        db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
+                        
                         const dbSizeAfterVacuum = getDbSizeMB(DB_FILE);
                         const espaceLibereMB = dbSizeBeforeVacuum - dbSizeAfterVacuum;
                         console.log(`      ✅ VACUUM terminé - Taille DB: ${dbSizeAfterVacuum} MB (${espaceLibereMB} MB libérés)`);
                     } catch (vacuumErr) {
                         console.log(`      ⚠️  Erreur lors du VACUUM: ${vacuumErr.message} (continuation...)`);
+                        // Réattacher la base parcelles_db en cas d'erreur
+                        try {
+                            const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
+                            db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
+                        } catch (reattachErr) {
+                            console.log(`      ⚠️  Erreur lors de la réattache de parcelles_db: ${reattachErr.message}`);
+                        }
                     }
                     
                     try {

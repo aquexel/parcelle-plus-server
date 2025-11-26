@@ -1216,9 +1216,33 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // Fonction helper pour mapper les colonnes avec des noms alternatifs
             function getColumnValue(row, possibleNames) {
                 if (!columnMapping) {
+                    // Vérifier si les colonnes sont déjà normalisées
+                    const allColumns = Object.keys(row);
+                    const colonnesNormalisees = [
+                        'id_mutation', 'date_mutation', 'valeur_fonciere', 'code_departement',
+                        'code_commune', 'nom_commune', 'id_parcelle', 'section_cadastrale',
+                        'surface_terrain', 'surface_reelle_bati', 'type_local'
+                    ];
+                    
+                    // Vérifier si toutes les colonnes importantes sont déjà normalisées
+                    const toutesNormalisees = colonnesNormalisees.every(col => 
+                        allColumns.some(c => c.toLowerCase() === col.toLowerCase())
+                    );
+                    
+                    if (toutesNormalisees) {
+                        // Colonnes déjà normalisées, pas besoin de mapping
+                        columnMapping = 'normalise';
+                        // Essayer directement les noms normalisés
+                        for (const name of possibleNames) {
+                            if (row[name] !== undefined && row[name] !== '') {
+                                return row[name];
+                            }
+                        }
+                        return '';
+                    }
+                    
                     // Créer le mapping une seule fois lors de la première ligne de ce fichier
                     columnMapping = {};
-                    const allColumns = Object.keys(row);
                     
                     // Mapping des colonnes possibles
                     const columnMappings = {
@@ -1249,6 +1273,16 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             }
                         }
                     }
+                }
+                
+                // Si colonnes déjà normalisées, utiliser directement
+                if (columnMapping === 'normalise') {
+                    for (const name of possibleNames) {
+                        if (row[name] !== undefined && row[name] !== '') {
+                            return row[name];
+                        }
+                    }
+                    return '';
                 }
                 
                 // Retourner la valeur en utilisant le mapping
@@ -1297,9 +1331,13 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                                 console.log(`      💡 Si séparateur = ",", on aurait ${manualParts.length} colonnes`);
                             }
                         } else {
-                            // Afficher le mapping créé
-                            const mappedCols = Object.entries(columnMapping || {}).slice(0, 5);
-                            console.log(`      🔍 Mapping colonnes (exemples): ${mappedCols.map(([k, v]) => `${k}->${v}`).join(', ')}...`);
+                            // Afficher le mapping créé ou indiquer que c'est déjà normalisé
+                            if (columnMapping === 'normalise') {
+                                console.log(`      ✅ Colonnes déjà normalisées, pas de mapping nécessaire`);
+                            } else {
+                                const mappedCols = Object.entries(columnMapping || {}).slice(0, 5);
+                                console.log(`      🔍 Mapping colonnes (exemples): ${mappedCols.map(([k, v]) => `${k}->${v}`).join(', ')}...`);
+                            }
                             console.log(`      🔍 Exemple première ligne: id_parcelle="${getColumnValue(row, ['id_parcelle'])}", valeur_fonciere="${getColumnValue(row, ['valeur_fonciere'])}", code_departement="${getColumnValue(row, ['code_departement'])}"`);
                         }
                     }

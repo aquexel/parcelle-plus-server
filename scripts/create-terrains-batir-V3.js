@@ -2011,41 +2011,54 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 fs.createReadStream(PARCELLE_FILE)
                     .pipe(csv())
                     .on('data', (row) => {
-                        const idParcelle = row.parcelle_id || row.id_parcelle;
-                        // s_geom_parcelle est la superficie de la géométrie de la parcelle
-                        const superficie = parseFloat(row.s_geom_parcelle || row.superficie || row.surface || row.surface_terrain || 0);
-                        if (idParcelle && superficie > 0) {
-                            insertSuperficie.run(idParcelle, superficie);
-                            countSuperficies++;
+                        try {
+                            const idParcelle = row.parcelle_id || row.id_parcelle;
+                            // s_geom_parcelle est la superficie de la géométrie de la parcelle
+                            const superficie = parseFloat(row.s_geom_parcelle || row.superficie || row.surface || row.surface_terrain || 0);
+                            if (idParcelle && superficie > 0) {
+                                insertSuperficie.run(idParcelle, superficie);
+                                countSuperficies++;
+                            }
+                        } catch (err) {
+                            // Ignorer les erreurs d'insertion individuelles (doublons, etc.)
                         }
                     })
                     .on('end', () => {
-                        console.log(`   ✅ ${countSuperficies} superficies chargées depuis parcelle.csv`);
-                        
-                        // Créer l'index APRÈS insertion
-                        db.exec(`CREATE UNIQUE INDEX idx_parcelle_superficies ON parcelle_superficies(id_parcelle);`);
-                        
-                        // Mettre à jour pa_filles_temp avec les superficies enrichies
-                        db.exec(`
-                            UPDATE pa_filles_temp
-                            SET superficie = COALESCE(
-                                NULLIF(pa_filles_temp.superficie, 0),
-                                (SELECT superficie FROM parcelle_superficies ps 
-                                 WHERE ps.id_parcelle = (
-                                     pa_filles_temp.code_commune_dvf || 
-                                     pa_filles_temp.section || 
-                                     pa_filles_temp.parcelle_fille_suffixe
-                                 ))
-                            )
-                            WHERE superficie IS NULL OR superficie = 0;
-                        `);
-                        
-                        const countEnrichies = db.prepare(`
-                            SELECT COUNT(*) as cnt FROM pa_filles_temp 
-                            WHERE superficie IS NOT NULL AND superficie > 0
-                        `).get().cnt;
-                        console.log(`   ✅ ${countEnrichies} parcelles avec superficie après enrichissement\n`);
-                        resolve();
+                        try {
+                            console.log(`   ✅ ${countSuperficies} superficies chargées depuis parcelle.csv`);
+                            
+                            // Créer l'index APRÈS insertion
+                            try {
+                                db.exec(`CREATE UNIQUE INDEX idx_parcelle_superficies ON parcelle_superficies(id_parcelle);`);
+                            } catch (idxErr) {
+                                // Index peut déjà exister, ignorer
+                            }
+                            
+                            // Mettre à jour pa_filles_temp avec les superficies enrichies
+                            db.exec(`
+                                UPDATE pa_filles_temp
+                                SET superficie = COALESCE(
+                                    NULLIF(pa_filles_temp.superficie, 0),
+                                    (SELECT superficie FROM parcelle_superficies ps 
+                                     WHERE ps.id_parcelle = (
+                                         pa_filles_temp.code_commune_dvf || 
+                                         pa_filles_temp.section || 
+                                         pa_filles_temp.parcelle_fille_suffixe
+                                     ))
+                                )
+                                WHERE superficie IS NULL OR superficie = 0;
+                            `);
+                            
+                            const countEnrichies = db.prepare(`
+                                SELECT COUNT(*) as cnt FROM pa_filles_temp 
+                                WHERE superficie IS NOT NULL AND superficie > 0
+                            `).get().cnt;
+                            console.log(`   ✅ ${countEnrichies} parcelles avec superficie après enrichissement\n`);
+                            resolve();
+                        } catch (err) {
+                            console.log(`   ⚠️  Erreur lors de l'enrichissement des superficies: ${err.message}\n`);
+                            resolve();
+                        }
                     })
                     .on('error', (err) => {
                         console.log(`   ⚠️  Erreur lecture parcelle.csv: ${err.message}\n`);

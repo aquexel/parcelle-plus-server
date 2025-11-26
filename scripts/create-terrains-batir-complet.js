@@ -740,6 +740,18 @@ function estDejaNormalise(filePath) {
 // 🧹 Fonction simple : enlever tous les " du fichier
 async function nettoyerGuillemetsDVF(filePath) {
     return new Promise((resolve, reject) => {
+        // Vérifier si le fichier contient des guillemets avant de nettoyer
+        try {
+            const firstLine = fs.readFileSync(filePath, 'utf8').split('\n')[0];
+            if (!firstLine.includes('"')) {
+                // Pas de guillemets, fichier déjà nettoyé
+                resolve();
+                return;
+            }
+        } catch (err) {
+            // En cas d'erreur, continuer le nettoyage
+        }
+        
         console.log(`   🧹 Nettoyage de ${path.basename(filePath)}...`);
         
         const readline = require('readline');
@@ -998,6 +1010,12 @@ async function normaliserTousLesDVF() {
     
     for (const fichier of fichiers) {
         try {
+            // Vérifier si le fichier est déjà normalisé AVANT tout traitement
+            if (estDejaNormalise(fichier)) {
+                console.log(`   ⏭️  ${path.basename(fichier)} déjà normalisé, ignoré\n`);
+                continue;
+            }
+            
             // 🧹 Étape 1 : Nettoyer les guillemets (DVF 2021+)
             await nettoyerGuillemetsDVF(fichier);
             

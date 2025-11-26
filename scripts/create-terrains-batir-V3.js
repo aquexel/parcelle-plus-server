@@ -1675,45 +1675,14 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     }
                     console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
-                    // Nettoyer et RÉCUPÉRER l'espace disque
+                    // Nettoyer les tables temporaires
+                    // ⚠️ Pas de VACUUM : trop lourd avec base parcelles.db (12GB) attachée
                     console.log(`      🧹 Nettoyage des tables temporaires...`);
                     try {
                         db.exec(`DROP TABLE temp_csv_file`);
                         db.exec(`DROP TABLE temp_agregated`);
                     } catch (dropErr) {
                         console.log(`      ⚠️  Erreur lors de la suppression des tables temporaires: ${dropErr.message}`);
-                    }
-                    
-                    const dbSizeBeforeVacuum = getDbSizeMB(DB_FILE);
-                    console.log(`      🔄 VACUUM pour récupérer l'espace disque... (DB: ${dbSizeBeforeVacuum} MB)`);
-                    
-                    try {
-                        // Détacher la base parcelles_db avant le VACUUM pour éviter les blocages
-                        try {
-                            db.exec(`DETACH DATABASE parcelles_db;`);
-                        } catch (detachErr) {
-                            // Ignorer si déjà détachée
-                        }
-                        
-                        // VACUUM sur la base principale uniquement
-                        db.exec(`VACUUM`);
-                        
-                        // Réattacher la base parcelles_db après le VACUUM
-                        const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
-                        db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
-                        
-                        const dbSizeAfterVacuum = getDbSizeMB(DB_FILE);
-                        const espaceLibereMB = dbSizeBeforeVacuum - dbSizeAfterVacuum;
-                        console.log(`      ✅ VACUUM terminé - Taille DB: ${dbSizeAfterVacuum} MB (${espaceLibereMB} MB libérés)`);
-                    } catch (vacuumErr) {
-                        console.log(`      ⚠️  Erreur lors du VACUUM: ${vacuumErr.message} (continuation...)`);
-                        // Réattacher la base parcelles_db en cas d'erreur
-                        try {
-                            const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
-                            db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
-                        } catch (reattachErr) {
-                            console.log(`      ⚠️  Erreur lors de la réattache de parcelles_db: ${reattachErr.message}`);
-                        }
                     }
                     
                     try {
@@ -2570,6 +2539,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         db.exec(`DROP TABLE terrains_batir_temp;`);
         
         // Checkpoint final pour nettoyer le WAL après toutes les opérations
+        // ⚠️ Pas de VACUUM : trop lourd avec base parcelles.db (12GB) attachée
+        // SQLite gère bien l'espace inutilisé sans VACUUM
         try {
             db.pragma('wal_checkpoint(TRUNCATE)');
             console.log('🧹 Checkpoint WAL final effectué\n');

@@ -712,26 +712,38 @@ function estDejaNormalise(filePath) {
         
         for (const col of colonnes) {
             const colClean = col.trim().replace(/"/g, '');
+            if (!colClean) continue; // Ignorer les colonnes vides
+            
             const colLower = colClean.toLowerCase();
             
             // Vérifier que le nom de la colonne est en minuscules avec underscores (pas d'espaces, pas de majuscules)
-            // Extraire seulement le nom de la colonne (avant le premier caractère qui pourrait être une valeur)
-            const nomColonne = colClean.split(/[^a-z_]/i)[0];
-            
-            if (nomColonne && (nomColonne !== nomColonne.toLowerCase() || nomColonne.includes(' '))) {
+            // Pour l'en-tête, on prend toute la colonne (pas de valeurs dans l'en-tête)
+            // Si la colonne contient des espaces ou des majuscules dans le nom, ce n'est pas normalisé
+            if (colClean.includes(' ') || (colClean !== colLower && /[A-Z]/.test(colClean))) {
                 toutesEnMinuscules = false;
                 break;
             }
             
             // Vérifier si c'est une colonne normalisée attendue (nom normalisé ou alternatif acceptable)
-            if (colonnesNormaliseesAttendues.some(attendu => colLower === attendu || colLower.startsWith(attendu))) {
+            // On accepte les correspondances exactes ou les préfixes
+            const estColonneConnue = colonnesNormaliseesAttendues.some(attendu => {
+                return colLower === attendu || 
+                       colLower.startsWith(attendu + '_') || 
+                       attendu.startsWith(colLower) ||
+                       colLower.includes(attendu);
+            });
+            
+            if (estColonneConnue) {
                 colonnesNormaliseesTrouvees++;
             }
         }
         
         // Si toutes les colonnes sont en minuscules avec underscores ET qu'on trouve au moins 5 colonnes connues,
         // le fichier est probablement déjà normalisé (même avec des noms alternatifs comme numero_disposition)
-        return toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5;
+        // OU si on trouve au moins 7 colonnes connues (fichier très probablement normalisé)
+        const estNormalise = (toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5) || colonnesNormaliseesTrouvees >= 7;
+        
+        return estNormalise;
     } catch (err) {
         return false;
     }
@@ -1018,6 +1030,13 @@ async function normaliserTousLesDVF() {
             
             // 🧹 Étape 1 : Nettoyer les guillemets (DVF 2021+)
             await nettoyerGuillemetsDVF(fichier);
+            
+            // Vérifier à nouveau si le fichier est normalisé APRÈS nettoyage
+            // (le nettoyage peut avoir révélé que le fichier était déjà normalisé)
+            if (estDejaNormalise(fichier)) {
+                console.log(`   ⏭️  ${path.basename(fichier)} déjà normalisé après nettoyage, ignoré\n`);
+                continue;
+            }
             
             // 🔄 Étape 2 : Normaliser le format
             await normaliserFichierDVF(fichier);

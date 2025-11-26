@@ -1170,28 +1170,35 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // 2. Créer INDEX sur table VIDE (rapide)
             // 3. Insérer avec index déjà en place
             // 4. Surveiller taille DB
-            db.exec(`
-            DROP TABLE IF EXISTS temp_csv_file;
-            CREATE TABLE temp_csv_file (
-                id_parcelle TEXT,
-                id_mutation TEXT,
-                code_departement TEXT,
-                valeur_fonciere REAL,
-                surface_totale REAL,
-                surface_reelle_bati REAL,
-                date_mutation TEXT,
-                latitude REAL,
-                longitude REAL,
-                code_commune TEXT,
-                section_cadastrale TEXT,
-                parcelle_suffixe TEXT,
-                nom_commune TEXT
-            );
-            `);
-            
-            // Créer l'index sur table VIDE (instantané)
-            console.log(`      📊 Création index sur table vide...`);
-            db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dept ON temp_csv_file(code_departement)`);
+            try {
+                db.exec(`
+                DROP TABLE IF EXISTS temp_csv_file;
+                CREATE TABLE temp_csv_file (
+                    id_parcelle TEXT,
+                    id_mutation TEXT,
+                    code_departement TEXT,
+                    valeur_fonciere REAL,
+                    surface_totale REAL,
+                    surface_reelle_bati REAL,
+                    date_mutation TEXT,
+                    latitude REAL,
+                    longitude REAL,
+                    code_commune TEXT,
+                    section_cadastrale TEXT,
+                    parcelle_suffixe TEXT,
+                    nom_commune TEXT
+                );
+                `);
+                
+                // Créer l'index sur table VIDE (instantané)
+                console.log(`      📊 Création index sur table vide...`);
+                db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dept ON temp_csv_file(code_departement)`);
+            } catch (tableErr) {
+                console.error(`      ❌ Erreur lors de la création de la table temporaire: ${tableErr.message}`);
+                // Continuer avec le fichier suivant
+                traiterFichierSequentiel(index + 1);
+                return;
+            }
             const dbSizeAfterIndex = getDbSizeMB(DB_FILE);
             console.log(`      ✅ Index créé - Taille DB: ${dbSizeAfterIndex} MB`);
             
@@ -1631,28 +1638,41 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     }
                     console.log('');
                     
-                    const apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
-                    const reduction = Math.round((1 - apres/avantAgreg) * 100);
+                    let apres = 0;
+                    try {
+                        apres = db.prepare('SELECT COUNT(*) as c FROM temp_agregated').get().c;
+                    } catch (countErr) {
+                        console.error(`      ❌ Erreur lors du comptage: ${countErr.message}`);
+                        apres = 0;
+                    }
+                    const reduction = apres > 0 ? Math.round((1 - apres/avantAgreg) * 100) : 0;
                     const dbSizeAfterAgreg = getDbSizeMB(DB_FILE);
                     console.log(`      📉 Réduction: ${avantAgreg.toLocaleString()} → ${apres.toLocaleString()} lignes (${reduction}%)`);
                     console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB, Taille DB: ${dbSizeAfterAgreg} MB`);
                     
                     // Fusionner dans terrains_batir_temp
                     console.log(`      ⬆️  Fusion dans terrains_batir_temp...`);
-    db.exec(`
-        INSERT INTO terrains_batir_temp (
-                        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                        date_mutation, latitude, longitude,
-                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
-        )
-        SELECT 
-                        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                        date_mutation, latitude, longitude,
-                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
-                    FROM temp_agregated;
-                    `);
-                    const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
-                    console.log(`      ✅ Fusion terminée - Taille DB: ${dbSizeAfterFusion} MB`);
+                    try {
+                        db.exec(`
+                            INSERT INTO terrains_batir_temp (
+                                id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                                date_mutation, latitude, longitude,
+                                code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
+                            )
+                            SELECT 
+                                id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                                date_mutation, latitude, longitude,
+                                code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
+                            FROM temp_agregated;
+                        `);
+                        const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
+                        console.log(`      ✅ Fusion terminée - Taille DB: ${dbSizeAfterFusion} MB`);
+                    } catch (fusionErr) {
+                        console.error(`      ❌ Erreur lors de la fusion: ${fusionErr.message}`);
+                        // Continuer avec le fichier suivant même en cas d'erreur
+                        traiterFichierSequentiel(index + 1);
+                        return;
+                    }
                     console.log(`      🔍 DEBUG: Mémoire: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
                     
                     // Nettoyer et RÉCUPÉRER l'espace disque

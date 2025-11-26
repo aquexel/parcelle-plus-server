@@ -699,15 +699,39 @@ function estDejaNormalise(filePath) {
         
         // Vérifier que les colonnes sont en minuscules avec underscores (pas d'espaces, pas de majuscules)
         const colonnes = firstLine.split(',');
+        
+        // Liste des colonnes normalisées attendues
+        const colonnesNormaliseesAttendues = [
+            'id_mutation', 'date_mutation', 'valeur_fonciere', 'code_departement',
+            'code_commune', 'nom_commune', 'id_parcelle', 'section_cadastrale'
+        ];
+        
+        let colonnesNormaliseesTrouvees = 0;
+        
         for (const col of colonnes) {
-            const colClean = col.trim().replace(/"/g, '');
-            // Si la colonne contient des espaces ou des majuscules (sauf pour les valeurs), ce n'est pas normalisé
-            if (colClean.includes(' ') || /[A-Z]/.test(colClean)) {
+            const colClean = col.trim().replace(/"/g, '').toLowerCase();
+            
+            // Si la colonne contient des espaces ou des majuscules dans le nom (pas dans les valeurs), ce n'est pas normalisé
+            if (colClean.includes(' ') && !colClean.match(/^[a-z_]+$/)) {
                 return false;
+            }
+            
+            // Vérifier si c'est une colonne normalisée attendue
+            if (colonnesNormaliseesAttendues.some(attendu => colClean === attendu || colClean.startsWith(attendu))) {
+                colonnesNormaliseesTrouvees++;
             }
         }
         
-        return true;
+        // Si on trouve au moins 5 colonnes normalisées attendues, le fichier est probablement normalisé
+        // Et si aucune colonne ne contient d'espaces ou de majuscules dans le nom
+        const toutesEnMinuscules = colonnes.every(col => {
+            const colClean = col.trim().replace(/"/g, '');
+            // Vérifier seulement le nom de la colonne (avant le premier caractère qui pourrait être une valeur)
+            const nomColonne = colClean.split(/[^a-z_]/)[0];
+            return nomColonne === nomColonne.toLowerCase() && !nomColonne.includes(' ');
+        });
+        
+        return toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5;
     } catch (err) {
         return false;
     }
@@ -761,7 +785,7 @@ async function nettoyerGuillemetsDVF(filePath) {
 // Fonction pour normaliser un fichier DVF (convertir au format uniforme) - Version streaming optimisée
 function normaliserFichierDVF(filePath) {
     return new Promise((resolve, reject) => {
-        // Vérifier si le fichier est déjà normalisé
+        // Vérifier si le fichier est déjà normalisé AVANT de commencer tout traitement
         if (estDejaNormalise(filePath)) {
             console.log(`   ⏭️  ${path.basename(filePath)} déjà normalisé, ignoré`);
             resolve();

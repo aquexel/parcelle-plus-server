@@ -987,43 +987,98 @@ function detecterSeparateurPA(filePath) {
 }
 
 // 🧹 Fonction simple : enlever tous les " du fichier
-function nettoyerGuillemetsDVF(filePath) {
-    return new Promise((resolve, reject) => {
-        console.log(`      🧹 Nettoyage des guillemets...`);
-        
+// Fonction pour vérifier si un fichier contient des guillemets
+function fichierContientGuillemets(filePath) {
+    try {
         const readline = require('readline');
-        const tempFile = filePath + '.tmp';
-        const writeStream = fs.createWriteStream(tempFile);
+        const stream = fs.createReadStream(filePath);
         const rl = readline.createInterface({
-            input: fs.createReadStream(filePath),
+            input: stream,
             crlfDelay: Infinity
         });
         
-        let count = 0;
+        let ligneCount = 0;
+        let contientGuillemets = false;
         
-        rl.on('line', (line) => {
-            // Remplacer " par rien
-            const cleanedLine = line.replace(/"/g, '');
-            writeStream.write(cleanedLine + '\n');
-            count++;
-        });
-        
-        rl.on('close', () => {
-            writeStream.end();
-            
-            writeStream.on('finish', () => {
-                // Remplacer l'original
-                fs.unlinkSync(filePath);
-                fs.renameSync(tempFile, filePath);
-                
-                console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
-                resolve();
+        return new Promise((resolve) => {
+            rl.on('line', (line) => {
+                ligneCount++;
+                if (line.includes('"')) {
+                    contientGuillemets = true;
+                    rl.close();
+                    stream.close();
+                    resolve(true);
+                    return;
+                }
+                // Vérifier seulement les 100 premières lignes pour être rapide
+                if (ligneCount >= 100) {
+                    rl.close();
+                    stream.close();
+                    resolve(false);
+                    return;
+                }
             });
             
-            writeStream.on('error', reject);
+            rl.on('close', () => {
+                resolve(contientGuillemets);
+            });
+            
+            rl.on('error', () => {
+                resolve(false);
+            });
         });
+    } catch (err) {
+        return Promise.resolve(false);
+    }
+}
+
+function nettoyerGuillemetsDVF(filePath) {
+    return new Promise((resolve, reject) => {
+        console.log(`      🧹 Vérification des guillemets...`);
         
-        rl.on('error', reject);
+        fichierContientGuillemets(filePath).then((aNettoyer) => {
+            if (!aNettoyer) {
+                console.log(`      ✅ Fichier déjà nettoyé, pas de guillemets détectés`);
+                resolve();
+                return;
+            }
+            
+            console.log(`      🧹 Nettoyage des guillemets...`);
+            
+            const readline = require('readline');
+            const tempFile = filePath + '.tmp';
+            const writeStream = fs.createWriteStream(tempFile);
+            const rl = readline.createInterface({
+                input: fs.createReadStream(filePath),
+                crlfDelay: Infinity
+            });
+            
+            let count = 0;
+            
+            rl.on('line', (line) => {
+                // Remplacer " par rien
+                const cleanedLine = line.replace(/"/g, '');
+                writeStream.write(cleanedLine + '\n');
+                count++;
+            });
+            
+            rl.on('close', () => {
+                writeStream.end();
+                
+                writeStream.on('finish', () => {
+                    // Remplacer l'original
+                    fs.unlinkSync(filePath);
+                    fs.renameSync(tempFile, filePath);
+                    
+                    console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
+                    resolve();
+                });
+                
+                writeStream.on('error', reject);
+            });
+            
+            rl.on('error', reject);
+        });
     });
 }
 

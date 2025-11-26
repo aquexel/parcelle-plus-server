@@ -57,6 +57,7 @@ function getDbSizeMB(dbPath) {
 }
 
 let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
+const PARCELLES_DB_FILE = path.join(__dirname, '..', 'database', 'parcelles.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
 // Plus de filtre département - France entière
 const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)
@@ -155,6 +156,11 @@ if (fs.existsSync(DB_FILE)) {
 const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL'); // Optimisation pour performance
+
+// Attacher la base de données des parcelles à la base principale
+// Utiliser le chemin absolu pour éviter les problèmes de chemin relatif
+const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
+db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
 db.pragma('cache_size = -64000'); // 64 MB de cache
 db.pragma('temp_store = MEMORY'); // Utiliser la RAM pour les tables temporaires (économie disque)
 
@@ -247,19 +253,29 @@ if (!dbExisteAvecDFI) {
     }
 }
 
-// Fonction pour charger parcelle.csv dans une table de base de données
-function chargerParcellesDansDB(db) {
+// Fonction pour charger parcelle.csv dans une base de données dédiée
+function chargerParcellesDansDB() {
     return new Promise((resolve) => {
+        // S'assurer que le répertoire database existe
+        const dbDir = path.dirname(PARCELLES_DB_FILE);
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
+        }
+        
+        // Ouvrir la base de données dédiée aux parcelles
+        const dbParcelles = new Database(PARCELLES_DB_FILE);
+        
         // Vérifier si la table parcelle existe déjà avec des données
-        const tableExists = db.prepare(`
+        const tableExists = dbParcelles.prepare(`
             SELECT name FROM sqlite_master 
             WHERE type='table' AND name='parcelle'
         `).get();
         
         if (tableExists) {
-            const count = db.prepare('SELECT COUNT(*) as cnt FROM parcelle').get().cnt;
+            const count = dbParcelles.prepare('SELECT COUNT(*) as cnt FROM parcelle').get().cnt;
             if (count > 0) {
-                console.log(`✅ Table parcelle déjà existante avec ${count.toLocaleString()} parcelles, conversion ignorée\n`);
+                console.log(`✅ Base parcelles.db déjà existante avec ${count.toLocaleString()} parcelles, conversion ignorée\n`);
+                dbParcelles.close();
                 resolve();
                 return;
             }
@@ -271,16 +287,17 @@ function chargerParcellesDansDB(db) {
             if (tableExists) {
                 console.log('⚠️  Fichier parcelle.csv non trouvé mais table parcelle existe (vide), conversion ignorée\n');
             } else {
-                console.log('⚠️  Fichier parcelle.csv non trouvé, table parcelle non créée\n');
+                console.log('⚠️  Fichier parcelle.csv non trouvé, base parcelles.db non créée\n');
             }
+            dbParcelles.close();
             resolve();
             return;
         }
         
-        console.log('📂 Chargement de parcelle.csv dans la base de données...');
+        console.log('📂 Chargement de parcelle.csv dans la base de données dédiée (parcelles.db)...');
         
         // Créer la table parcelle
-        db.exec(`
+        dbParcelles.exec(`
             DROP TABLE IF EXISTS parcelle;
             CREATE TABLE parcelle (
                 parcelle_id TEXT PRIMARY KEY,
@@ -291,13 +308,13 @@ function chargerParcellesDansDB(db) {
             );
         `);
         
-        const insertParcelle = db.prepare(`
+        const insertParcelle = dbParcelles.prepare(`
             INSERT INTO parcelle (parcelle_id, geom_parcelle, s_geom_parcelle, code_departement_insee, code_commune_insee)
             VALUES (?, ?, ?, ?, ?)
         `);
         
         let countLoaded = 0;
-        const insertTransaction = db.transaction((rows) => {
+        const insertTransaction = dbParcelles.transaction((rows) => {
             for (const row of rows) {
                 try {
                     insertParcelle.run(
@@ -331,12 +348,12 @@ function chargerParcellesDansDB(db) {
                 }
                 
                 // Créer les index
-                db.exec(`
+                dbParcelles.exec(`
                     CREATE INDEX IF NOT EXISTS idx_parcelle_id ON parcelle(parcelle_id);
                     CREATE INDEX IF NOT EXISTS idx_parcelle_commune ON parcelle(code_commune_insee);
                 `);
                 
-                console.log(`✅ ${countLoaded} parcelles chargées dans la base de données\n`);
+                console.log(`✅ ${countLoaded} parcelles chargées dans parcelles.db\n`);
                 
                 // Supprimer le fichier CSV après conversion réussie
                 try {
@@ -346,10 +363,12 @@ function chargerParcellesDansDB(db) {
                     console.log(`⚠️  Impossible de supprimer parcelle.csv: ${deleteErr.message}\n`);
                 }
                 
+                dbParcelles.close();
                 resolve();
             })
             .on('error', (err) => {
                 console.log(`⚠️  Erreur lors du chargement de parcelle.csv: ${err.message}\n`);
+                dbParcelles.close();
                 resolve();
             });
     });
@@ -681,7 +700,7 @@ function enrichirCoordonnees(db) {
         const parcelleCoords = new Map();
         const parcelles = db.prepare(`
             SELECT parcelle_id, geom_parcelle 
-            FROM parcelle 
+            FROM parcelles_db.parcelle 
             WHERE geom_parcelle IS NOT NULL
         `).all();
         
@@ -1665,9 +1684,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
     });
 }
 
-// ÉTAPE 0 : Charger parcelle.csv dans la base de données
-console.log('📊 ÉTAPE 0 : Chargement de parcelle.csv dans la base de données...\n');
-chargerParcellesDansDB(db).then(() => {
+// ÉTAPE 0 : Charger parcelle.csv dans la base de données dédiée
+console.log('📊 ÉTAPE 0 : Chargement de parcelle.csv dans la base de données dédiée (parcelles.db)...\n');
+chargerParcellesDansDB().then(() => {
     // ÉTAPE 1 : Charger les DVF DIRECTEMENT dans terrains_batir_temp
     // 🔥 OPTIMISATION RADICALE : Plus de table intermédiaire dvf_temp_indexed
     // Économie : ~14 GB d'espace disque temporaire
@@ -2197,14 +2216,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         return new Promise((resolve) => {
             try {
-                // Vérifier si la table parcelle existe
+                // Vérifier si la table parcelle existe dans la base attachée
                 const tableExists = db.prepare(`
-                    SELECT name FROM sqlite_master 
+                    SELECT name FROM parcelles_db.sqlite_master 
                     WHERE type='table' AND name='parcelle'
                 `).get();
                 
                 if (!tableExists) {
-                    console.log(`   ⚠️  Table parcelle non trouvée, enrichissement ignoré\n`);
+                    console.log(`   ⚠️  Table parcelle non trouvée dans parcelles_db, enrichissement ignoré\n`);
                     resolve();
                     return;
                 }
@@ -2214,7 +2233,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     UPDATE pa_filles_temp
                     SET superficie = COALESCE(
                         NULLIF(pa_filles_temp.superficie, 0),
-                        (SELECT s_geom_parcelle FROM parcelle p 
+                        (SELECT s_geom_parcelle FROM parcelles_db.parcelle p 
                          WHERE p.parcelle_id = (
                              pa_filles_temp.code_commune_dvf || 
                              pa_filles_temp.section || 

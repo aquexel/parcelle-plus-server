@@ -709,6 +709,7 @@ function estDejaNormalise(filePath) {
         
         let colonnesNormaliseesTrouvees = 0;
         let toutesEnMinuscules = true;
+        let colonnesAvecEspacesOuMajuscules = 0;
         
         for (const col of colonnes) {
             const colClean = col.trim().replace(/"/g, '');
@@ -720,8 +721,12 @@ function estDejaNormalise(filePath) {
             // Pour l'en-tête, on prend toute la colonne (pas de valeurs dans l'en-tête)
             // Si la colonne contient des espaces ou des majuscules dans le nom, ce n'est pas normalisé
             if (colClean.includes(' ') || (colClean !== colLower && /[A-Z]/.test(colClean))) {
-                toutesEnMinuscules = false;
-                break;
+                colonnesAvecEspacesOuMajuscules++;
+                // Si plus de 2 colonnes avec espaces/majuscules, ce n'est probablement pas normalisé
+                if (colonnesAvecEspacesOuMajuscules > 2) {
+                    toutesEnMinuscules = false;
+                    break;
+                }
             }
             
             // Vérifier si c'est une colonne normalisée attendue (nom normalisé ou alternatif acceptable)
@@ -741,7 +746,16 @@ function estDejaNormalise(filePath) {
         // Si toutes les colonnes sont en minuscules avec underscores ET qu'on trouve au moins 5 colonnes connues,
         // le fichier est probablement déjà normalisé (même avec des noms alternatifs comme numero_disposition)
         // OU si on trouve au moins 7 colonnes connues (fichier très probablement normalisé)
-        const estNormalise = (toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5) || colonnesNormaliseesTrouvees >= 7;
+        // OU si on trouve au moins 5 colonnes connues et moins de 3 colonnes avec espaces/majuscules (tolérance)
+        // OU si on trouve les colonnes clés id_mutation, date_mutation, valeur_fonciere (fichier normalisé)
+        const aColonnesCles = firstLine.toLowerCase().includes('id_mutation') && 
+                              firstLine.toLowerCase().includes('date_mutation') && 
+                              firstLine.toLowerCase().includes('valeur_fonciere');
+        
+        const estNormalise = (toutesEnMinuscules && colonnesNormaliseesTrouvees >= 5) || 
+                             colonnesNormaliseesTrouvees >= 7 ||
+                             (colonnesNormaliseesTrouvees >= 5 && colonnesAvecEspacesOuMajuscules <= 2) ||
+                             (aColonnesCles && colonnesNormaliseesTrouvees >= 3);
         
         return estNormalise;
     } catch (err) {

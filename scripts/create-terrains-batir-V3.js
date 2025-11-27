@@ -305,14 +305,13 @@ function chargerParcellesDansDB() {
                 geom_parcelle TEXT,
                 s_geom_parcelle REAL,
                 code_departement_insee TEXT,
-                code_commune_insee TEXT,
-                nom_commune TEXT
+                code_commune_insee TEXT
             );
         `);
         
         const insertParcelle = dbParcelles.prepare(`
-            INSERT INTO parcelle (parcelle_id, geom_parcelle, s_geom_parcelle, code_departement_insee, code_commune_insee, nom_commune)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO parcelle (parcelle_id, geom_parcelle, s_geom_parcelle, code_departement_insee, code_commune_insee)
+            VALUES (?, ?, ?, ?, ?)
         `);
         
         let countLoaded = 0;
@@ -324,8 +323,7 @@ function chargerParcellesDansDB() {
                         row.geom_parcelle || null,
                         parseFloat(row.s_geom_parcelle || 0) || null,
                         row.code_departement_insee || null,
-                        row.code_commune_insee || null,
-                        (row.nom_commune || row.commune || '').trim().toUpperCase() || null
+                        row.code_commune_insee || null
                     );
                     countLoaded++;
                 } catch (err) {

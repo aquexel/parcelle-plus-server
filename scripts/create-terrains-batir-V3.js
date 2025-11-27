@@ -1718,18 +1718,9 @@ chargerParcellesDansDB().then(() => {
 console.log('📊 ÉTAPE 1 : Chargement DVF directement dans la table de travail...\n');
 console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (économie ~14 GB)\n');
 
-// Préparer l'insertion DIRECTE dans terrains_batir_temp
-// Note: insertDvfTemp n'est pas utilisé directement - les données passent par temp_csv_file puis temp_agregated
-// Cette instruction est conservée pour référence mais n'est pas utilisée
-const insertDvfTemp = db.prepare(`
-    INSERT INTO terrains_batir_temp (
-        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-        date_mutation, code_departement, code_commune, section_cadastrale,
-        parcelle_suffixe, nom_commune, prix_m2, est_terrain_viabilise, id_pa
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)
-`);
-
-chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
+// Note: insertDvfTemp n'est pas utilisé - les données passent par temp_csv_file puis temp_agregated
+// chargerTousLesCSV n'utilise pas le paramètre insertStmt
+chargerTousLesCSV(db, null).then((totalInserted) => {
     console.log(`✅ ${totalInserted.toLocaleString()} transactions DVF chargées dans terrains_batir_temp\n`);
     
     // ⚡ Données déjà dans terrains_batir_temp, on passe directement à l'indexation

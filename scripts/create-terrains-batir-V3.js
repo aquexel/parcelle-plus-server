@@ -191,7 +191,6 @@ db.exec(`
         longitude REAL,
         code_departement TEXT,
         code_commune TEXT,
-        code_postal TEXT,
         nom_commune TEXT,
         section_cadastrale TEXT,
         est_terrain_viabilise INTEGER DEFAULT 0,
@@ -1224,7 +1223,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 latitude REAL,
                 longitude REAL,
                 code_commune TEXT,
-                code_postal TEXT,
                 section_cadastrale TEXT,
                 parcelle_suffixe TEXT,
                 nom_commune TEXT
@@ -1249,8 +1247,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     id_parcelle, id_mutation, code_departement,
                     valeur_fonciere, surface_totale, surface_reelle_bati,
                     date_mutation, latitude, longitude,
-                    code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    code_commune, section_cadastrale, parcelle_suffixe, nom_commune
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             // Batch transaction pour performance (comme script DPE)
@@ -1318,7 +1316,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         'valeur_fonciere': ['valeur_fonciere', 'valeur_fonciere_globale'],
                         'code_departement': ['code_departement', 'dep'],
                         'code_commune': ['code_commune', 'comm', 'code_commune_insee'],
-                        'code_postal': ['code_postal', 'code_postal_commune', 'postal_code'],
                         'nom_commune': ['nom_commune', 'commune'],
                         'id_parcelle': ['id_parcelle', 'identifiant_local', 'parcelle'],
                         'section': ['section', 'section_cadastrale'],
@@ -1523,9 +1520,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     const latitude = parseFloat(row.lat || row.latitude || 0) || null;
                     const longitude = parseFloat(row.lon || row.longitude || 0) || null;
                     
-                    // Extraire le code postal depuis la DVF
-                    const codePostal = getColumnValue(row, ['code_postal', 'code_postal_commune', 'postal_code']) || null;
-                    
                     // Précalculer le suffixe parcelle et code commune (optimisation)
                     const parcelleSuffixe = idParcelle.length >= 6 ? idParcelle.substring(5) : null;
                     const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
@@ -1548,7 +1542,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             latitude,
                             longitude,
                             codeCommune,
-                            codePostal,  // Ajouter code_postal
                             section,
                             parcelleSuffixe,
                             nomCommune || null  // Ajouter nom_commune (peut être vide)
@@ -1632,7 +1625,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         longitude REAL,
                         code_departement TEXT,
                         code_commune TEXT,
-                        code_postal TEXT,
                         section_cadastrale TEXT,
                         parcelle_suffixe TEXT,
                         nom_commune TEXT
@@ -1653,7 +1645,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             AVG(longitude) as longitude,
                             code_departement,
                             MAX(code_commune) as code_commune,
-                            MAX(code_postal) as code_postal,
                             MAX(section_cadastrale) as section_cadastrale,
                             MAX(parcelle_suffixe) as parcelle_suffixe,
                             MAX(nom_commune) as nom_commune
@@ -1705,12 +1696,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
         INSERT INTO terrains_batir_temp (
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, latitude, longitude,
-                        code_departement, code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
+                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
         )
         SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, latitude, longitude,
-                        code_departement, code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
+                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
                     FROM temp_agregated;
                     `);
                     const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
@@ -1768,7 +1759,7 @@ console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (éco
 const insertDvfTemp = db.prepare(`
     INSERT INTO terrains_batir_temp (
         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-        date_mutation, code_departement, code_commune, code_postal, section_cadastrale,
+        date_mutation, code_departement, code_commune, section_cadastrale,
         parcelle_suffixe, nom_commune, prix_m2, est_terrain_viabilise, id_pa
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)
 `);
@@ -1820,46 +1811,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log('✅ Index créés sur terrains_batir_temp');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
 
-    // ÉTAPE 2.5 : Créer table de correspondance code postal → code INSEE
-    // Le PA utilise le code postal (colonne COMM) mais DVF utilise le code INSEE dans id_parcelle
-    // On extrait le code INSEE depuis id_parcelle (SUBSTR(id_parcelle, 1, 5))
-    console.log('⚡ ÉTAPE 2.5 : Création table correspondance code postal → code INSEE...');
-    db.exec(`
-        DROP TABLE IF EXISTS correspondance_postal_insee;
-        CREATE TEMP TABLE correspondance_postal_insee (
-            code_postal TEXT,
-            code_insee TEXT,
-            PRIMARY KEY (code_postal, code_insee)
-        );
-    `);
-    
-    // Extraire les correspondances depuis terrains_batir_temp
-    // On crée une correspondance entre le code postal (colonne code_commune) et le code INSEE (extrait de id_parcelle)
-    // Si plusieurs codes INSEE existent pour un même code postal, on les garde tous
-    db.exec(`
-        INSERT INTO correspondance_postal_insee (code_postal, code_insee)
-        SELECT DISTINCT
-            code_commune as code_postal,
-            SUBSTR(id_parcelle, 1, 5) as code_insee
-        FROM terrains_batir_temp
-        WHERE id_parcelle IS NOT NULL 
-          AND LENGTH(id_parcelle) >= 5
-          AND code_commune IS NOT NULL
-          AND code_commune != SUBSTR(id_parcelle, 1, 5)
-    `);
-    
-    // Ajouter aussi les correspondances directes (code postal = code INSEE)
-    db.exec(`
-        INSERT OR IGNORE INTO correspondance_postal_insee (code_postal, code_insee)
-        SELECT DISTINCT
-            code_commune as code_postal,
-            code_commune as code_insee
-        FROM terrains_batir_temp
-        WHERE code_commune IS NOT NULL
-    `);
-    
-    const nbCorrespondances = db.prepare(`SELECT COUNT(*) as nb FROM correspondance_postal_insee`).get().nb;
-    console.log(`✅ ${nbCorrespondances.toLocaleString()} correspondances créées\n`);
 
     // ÉTAPE 3 : Créer vue agrégée par id_mutation
     // ✅ Déduplication déjà faite après chaque fichier CSV (voir ÉTAPE 1)
@@ -1960,10 +1911,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             
             const numPA = row.NUM_PA;
             const dateAuth = row.DATE_REELLE_AUTORISATION;
-            // COMM contient le code INSEE, ADR_CODPOS_TER contient le code postal
-            const codeInseePA = row.COMM || ''; // Code INSEE pour enrichissement depuis table parcelle
-            const codePostalPA = row.ADR_CODPOS_TER || row.COMM; // Code postal pour jointure PA-DVF
-            const comm = codePostalPA; // Utiliser le code postal pour la jointure DVF
+            // COMM contient le code INSEE
+            const codeInseePA = row.COMM || ''; // Code INSEE pour jointure DVF et enrichissement
+            const comm = codeInseePA; // Utiliser le code INSEE pour la jointure DVF
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -2074,7 +2024,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 num_pa TEXT,
                 code_commune_dfi TEXT,
                 code_commune_dvf TEXT,
-                code_insee TEXT,
                 nom_commune TEXT,
                 section TEXT,
                 parcelle_normalisee TEXT,
@@ -2084,17 +2033,17 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         `);
         
         // Insérer toutes les parcelles PA en masse
-        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertManyPA = db.transaction(() => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
                 
-                // pa.comm est maintenant le code postal (ADR_CODPOS_TER)
-                const codePostalDVF = String(pa.comm).padStart(5, '0');
+                // pa.comm est maintenant le code INSEE (COMM)
+                const codeInseeDVF = String(pa.comm).padStart(5, '0');
                 // Extraire les 3 derniers chiffres du code INSEE pour la recherche dans la DFI
                 const codeCommuneDFI = pa.codeInsee 
                     ? String(pa.codeInsee).padStart(5, '0').substring(2)  // Extraire les 3 derniers chiffres (ex: 40088 -> 088)
-                    : codePostalDVF.substring(codePostalDVF.length - 3);
+                    : codeInseeDVF.substring(codeInseeDVF.length - 3);
                 
                 for (const parcelle of pa.parcelles) {
                     const parcelleStr = String(parcelle).trim().toUpperCase();
@@ -2110,9 +2059,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                             insertPA.run(
                                 pa.numPA,
                                 codeCommuneDFI,
-                                codePostalDVF,  // Utiliser le code postal pour la jointure DVF
-                                pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis table parcelle
-                                NULL,  // Nom de commune sera enrichi depuis table parcelle
+                                codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
+                                NULL,  // Nom de commune sera enrichi depuis v_commune_2025.csv
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2201,8 +2149,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   → Traitement par batch de ${communesAvecPA.length} communes avec PA...`);
         
         // Traiter commune par commune (évite jointure 87k PA × 36M DVF en une fois)
-        // IMPORTANT: Utiliser le code postal pour la jointure PA-DVF
-        // Le PA utilise ADR_CODPOS_TER (code postal) et la DVF a aussi le code postal dans code_postal
+        // IMPORTANT: Utiliser le code INSEE pour la jointure PA-DVF
+        // Le PA utilise COMM (code INSEE) et la DVF a aussi le code INSEE dans code_commune
         const insertBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_meres 
             SELECT DISTINCT
@@ -2214,7 +2162,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 m.surface_totale_aggregee
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
-                t.code_postal = p.code_commune_dvf
+                t.code_commune = p.code_commune_dvf
                 AND (
                     (p.nom_commune IS NULL OR p.nom_commune = '')
                     OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(p.nom_commune))
@@ -2317,7 +2265,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
         `).all();
         
-        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertFillesTransaction = db.transaction(() => {
             let countAssociations = 0;
             for (const pa of paList) {
@@ -2366,8 +2314,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
-                                        pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis table parcelle
-                                        NULL,  // Nom de commune sera enrichi depuis table parcelle
+                                        NULL,  // Nom de commune sera enrichi depuis v_commune_2025.csv
                                         sectionFille,
                                         fille,
                                         parcelleSuffixe,
@@ -2392,24 +2339,24 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 const updateNomCommuneFilles = db.prepare(`
                     UPDATE pa_filles_temp
                     SET nom_commune = ?
-                    WHERE code_insee = ?
+                    WHERE code_commune_dvf = ?
                       AND (nom_commune IS NULL OR nom_commune = '')
                 `);
                 
                 const updateTransaction = db.transaction(() => {
                     const codesInsee = db.prepare(`
-                        SELECT DISTINCT code_insee 
+                        SELECT DISTINCT code_commune_dvf 
                         FROM pa_filles_temp 
-                        WHERE code_insee IS NOT NULL 
+                        WHERE code_commune_dvf IS NOT NULL 
                           AND (nom_commune IS NULL OR nom_commune = '')
                     `).all();
                     
                     let countEnrichies = 0;
                     for (const row of codesInsee) {
-                        const codeInseeNormalise = String(row.code_insee).padStart(5, '0');
+                        const codeInseeNormalise = String(row.code_commune_dvf).padStart(5, '0');
                         const nomCommune = communeMap.get(codeInseeNormalise);
                         if (nomCommune) {
-                            const result = updateNomCommuneFilles.run(nomCommune, row.code_insee);
+                            const result = updateNomCommuneFilles.run(nomCommune, row.code_commune_dvf);
                             countEnrichies += result.changes;
                         }
                     }
@@ -2522,7 +2469,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 COUNT(DISTINCT t.id_parcelle) as nb_parcelles
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
-                t.code_postal = pf.code_commune_dvf
+                t.code_commune = pf.code_commune_dvf
                 AND (
                     (pf.nom_commune IS NULL OR pf.nom_commune = '')
                     OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(pf.nom_commune))

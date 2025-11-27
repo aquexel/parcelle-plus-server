@@ -2017,8 +2017,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                                 pa.numPA,
                                 codeCommuneDFI,
                                 codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
-                                pa.codeInsee || NULL,  // Code INSEE
-                                NULL,  // Nom de commune
+                                pa.codeInsee || null,  // Code INSEE
+                                null,  // Nom de commune
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2232,8 +2232,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
-                                        pa.codeInsee || NULL,  // Code INSEE
-                                        NULL,  // Nom de commune
+                                        pa.codeInsee || null,  // Code INSEE
+                                        null,  // Nom de commune
                                         sectionFille,
                                         fille,
                                         parcelleSuffixe,

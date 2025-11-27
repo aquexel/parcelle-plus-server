@@ -2248,7 +2248,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             CREATE TEMP TABLE pa_filles_temp (
                 num_pa TEXT,
                 code_commune_dvf TEXT,
-                code_insee TEXT,
                 nom_commune TEXT,
                 section TEXT,
                 parcelle_fille TEXT,

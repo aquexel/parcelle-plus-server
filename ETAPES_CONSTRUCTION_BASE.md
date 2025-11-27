@@ -111,8 +111,8 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   - `num_pa`
   - `code_commune_dfi` (3 derniers chiffres du code INSEE pour DFI)
   - `code_commune_dvf` (✅ **code INSEE pour jointure DVF**, 5 chiffres)
-  - `code_insee` (code INSEE complet du PA, pour enrichissement depuis `v_commune_2025.csv`)
-  - `nom_commune` (enrichi depuis `v_commune_2025.csv`)
+  - `code_insee` (code INSEE complet du PA)
+  - `nom_commune` (NULL, non enrichi)
   - `section`
   - `parcelle_normalisee` (ex: "BL0056" avec padding à 4 chiffres)
   - `superficie`
@@ -152,8 +152,8 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 - **Colonnes** :
   - `num_pa`
   - `code_commune_dvf` (✅ **code INSEE pour jointure DVF**, 5 chiffres)
-  - `code_insee` (code INSEE complet du PA, pour enrichissement depuis `v_commune_2025.csv`)
-  - `nom_commune` (enrichi depuis `v_commune_2025.csv`)
+  - `code_insee` (code INSEE complet du PA)
+  - `nom_commune` (NULL, non enrichi)
   - `section`
   - `parcelle_fille`
   - `parcelle_fille_suffixe` (ex: "000BL0056")

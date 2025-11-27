@@ -305,13 +305,14 @@ function chargerParcellesDansDB() {
                 geom_parcelle TEXT,
                 s_geom_parcelle REAL,
                 code_departement_insee TEXT,
-                code_commune_insee TEXT
+                code_commune_insee TEXT,
+                nom_commune TEXT
             );
         `);
         
         const insertParcelle = dbParcelles.prepare(`
-            INSERT INTO parcelle (parcelle_id, geom_parcelle, s_geom_parcelle, code_departement_insee, code_commune_insee)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO parcelle (parcelle_id, geom_parcelle, s_geom_parcelle, code_departement_insee, code_commune_insee, nom_commune)
+            VALUES (?, ?, ?, ?, ?, ?)
         `);
         
         let countLoaded = 0;
@@ -323,7 +324,8 @@ function chargerParcellesDansDB() {
                         row.geom_parcelle || null,
                         parseFloat(row.s_geom_parcelle || 0) || null,
                         row.code_departement_insee || null,
-                        row.code_commune_insee || null
+                        row.code_commune_insee || null,
+                        (row.nom_commune || row.commune || '').trim().toUpperCase() || null
                     );
                     countLoaded++;
                 } catch (err) {
@@ -676,6 +678,73 @@ function attribuerTypeUsage(db) {
             console.log(`   ✅ ${countMeresUpdated} transactions non-viabilisées mises à jour avec type depuis parcelles filles\n`);
             
             resolve();
+        }
+    });
+}
+
+// Fonction pour enrichir le nom de commune depuis la table parcelle (après PA-DVF)
+function enrichirNomCommune(db) {
+    return new Promise((resolve, reject) => {
+        try {
+            // Vérifier si la table parcelle existe dans la base attachée
+            const tableExists = db.prepare(`
+                SELECT name FROM parcelles_db.sqlite_master 
+                WHERE type='table' AND name='parcelle'
+            `).get();
+            
+            if (!tableExists) {
+                console.log('   ⚠️  Table parcelle non trouvée dans parcelles_db, enrichissement nom commune ignoré\n');
+                resolve();
+                return;
+            }
+            
+            // Vérifier si la colonne nom_commune existe en essayant une requête de test
+            try {
+                const testQuery = db.prepare(`
+                    SELECT nom_commune FROM parcelles_db.parcelle LIMIT 1
+                `).get();
+            } catch (err) {
+                if (err.message.includes('no such column') || err.message.includes('nom_commune')) {
+                    console.log('   ⚠️  Colonne nom_commune non trouvée dans table parcelle, enrichissement ignoré\n');
+                    resolve();
+                    return;
+                }
+                throw err;
+            }
+            
+            console.log('   🔗 Enrichissement du nom de commune depuis la table parcelle...');
+            
+            // Enrichir nom_commune depuis la table parcelle pour les transactions sans nom de commune
+            // Utiliser le code INSEE extrait de id_parcelle pour joindre
+            const updateStmt = db.prepare(`
+                UPDATE terrains_batir_temp
+                SET nom_commune = (
+                    SELECT p.nom_commune
+                    FROM parcelles_db.parcelle p
+                    WHERE p.parcelle_id = terrains_batir_temp.id_parcelle
+                      AND p.nom_commune IS NOT NULL
+                      AND p.nom_commune != ''
+                    LIMIT 1
+                )
+                WHERE (nom_commune IS NULL OR nom_commune = '')
+                  AND id_parcelle IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM parcelles_db.parcelle p
+                      WHERE p.parcelle_id = terrains_batir_temp.id_parcelle
+                        AND p.nom_commune IS NOT NULL
+                        AND p.nom_commune != ''
+                  )
+            `);
+            
+            const result = updateStmt.run();
+            const countEnrichies = result.changes;
+            
+            console.log(`   ✅ ${countEnrichies} transactions enrichies avec nom de commune depuis la table parcelle\n`);
+            resolve();
+        } catch (err) {
+            console.log(`   ⚠️  Erreur lors de l'enrichissement du nom de commune: ${err.message}\n`);
+            resolve(); // Ne pas bloquer le processus
         }
     });
 }
@@ -2563,8 +2632,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         process.exit(1);
     });
     
-    console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
-    enrichirCoordonnees(db).then(() => {
+    // ÉTAPE 5 : Enrichissement du nom de commune depuis la table parcelle (après PA-DVF)
+    console.log('📊 ÉTAPE 5 : Enrichissement du nom de commune depuis la table parcelle...');
+    enrichirNomCommune(db).then(() => {
+        console.log('✅ Enrichissement du nom de commune terminé\n');
+        
+        // ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales
+        console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+        enrichirCoordonnees(db).then(() => {
         // ÉTAPE 7 : Créer la table finale simplifiée
         console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
         
@@ -2661,8 +2736,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log('✅ Base terrains_batir créée avec succès !\n');
         db.close();
         process.exit(0);
+        }).catch(err => {
+            console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
+            db.close();
+            process.exit(1);
+        });
     }).catch(err => {
-        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
+        console.error('❌ Erreur lors de l\'enrichissement du nom de commune:', err);
         db.close();
         process.exit(1);
     });

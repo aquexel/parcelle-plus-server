@@ -1924,6 +1924,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             // Utiliser ADR_CODPOS_TER (code postal) pour la jointure PA-DVF
             const codePostalPA = row.ADR_CODPOS_TER || row.COMM;
             const comm = codePostalPA; // Utiliser le code postal pour la jointure
+            // Extraire le nom de la commune (plusieurs colonnes possibles)
+            const nomCommunePA = (row.COMMUNE || row.LIBELLE_COMMUNE || row.ADR_LIBELLE_COMMUNE || row.VILLE || '').trim().toUpperCase();
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -1992,6 +1994,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     numPA: numPA,
                     dateAuth: dateAuthFormatee,
                     comm: commNormalise,  // Code postal (sera converti en INSEE plus tard)
+                    nomCommune: nomCommunePA,  // Nom de la commune pour la jointure
                     superficie: superficie,
                     sections: Array.from(sections),
                     parcelles: parcelles,
@@ -2033,6 +2036,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 num_pa TEXT,
                 code_commune_dfi TEXT,
                 code_commune_dvf TEXT,
+                nom_commune TEXT,
                 section TEXT,
                 parcelle_normalisee TEXT,
                 superficie REAL,
@@ -2041,7 +2045,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         `);
         
         // Insérer toutes les parcelles PA en masse
-        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertManyPA = db.transaction(() => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
@@ -2065,6 +2069,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                 pa.numPA,
                                 codeCommuneDFI,
                                 codePostalDVF,  // Utiliser le code postal pour la jointure DVF
+                                pa.nomCommune || '',  // Nom de la commune pour la jointure
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2128,6 +2133,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_postal = p.code_commune_dvf
+                AND (
+                    (p.nom_commune IS NULL OR p.nom_commune = '')
+                    OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(p.nom_commune))
+                )
                 AND t.section_cadastrale = p.section
                 AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
@@ -2209,6 +2218,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             CREATE TEMP TABLE pa_filles_temp (
                 num_pa TEXT,
                 code_commune_dvf TEXT,
+                nom_commune TEXT,
                 section TEXT,
                 parcelle_fille TEXT,
                 parcelle_fille_suffixe TEXT,
@@ -2224,7 +2234,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
         `).all();
         
-        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertFillesTransaction = db.transaction(() => {
             let countAssociations = 0;
             for (const pa of paList) {
@@ -2270,6 +2280,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
+                                        pa.nomCommune || '',  // Nom de la commune pour la jointure
                                         sectionFille,
                                         fille,
                                         parcelleSuffixe,
@@ -2385,6 +2396,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
                 t.code_postal = pf.code_commune_dvf
+                AND (
+                    (pf.nom_commune IS NULL OR pf.nom_commune = '')
+                    OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(pf.nom_commune))
+                )
                 AND t.section_cadastrale = pf.section
                 AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation

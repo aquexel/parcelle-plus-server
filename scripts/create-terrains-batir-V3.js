@@ -1913,7 +1913,16 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 firstRowColumns = Object.keys(row);
                 console.log(`   📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 10).join(', ')}...`);
                 // Afficher aussi un exemple de valeurs pour debug
-                console.log(`   🔍 Exemple première ligne: NUM_PA="${row.NUM_PA}", DATE_REELLE_AUTORISATION="${row.DATE_REELLE_AUTORISATION}", COMM="${row.COMM}"`);
+                const nomCommuneDebug = (
+                    row.COMMUNE || 
+                    row.LIBELLE_COMMUNE || 
+                    row.ADR_LIBELLE_COMMUNE || 
+                    row.ADR_COMMUNE ||
+                    row.NOM_COMMUNE ||
+                    row.VILLE || 
+                    ''
+                ).trim();
+                console.log(`   🔍 Exemple première ligne: NUM_PA="${row.NUM_PA}", DATE_REELLE_AUTORISATION="${row.DATE_REELLE_AUTORISATION}", COMM="${row.COMM}", NOM_COMMUNE="${nomCommuneDebug}"`);
             }
             
             // Utiliser directement la première ligne comme en-tête (comme le script PC)
@@ -1924,8 +1933,16 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             // Utiliser ADR_CODPOS_TER (code postal) pour la jointure PA-DVF
             const codePostalPA = row.ADR_CODPOS_TER || row.COMM;
             const comm = codePostalPA; // Utiliser le code postal pour la jointure
-            // Extraire le nom de la commune (plusieurs colonnes possibles)
-            const nomCommunePA = (row.COMMUNE || row.LIBELLE_COMMUNE || row.ADR_LIBELLE_COMMUNE || row.VILLE || '').trim().toUpperCase();
+            // Extraire le nom de la commune depuis le fichier PA (plusieurs colonnes possibles)
+            const nomCommunePA = (
+                row.COMMUNE || 
+                row.LIBELLE_COMMUNE || 
+                row.ADR_LIBELLE_COMMUNE || 
+                row.ADR_COMMUNE ||
+                row.NOM_COMMUNE ||
+                row.VILLE || 
+                ''
+            ).trim().toUpperCase();
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();

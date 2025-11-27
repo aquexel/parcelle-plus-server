@@ -2121,7 +2121,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 
                 // pa.comm est maintenant le code postal (ADR_CODPOS_TER)
                 const codePostalDVF = String(pa.comm).padStart(5, '0');
-                const codeCommuneDFI = codePostalDVF.substring(codePostalDVF.length - 3);
+                // Utiliser le code INSEE (COMM) pour la recherche dans la DFI
+                const codeCommuneDFI = pa.codeInsee ? String(pa.codeInsee).padStart(5, '0') : codePostalDVF.substring(codePostalDVF.length - 3);
                 
                 for (const parcelle of pa.parcelles) {
                     const parcelleStr = String(parcelle).trim().toUpperCase();
@@ -2312,7 +2313,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 if (aMere) continue; // Skip si déjà traité sur parcelle mère
                 
                 const codeCommuneDVF = String(pa.comm).padStart(5, '0');
-                const codeCommuneDFI = codeCommuneDVF.substring(codeCommuneDVF.length - 3);
+                // Utiliser le code INSEE (COMM) pour la recherche dans la DFI
+                const codeCommuneDFI = pa.codeInsee ? String(pa.codeInsee).padStart(5, '0') : codeCommuneDVF.substring(codeCommuneDVF.length - 3);
                 
                 // Pour chaque parcelle du PA
                 for (const parcelle of pa.parcelles || []) {

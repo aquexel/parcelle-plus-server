@@ -191,6 +191,7 @@ db.exec(`
         longitude REAL,
         code_departement TEXT,
         code_commune TEXT,
+        code_postal TEXT,
         nom_commune TEXT,
         section_cadastrale TEXT,
         est_terrain_viabilise INTEGER DEFAULT 0,
@@ -706,167 +707,167 @@ function enrichirCoordonnees(db) {
         
         let countWithGeom = 0;
         for (const row of parcelles) {
-            const parcelleId = row.parcelle_id;
-            const geom = row.geom_parcelle;
-            
-            if (parcelleId && geom) {
-                const centroid = extraireCentroideLambert(geom);
-                if (centroid) {
-                    const wgs84 = lambert93ToWGS84(centroid.x, centroid.y);
-                    parcelleCoords.set(parcelleId, {
-                        latitude: wgs84.latitude,
-                        longitude: wgs84.longitude
-                    });
-                    countWithGeom++;
+                const parcelleId = row.parcelle_id;
+                const geom = row.geom_parcelle;
+                
+                if (parcelleId && geom) {
+                    const centroid = extraireCentroideLambert(geom);
+                    if (centroid) {
+                        const wgs84 = lambert93ToWGS84(centroid.x, centroid.y);
+                        parcelleCoords.set(parcelleId, {
+                            latitude: wgs84.latitude,
+                            longitude: wgs84.longitude
+                        });
+                        countWithGeom++;
+                    }
                 }
-            }
-        }
+                }
         
         console.log(`   ✅ ${parcelles.length} parcelles chargées, ${countWithGeom} avec géométrie\n`);
-        
-        console.log('   🔗 Enrichissement des coordonnées manquantes...');
-        
-        // Récupérer les transactions sans coordonnées
-        const transactionsSansCoords = db.prepare(`
+                
+                console.log('   🔗 Enrichissement des coordonnées manquantes...');
+                
+                // Récupérer les transactions sans coordonnées
+                const transactionsSansCoords = db.prepare(`
                     SELECT DISTINCT id_parcelle
                     FROM terrains_batir_temp
-            WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
-                AND id_parcelle IS NOT NULL
-        `).all();
-        
-        console.log(`   ${transactionsSansCoords.length} transactions sans coordonnées trouvées`);
-        
-        const updateStmt = db.prepare(`
-            UPDATE terrains_batir_temp
-            SET latitude = ?, longitude = ?
-            WHERE id_parcelle = ?
-                AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
-        `);
-        
-        let countUpdated = 0;
-        let countNotFound = 0;
-        
-        // Charger les relations DFI BIDIRECTIONNELLES
-        console.log('   📂 Chargement des relations DFI (bidirectionnelles)...');
-        const dfiMereVersFilles = new Map(); // parcelle_mere → [parcelles_filles]
-        const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
-        
-        try {
-            const lotissements = db.prepare(`
-                SELECT parcelles_meres, parcelles_filles
-                FROM dfi_lotissements
-                WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
-            `).all();
-            
-            lotissements.forEach(lot => {
-                const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
-                const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
+                    WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                        AND id_parcelle IS NOT NULL
+                `).all();
                 
-                meres.forEach(mere => {
-                    // Relation mère → filles
-                    if (!dfiMereVersFilles.has(mere)) {
-                        dfiMereVersFilles.set(mere, []);
-                    }
-                    filles.forEach(fille => {
-                        if (!dfiMereVersFilles.get(mere).includes(fille)) {
-                            dfiMereVersFilles.get(mere).push(fille);
-                        }
-                        // Relation inverse fille → mère
-                        dfiFilleVersMere.set(fille, mere);
+                console.log(`   ${transactionsSansCoords.length} transactions sans coordonnées trouvées`);
+                
+                const updateStmt = db.prepare(`
+                    UPDATE terrains_batir_temp
+                    SET latitude = ?, longitude = ?
+                    WHERE id_parcelle = ?
+                        AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                `);
+                
+                let countUpdated = 0;
+                let countNotFound = 0;
+                
+                // Charger les relations DFI BIDIRECTIONNELLES
+                console.log('   📂 Chargement des relations DFI (bidirectionnelles)...');
+                const dfiMereVersFilles = new Map(); // parcelle_mere → [parcelles_filles]
+                const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
+                
+                try {
+                    const lotissements = db.prepare(`
+                        SELECT parcelles_meres, parcelles_filles
+                        FROM dfi_lotissements
+                        WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
+                    `).all();
+                    
+                    lotissements.forEach(lot => {
+                        const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
+                        const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
+                        
+                        meres.forEach(mere => {
+                            // Relation mère → filles
+                            if (!dfiMereVersFilles.has(mere)) {
+                                dfiMereVersFilles.set(mere, []);
+                            }
+                            filles.forEach(fille => {
+                                if (!dfiMereVersFilles.get(mere).includes(fille)) {
+                                    dfiMereVersFilles.get(mere).push(fille);
+                                }
+                                // Relation inverse fille → mère
+                                dfiFilleVersMere.set(fille, mere);
+                            });
+                        });
                     });
-                });
-            });
-            console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
-        } catch (err) {
-            console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
-        }
-        
-        let countViaFilles = 0;
-        let countViaMere = 0;
-        
-        for (const tx of transactionsSansCoords) {
-            let coords = parcelleCoords.get(tx.id_parcelle);
-            
-            if (!coords) {
-                // Extraire section et numéro de la parcelle (format: 400260000A0715 → A715)
-                const match = tx.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
-                if (match) {
-                    const section = match[1];
-                    const numero = String(parseInt(match[2], 10));
-                    const parcelleFormat = `${section}${numero}`;
-                    const codeCommune = tx.id_parcelle.substring(0, 5);
+                    console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
+                } catch (err) {
+                    console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
+                }
+                
+                let countViaFilles = 0;
+                let countViaMere = 0;
+                
+                for (const tx of transactionsSansCoords) {
+                    let coords = parcelleCoords.get(tx.id_parcelle);
                     
-                    // STRATÉGIE 1 : Si c'est une parcelle MÈRE, chercher via ses FILLES
-                    const parcellesFilles = dfiMereVersFilles.get(parcelleFormat) || [];
-                    if (parcellesFilles.length > 0) {
-                        const coordsFilles = [];
-                        
-                        for (const filleDFI of parcellesFilles) {
-                            const matchFille = filleDFI.match(/^([A-Z]+)(\d+)$/);
-                            if (matchFille) {
-                                const sectionFille = matchFille[1];
-                                const numeroFille = matchFille[2].padStart(4, '0');
-                                const parcelleFilleId = `${codeCommune}000${sectionFille}${numeroFille}`;
+                    if (!coords) {
+                        // Extraire section et numéro de la parcelle (format: 400260000A0715 → A715)
+                        const match = tx.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
+                        if (match) {
+                            const section = match[1];
+                            const numero = String(parseInt(match[2], 10));
+                            const parcelleFormat = `${section}${numero}`;
+                            const codeCommune = tx.id_parcelle.substring(0, 5);
+                            
+                            // STRATÉGIE 1 : Si c'est une parcelle MÈRE, chercher via ses FILLES
+                            const parcellesFilles = dfiMereVersFilles.get(parcelleFormat) || [];
+                            if (parcellesFilles.length > 0) {
+                                const coordsFilles = [];
                                 
-                                const coordFille = parcelleCoords.get(parcelleFilleId);
-                                if (coordFille && coordFille.latitude && coordFille.longitude) {
-                                    coordsFilles.push(coordFille);
+                                for (const filleDFI of parcellesFilles) {
+                                    const matchFille = filleDFI.match(/^([A-Z]+)(\d+)$/);
+                                    if (matchFille) {
+                                        const sectionFille = matchFille[1];
+                                        const numeroFille = matchFille[2].padStart(4, '0');
+                                        const parcelleFilleId = `${codeCommune}000${sectionFille}${numeroFille}`;
+                                        
+                                        const coordFille = parcelleCoords.get(parcelleFilleId);
+                                        if (coordFille && coordFille.latitude && coordFille.longitude) {
+                                            coordsFilles.push(coordFille);
+                                        }
+                                    }
+                                }
+                                
+                                // Calculer le centroïde moyen des parcelles filles
+                                if (coordsFilles.length > 0) {
+                                    const latMoyenne = coordsFilles.reduce((sum, c) => sum + c.latitude, 0) / coordsFilles.length;
+                                    const lonMoyenne = coordsFilles.reduce((sum, c) => sum + c.longitude, 0) / coordsFilles.length;
+                                    coords = {
+                                        latitude: latMoyenne,
+                                        longitude: lonMoyenne
+                                    };
+                                    countViaFilles++;
                                 }
                             }
-                        }
-                        
-                        // Calculer le centroïde moyen des parcelles filles
-                        if (coordsFilles.length > 0) {
-                            const latMoyenne = coordsFilles.reduce((sum, c) => sum + c.latitude, 0) / coordsFilles.length;
-                            const lonMoyenne = coordsFilles.reduce((sum, c) => sum + c.longitude, 0) / coordsFilles.length;
-                            coords = {
-                                latitude: latMoyenne,
-                                longitude: lonMoyenne
-                            };
-                            countViaFilles++;
+                            
+                            // STRATÉGIE 2 : Si c'est une parcelle FILLE, chercher via sa MÈRE
+                            if (!coords) {
+                                const parcelleMere = dfiFilleVersMere.get(parcelleFormat);
+                                if (parcelleMere) {
+                                    const matchMere = parcelleMere.match(/^([A-Z]+)(\d+)$/);
+                                    if (matchMere) {
+                                        const sectionMere = matchMere[1];
+                                        const numeroMere = matchMere[2].padStart(4, '0');
+                                        const parcelleMereId = `${codeCommune}000${sectionMere}${numeroMere}`;
+                                        
+                                        const coordMere = parcelleCoords.get(parcelleMereId);
+                                        if (coordMere && coordMere.latitude && coordMere.longitude) {
+                                            coords = coordMere;
+                                            countViaMere++;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     
-                    // STRATÉGIE 2 : Si c'est une parcelle FILLE, chercher via sa MÈRE
-                    if (!coords) {
-                        const parcelleMere = dfiFilleVersMere.get(parcelleFormat);
-                        if (parcelleMere) {
-                            const matchMere = parcelleMere.match(/^([A-Z]+)(\d+)$/);
-                            if (matchMere) {
-                                const sectionMere = matchMere[1];
-                                const numeroMere = matchMere[2].padStart(4, '0');
-                                const parcelleMereId = `${codeCommune}000${sectionMere}${numeroMere}`;
-                                
-                                const coordMere = parcelleCoords.get(parcelleMereId);
-                                if (coordMere && coordMere.latitude && coordMere.longitude) {
-                                    coords = coordMere;
-                                    countViaMere++;
-                                }
-                            }
-                        }
+                    if (coords && coords.latitude && coords.longitude) {
+                        updateStmt.run(coords.latitude, coords.longitude, tx.id_parcelle);
+                        countUpdated++;
+                    } else {
+                        countNotFound++;
+                    }
+                    
+                    if ((countUpdated + countNotFound) % 10000 === 0) {
+                        process.stdout.write(`   ${countUpdated + countNotFound}/${transactionsSansCoords.length} vérifiées...\r`);
                     }
                 }
-            }
-            
-            if (coords && coords.latitude && coords.longitude) {
-                updateStmt.run(coords.latitude, coords.longitude, tx.id_parcelle);
-                countUpdated++;
-            } else {
-                countNotFound++;
-            }
-            
-            if ((countUpdated + countNotFound) % 10000 === 0) {
-                process.stdout.write(`   ${countUpdated + countNotFound}/${transactionsSansCoords.length} vérifiées...\r`);
-            }
-        }
                 
-        console.log(`\n   ✅ ${countUpdated} transactions enrichies avec coordonnées`);
+                console.log(`\n   ✅ ${countUpdated} transactions enrichies avec coordonnées`);
         console.log(`      - Directement depuis table parcelle: ${countUpdated - countViaFilles - countViaMere}`);
-        console.log(`      - Via parcelles filles (mère → filles): ${countViaFilles}`);
-        console.log(`      - Via parcelle mère (fille → mère): ${countViaMere}`);
-        console.log(`   ${countNotFound} parcelles non trouvées\n`);
-        
-        resolve();
+                console.log(`      - Via parcelles filles (mère → filles): ${countViaFilles}`);
+                console.log(`      - Via parcelle mère (fille → mère): ${countViaMere}`);
+                console.log(`   ${countNotFound} parcelles non trouvées\n`);
+                
+                resolve();
     });
 }
 
@@ -1062,41 +1063,41 @@ function nettoyerGuillemetsDVF(filePath) {
                 return;
             }
             
-            console.log(`      🧹 Nettoyage des guillemets...`);
+        console.log(`      🧹 Nettoyage des guillemets...`);
+        
+        const readline = require('readline');
+        const tempFile = filePath + '.tmp';
+        const writeStream = fs.createWriteStream(tempFile);
+        const rl = readline.createInterface({
+            input: fs.createReadStream(filePath),
+            crlfDelay: Infinity
+        });
+        
+        let count = 0;
+        
+        rl.on('line', (line) => {
+            // Remplacer " par rien
+            const cleanedLine = line.replace(/"/g, '');
+            writeStream.write(cleanedLine + '\n');
+            count++;
+        });
+        
+        rl.on('close', () => {
+            writeStream.end();
             
-            const readline = require('readline');
-            const tempFile = filePath + '.tmp';
-            const writeStream = fs.createWriteStream(tempFile);
-            const rl = readline.createInterface({
-                input: fs.createReadStream(filePath),
-                crlfDelay: Infinity
-            });
-            
-            let count = 0;
-            
-            rl.on('line', (line) => {
-                // Remplacer " par rien
-                const cleanedLine = line.replace(/"/g, '');
-                writeStream.write(cleanedLine + '\n');
-                count++;
-            });
-            
-            rl.on('close', () => {
-                writeStream.end();
+            writeStream.on('finish', () => {
+                // Remplacer l'original
+                fs.unlinkSync(filePath);
+                fs.renameSync(tempFile, filePath);
                 
-                writeStream.on('finish', () => {
-                    // Remplacer l'original
-                    fs.unlinkSync(filePath);
-                    fs.renameSync(tempFile, filePath);
-                    
-                    console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
-                    resolve();
-                });
-                
-                writeStream.on('error', reject);
+                console.log(`      ✅ ${count.toLocaleString()} lignes nettoyées`);
+                resolve();
             });
             
-            rl.on('error', reject);
+            writeStream.on('error', reject);
+        });
+        
+        rl.on('error', reject);
         });
     });
 }
@@ -1171,28 +1172,29 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // 3. Insérer avec index déjà en place
             // 4. Surveiller taille DB
             try {
-                db.exec(`
-                DROP TABLE IF EXISTS temp_csv_file;
-                CREATE TABLE temp_csv_file (
-                    id_parcelle TEXT,
-                    id_mutation TEXT,
-                    code_departement TEXT,
-                    valeur_fonciere REAL,
-                    surface_totale REAL,
-                    surface_reelle_bati REAL,
-                    date_mutation TEXT,
-                    latitude REAL,
-                    longitude REAL,
-                    code_commune TEXT,
-                    section_cadastrale TEXT,
-                    parcelle_suffixe TEXT,
-                    nom_commune TEXT
-                );
-                `);
-                
-                // Créer l'index sur table VIDE (instantané)
-                console.log(`      📊 Création index sur table vide...`);
-                db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dept ON temp_csv_file(code_departement)`);
+            db.exec(`
+            DROP TABLE IF EXISTS temp_csv_file;
+            CREATE TABLE temp_csv_file (
+                id_parcelle TEXT,
+                id_mutation TEXT,
+                code_departement TEXT,
+                valeur_fonciere REAL,
+                surface_totale REAL,
+                surface_reelle_bati REAL,
+                date_mutation TEXT,
+                latitude REAL,
+                longitude REAL,
+                code_commune TEXT,
+                code_postal TEXT,
+                section_cadastrale TEXT,
+                parcelle_suffixe TEXT,
+                nom_commune TEXT
+            );
+            `);
+            
+            // Créer l'index sur table VIDE (instantané)
+            console.log(`      📊 Création index sur table vide...`);
+            db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dept ON temp_csv_file(code_departement)`);
             } catch (tableErr) {
                 console.error(`      ❌ Erreur lors de la création de la table temporaire: ${tableErr.message}`);
                 // Continuer avec le fichier suivant
@@ -1208,8 +1210,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     id_parcelle, id_mutation, code_departement,
                     valeur_fonciere, surface_totale, surface_reelle_bati,
                     date_mutation, latitude, longitude,
-                    code_commune, section_cadastrale, parcelle_suffixe, nom_commune
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             // Batch transaction pour performance (comme script DPE)
@@ -1277,6 +1279,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         'valeur_fonciere': ['valeur_fonciere', 'valeur_fonciere_globale'],
                         'code_departement': ['code_departement', 'dep'],
                         'code_commune': ['code_commune', 'comm', 'code_commune_insee'],
+                        'code_postal': ['code_postal', 'code_postal_commune', 'postal_code'],
                         'nom_commune': ['nom_commune', 'commune'],
                         'id_parcelle': ['id_parcelle', 'identifiant_local', 'parcelle'],
                         'section': ['section', 'section_cadastrale'],
@@ -1361,8 +1364,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             if (columnMapping === 'normalise') {
                                 console.log(`      ✅ Colonnes déjà normalisées, pas de mapping nécessaire`);
                             } else {
-                                const mappedCols = Object.entries(columnMapping || {}).slice(0, 5);
-                                console.log(`      🔍 Mapping colonnes (exemples): ${mappedCols.map(([k, v]) => `${k}->${v}`).join(', ')}...`);
+                            const mappedCols = Object.entries(columnMapping || {}).slice(0, 5);
+                            console.log(`      🔍 Mapping colonnes (exemples): ${mappedCols.map(([k, v]) => `${k}->${v}`).join(', ')}...`);
                             }
                             console.log(`      🔍 Exemple première ligne: id_parcelle="${getColumnValue(row, ['id_parcelle'])}", valeur_fonciere="${getColumnValue(row, ['valeur_fonciere'])}", code_departement="${getColumnValue(row, ['code_departement'])}"`);
                         }
@@ -1481,6 +1484,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     const latitude = parseFloat(row.lat || row.latitude || 0) || null;
                     const longitude = parseFloat(row.lon || row.longitude || 0) || null;
                     
+                    // Extraire le code postal depuis la DVF
+                    const codePostal = getColumnValue(row, ['code_postal', 'code_postal_commune', 'postal_code']) || null;
+                    
                     // Précalculer le suffixe parcelle et code commune (optimisation)
                     const parcelleSuffixe = idParcelle.length >= 6 ? idParcelle.substring(5) : null;
                     const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
@@ -1503,6 +1509,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             latitude,
                             longitude,
                             codeCommune,
+                            codePostal,  // Ajouter code_postal
                             section,
                             parcelleSuffixe,
                             nomCommune || null  // Ajouter nom_commune (peut être vide)
@@ -1586,6 +1593,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         longitude REAL,
                         code_departement TEXT,
                         code_commune TEXT,
+                        code_postal TEXT,
                         section_cadastrale TEXT,
                         parcelle_suffixe TEXT,
                         nom_commune TEXT
@@ -1606,6 +1614,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             AVG(longitude) as longitude,
                             code_departement,
                             MAX(code_commune) as code_commune,
+                            MAX(code_postal) as code_postal,
                             MAX(section_cadastrale) as section_cadastrale,
                             MAX(parcelle_suffixe) as parcelle_suffixe,
                             MAX(nom_commune) as nom_commune
@@ -1653,20 +1662,20 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     // Fusionner dans terrains_batir_temp
                     console.log(`      ⬆️  Fusion dans terrains_batir_temp...`);
                     try {
-                        db.exec(`
-                            INSERT INTO terrains_batir_temp (
-                                id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                                date_mutation, latitude, longitude,
-                                code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
-                            )
-                            SELECT 
-                                id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-                                date_mutation, latitude, longitude,
-                                code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
-                            FROM temp_agregated;
-                        `);
-                        const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
-                        console.log(`      ✅ Fusion terminée - Taille DB: ${dbSizeAfterFusion} MB`);
+    db.exec(`
+        INSERT INTO terrains_batir_temp (
+                        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                        date_mutation, latitude, longitude,
+                        code_departement, code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
+        )
+        SELECT 
+                        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+                        date_mutation, latitude, longitude,
+                        code_departement, code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
+                    FROM temp_agregated;
+                    `);
+                    const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
+                    console.log(`      ✅ Fusion terminée - Taille DB: ${dbSizeAfterFusion} MB`);
                     } catch (fusionErr) {
                         console.error(`      ❌ Erreur lors de la fusion: ${fusionErr.message}`);
                         // Continuer avec le fichier suivant même en cas d'erreur
@@ -1679,15 +1688,15 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     // ⚠️ Pas de VACUUM : trop lourd avec base parcelles.db (12GB) attachée
                     console.log(`      🧹 Nettoyage des tables temporaires...`);
                     try {
-                        db.exec(`DROP TABLE temp_csv_file`);
-                        db.exec(`DROP TABLE temp_agregated`);
+                    db.exec(`DROP TABLE temp_csv_file`);
+                    db.exec(`DROP TABLE temp_agregated`);
                     } catch (dropErr) {
                         console.log(`      ⚠️  Erreur lors de la suppression des tables temporaires: ${dropErr.message}`);
                     }
                     
                     try {
-                        const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
-                        console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);
+                    const total = db.prepare('SELECT COUNT(*) as c FROM terrains_batir_temp').get().c;
+                    console.log(`      ✅ Total dans terrains_batir_temp: ${total.toLocaleString()} lignes\n`);
                     } catch (countErr) {
                         console.log(`      ⚠️  Erreur lors du comptage: ${countErr.message}`);
                     }
@@ -1710,19 +1719,19 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
 // ÉTAPE 0 : Charger parcelle.csv dans la base de données dédiée
 console.log('📊 ÉTAPE 0 : Chargement de parcelle.csv dans la base de données dédiée (parcelles.db)...\n');
 chargerParcellesDansDB().then(() => {
-    // ÉTAPE 1 : Charger les DVF DIRECTEMENT dans terrains_batir_temp
-    // 🔥 OPTIMISATION RADICALE : Plus de table intermédiaire dvf_temp_indexed
-    // Économie : ~14 GB d'espace disque temporaire
-    console.log('📊 ÉTAPE 1 : Chargement DVF directement dans la table de travail...\n');
-    console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (économie ~14 GB)\n');
+// ÉTAPE 1 : Charger les DVF DIRECTEMENT dans terrains_batir_temp
+// 🔥 OPTIMISATION RADICALE : Plus de table intermédiaire dvf_temp_indexed
+// Économie : ~14 GB d'espace disque temporaire
+console.log('📊 ÉTAPE 1 : Chargement DVF directement dans la table de travail...\n');
+console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (économie ~14 GB)\n');
 
 // Préparer l'insertion DIRECTE dans terrains_batir_temp
 const insertDvfTemp = db.prepare(`
     INSERT INTO terrains_batir_temp (
         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
-        date_mutation, code_departement, code_commune, section_cadastrale,
+        date_mutation, code_departement, code_commune, code_postal, section_cadastrale,
         parcelle_suffixe, nom_commune, prix_m2, est_terrain_viabilise, id_pa
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)
 `);
 
 chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
@@ -1771,6 +1780,47 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     console.log('✅ Index créés sur terrains_batir_temp');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
+
+    // ÉTAPE 2.5 : Créer table de correspondance code postal → code INSEE
+    // Le PA utilise le code postal (colonne COMM) mais DVF utilise le code INSEE dans id_parcelle
+    // On extrait le code INSEE depuis id_parcelle (SUBSTR(id_parcelle, 1, 5))
+    console.log('⚡ ÉTAPE 2.5 : Création table correspondance code postal → code INSEE...');
+    db.exec(`
+        DROP TABLE IF EXISTS correspondance_postal_insee;
+        CREATE TEMP TABLE correspondance_postal_insee (
+            code_postal TEXT,
+            code_insee TEXT,
+            PRIMARY KEY (code_postal, code_insee)
+        );
+    `);
+    
+    // Extraire les correspondances depuis terrains_batir_temp
+    // On crée une correspondance entre le code postal (colonne code_commune) et le code INSEE (extrait de id_parcelle)
+    // Si plusieurs codes INSEE existent pour un même code postal, on les garde tous
+    db.exec(`
+        INSERT INTO correspondance_postal_insee (code_postal, code_insee)
+        SELECT DISTINCT
+            code_commune as code_postal,
+            SUBSTR(id_parcelle, 1, 5) as code_insee
+        FROM terrains_batir_temp
+        WHERE id_parcelle IS NOT NULL 
+          AND LENGTH(id_parcelle) >= 5
+          AND code_commune IS NOT NULL
+          AND code_commune != SUBSTR(id_parcelle, 1, 5)
+    `);
+    
+    // Ajouter aussi les correspondances directes (code postal = code INSEE)
+    db.exec(`
+        INSERT OR IGNORE INTO correspondance_postal_insee (code_postal, code_insee)
+        SELECT DISTINCT
+            code_commune as code_postal,
+            code_commune as code_insee
+        FROM terrains_batir_temp
+        WHERE code_commune IS NOT NULL
+    `);
+    
+    const nbCorrespondances = db.prepare(`SELECT COUNT(*) as nb FROM correspondance_postal_insee`).get().nb;
+    console.log(`✅ ${nbCorrespondances.toLocaleString()} correspondances créées\n`);
 
     // ÉTAPE 3 : Créer vue agrégée par id_mutation
     // ✅ Déduplication déjà faite après chaque fichier CSV (voir ÉTAPE 1)
@@ -1871,7 +1921,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             
             const numPA = row.NUM_PA;
             const dateAuth = row.DATE_REELLE_AUTORISATION;
-            const comm = row.COMM;
+            // Utiliser ADR_CODPOS_TER (code postal) pour la jointure PA-DVF
+            const codePostalPA = row.ADR_CODPOS_TER || row.COMM;
+            const comm = codePostalPA; // Utiliser le code postal pour la jointure
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -1932,12 +1984,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             }
             
             // Normaliser le code commune (ajouter padding si nécessaire)
+            // Note: comm contient le code postal, on le garde tel quel pour l'instant
+            // La conversion en code INSEE se fera plus tard via la table de correspondance
             const commNormalise = comm && comm.length < 5 ? comm.padStart(5, '0') : comm;
             
             paList.push({
                     numPA: numPA,
                     dateAuth: dateAuthFormatee,
-                    comm: commNormalise,
+                    comm: commNormalise,  // Code postal (sera converti en INSEE plus tard)
                     superficie: superficie,
                     sections: Array.from(sections),
                     parcelles: parcelles,
@@ -1992,23 +2046,25 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
                 
-                const codeCommuneDVF = String(pa.comm).padStart(5, '0');
-                const codeCommuneDFI = codeCommuneDVF.substring(codeCommuneDVF.length - 3);
+                // pa.comm est maintenant le code postal (ADR_CODPOS_TER)
+                const codePostalDVF = String(pa.comm).padStart(5, '0');
+                const codeCommuneDFI = codePostalDVF.substring(codePostalDVF.length - 3);
                 
                 for (const parcelle of pa.parcelles) {
                     const parcelleStr = String(parcelle).trim().toUpperCase();
-                    // Extraire section + numéro : "40088000BL0056" → "BL56"
+                    // Extraire section + numéro : "40088000BL0056" → "BL0056" (avec padding à 4 chiffres)
                     const match = parcelleStr.match(/([A-Z]{1,2})(\d+p?)$/i);
                     if (match) {
                         const [, section, numero] = match;
                         const numeroClean = String(parseInt(numero.replace(/p$/i, ''), 10));
-                        const parcelleNormalisee = section + numeroClean;
+                        const numeroPadded = numeroClean.padStart(4, '0'); // Padding à 4 chiffres pour correspondre à DVF
+                        const parcelleNormalisee = section + numeroPadded;
                         
                         for (const sect of pa.sections) {
                             insertPA.run(
                                 pa.numPA,
                                 codeCommuneDFI,
-                                codeCommuneDVF,
+                                codePostalDVF,  // Utiliser le code postal pour la jointure DVF
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2058,6 +2114,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   → Traitement par batch de ${communesAvecPA.length} communes avec PA...`);
         
         // Traiter commune par commune (évite jointure 87k PA × 36M DVF en une fois)
+        // IMPORTANT: Utiliser le code postal pour la jointure PA-DVF
+        // Le PA utilise ADR_CODPOS_TER (code postal) et la DVF a aussi le code postal dans code_postal
         const insertBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_meres 
             SELECT DISTINCT
@@ -2069,7 +2127,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 m.surface_totale_aggregee
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
-                t.code_commune = p.code_commune_dvf
+                t.code_postal = p.code_commune_dvf
                 AND t.section_cadastrale = p.section
                 AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
@@ -2188,17 +2246,19 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     
                     const [, section, numero] = match;
                     const numeroClean = String(parseInt(numero.replace(/p$/i, ''), 10));
-                    const parcelleNormalisee = section + numeroClean;
+                    const numeroPadded = numeroClean.padStart(4, '0'); // Padding à 4 chiffres pour correspondre à DVF
+                    const parcelleNormalisee = section + numeroPadded;
                     
-                    // Chercher dans DFI
+                    // Chercher dans DFI (utiliser aussi la version sans padding pour la recherche DFI)
+                    const parcelleNormaliseeDFI = section + numeroClean; // Version sans padding pour DFI
                     for (const dfi of dfiData) {
                         if (dfi.code_commune !== codeCommuneDFI) continue;
                         
                         const meres = (dfi.parcelles_meres || '').split(/[;,\s]+/).map(p => p.trim()).filter(p => p);
                         const filles = (dfi.parcelles_filles || '').split(/[;,\s]+/).map(p => p.trim()).filter(p => p);
                         
-                        // Si la parcelle PA est une parcelle mère dans ce DFI
-                        if (meres.includes(parcelleNormalisee)) {
+                        // Si la parcelle PA est une parcelle mère dans ce DFI (chercher avec ou sans padding)
+                        if (meres.includes(parcelleNormaliseeDFI) || meres.includes(parcelleNormalisee)) {
                             // Ajouter toutes les parcelles filles
                             for (const fille of filles) {
                                 const matchFille = fille.match(/^([A-Z]+)(\d+)$/);
@@ -2250,29 +2310,29 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     resolve();
                     return;
                 }
-                
+                        
                 // Mettre à jour pa_filles_temp avec les superficies depuis la table parcelle
-                db.exec(`
-                    UPDATE pa_filles_temp
-                    SET superficie = COALESCE(
-                        NULLIF(pa_filles_temp.superficie, 0),
+                        db.exec(`
+                            UPDATE pa_filles_temp
+                            SET superficie = COALESCE(
+                                NULLIF(pa_filles_temp.superficie, 0),
                         (SELECT s_geom_parcelle FROM parcelles_db.parcelle p 
                          WHERE p.parcelle_id = (
-                             pa_filles_temp.code_commune_dvf || 
-                             pa_filles_temp.section || 
-                             pa_filles_temp.parcelle_fille_suffixe
+                                     pa_filles_temp.code_commune_dvf || 
+                                     pa_filles_temp.section || 
+                                     pa_filles_temp.parcelle_fille_suffixe
                          )
                          AND p.s_geom_parcelle > 0)
-                    )
-                    WHERE superficie IS NULL OR superficie = 0;
-                `);
-                
-                const countEnrichies = db.prepare(`
-                    SELECT COUNT(*) as cnt FROM pa_filles_temp 
-                    WHERE superficie IS NOT NULL AND superficie > 0
-                `).get().cnt;
-                console.log(`   ✅ ${countEnrichies} parcelles avec superficie après enrichissement\n`);
-                resolve();
+                            )
+                            WHERE superficie IS NULL OR superficie = 0;
+                        `);
+                        
+                        const countEnrichies = db.prepare(`
+                            SELECT COUNT(*) as cnt FROM pa_filles_temp 
+                            WHERE superficie IS NOT NULL AND superficie > 0
+                        `).get().cnt;
+                        console.log(`   ✅ ${countEnrichies} parcelles avec superficie après enrichissement\n`);
+                        resolve();
             } catch (err) {
                 console.log(`   ⚠️  Erreur lors de l'enrichissement des superficies: ${err.message}\n`);
                 resolve();
@@ -2308,6 +2368,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   → Traitement par batch de ${communesAvecFillesPA.length} communes avec PA filles...`);
         
         // Traiter commune par commune
+        // IMPORTANT: Utiliser le code commune extrait de id_parcelle (comme dans enrichirCoordonnees)
+        // au lieu de la colonne code_commune, car le PA utilise le code postal (40100) 
+        // alors que la DVF utilise le code INSEE (40088) dans id_parcelle
         const insertFillesBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_filles 
             SELECT 
@@ -2321,7 +2384,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 COUNT(DISTINCT t.id_parcelle) as nb_parcelles
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
-                t.code_commune = pf.code_commune_dvf
+                t.code_postal = pf.code_commune_dvf
                 AND t.section_cadastrale = pf.section
                 AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation

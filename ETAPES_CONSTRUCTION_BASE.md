@@ -43,7 +43,6 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   - `date_mutation`
   - `code_departement` (✅ **extrait directement depuis la DVF**, 2 chiffres)
   - `code_commune` (✅ **code INSEE reconstruit depuis code_departement + code_commune DVF**, 5 chiffres)
-  - `code_postal` (extrait depuis la DVF)
   - `section_cadastrale`
   - `parcelle_suffixe` (ex: "000BL0056")
   - `nom_commune` (✅ **extrait directement depuis la DVF**)
@@ -75,23 +74,6 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   5. `idx_temp_pa` sur `id_pa`
 - **Durée estimée** : 6-12 minutes
 - **Checkpoint** : Après chaque index pour libérer l'espace
-
----
-
-## 🔗 ÉTAPE 2.5 : Table de correspondance code postal → code INSEE
-
-**Objectif** : Gérer la différence entre code postal (PA) et code INSEE (DVF)
-
-- **Table créée** : `correspondance_postal_insee` (temporaire)
-- **Colonnes** :
-  - `code_postal` (ex: "40100")
-  - `code_insee` (ex: "40088")
-- **Source** : Extraction depuis `terrains_batir_temp`
-  - Code INSEE : depuis la colonne `code_commune` de `terrains_batir_temp` (qui contient le code INSEE 5 chiffres reconstruit)
-  - Code INSEE peut aussi être extrait des 5 premiers chiffres de `id_parcelle` : `SUBSTR(id_parcelle, 1, 5)` (méthode alternative)
-  - Correspondances directes (code postal = code INSEE) également ajoutées
-- **Utilisation** : Pour les jointures PA-DVF
-- **Note** : Le code INSEE est reconstruit lors du chargement DVF : `code_departement` (2 chiffres) + `code_commune` DVF (3 chiffres) = code INSEE (5 chiffres)
 
 ---
 
@@ -128,8 +110,8 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 - **Colonnes** :
   - `num_pa`
   - `code_commune_dfi` (3 derniers chiffres du code INSEE pour DFI)
-  - `code_commune_dvf` (code postal pour jointure DVF)
-  - `code_insee` (code INSEE complet du PA)
+  - `code_commune_dvf` (✅ **code INSEE pour jointure DVF**, 5 chiffres)
+  - `code_insee` (code INSEE complet du PA, pour enrichissement depuis `v_commune_2025.csv`)
   - `nom_commune` (enrichi depuis `v_commune_2025.csv`)
   - `section`
   - `parcelle_normalisee` (ex: "BL0056" avec padding à 4 chiffres)
@@ -156,7 +138,7 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   - `superficie`
   - `surface_totale_aggregee`
 - **Critères de jointure** :
-  - `code_postal` (DVF) = `code_commune_dvf` (PA)
+  - `code_commune` (DVF) = `code_commune_dvf` (PA) ✅ **Utilisation du code INSEE uniquement**
   - `nom_commune` (DVF) = `nom_commune` (PA) (si disponible)
   - `section_cadastrale` (DVF) = `section` (PA)
   - `parcelle_suffixe` (DVF) = `'000' || parcelle_normalisee` (PA)
@@ -170,8 +152,8 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 - **Table créée** : `pa_filles_temp`
 - **Colonnes** :
   - `num_pa`
-  - `code_commune_dvf`
-  - `code_insee`
+  - `code_commune_dvf` (✅ **code INSEE pour jointure DVF**, 5 chiffres)
+  - `code_insee` (code INSEE complet du PA, pour enrichissement depuis `v_commune_2025.csv`)
   - `nom_commune` (enrichi depuis `v_commune_2025.csv`)
   - `section`
   - `parcelle_fille`
@@ -181,7 +163,7 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 - **Traitement** :
   - Recherche dans `dfi_indexed` des relations mère-fille
   - Extraction des 3 derniers chiffres du code INSEE pour la recherche DFI
-  - Enrichissement du nom de commune depuis `v_commune_2025.csv`
+  - Enrichissement du nom de commune depuis `v_commune_2025.csv` via `code_insee`
 - **Index créé** : `idx_pa_filles_commune_section_suffixe` sur `code_commune_dvf, section, parcelle_fille_suffixe`
 
 ### 4.3.5 : Enrichissement des superficies depuis la table parcelle

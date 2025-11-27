@@ -1657,12 +1657,14 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
         INSERT INTO terrains_batir_temp (
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, latitude, longitude,
-                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
+                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune,
+                        prix_m2, est_terrain_viabilise, id_pa
         )
         SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, latitude, longitude,
-                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune
+                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune,
+                        NULL as prix_m2, 0 as est_terrain_viabilise, NULL as id_pa
                     FROM temp_agregated;
                     `);
                     const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
@@ -1717,6 +1719,8 @@ console.log('📊 ÉTAPE 1 : Chargement DVF directement dans la table de travail
 console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (économie ~14 GB)\n');
 
 // Préparer l'insertion DIRECTE dans terrains_batir_temp
+// Note: insertDvfTemp n'est pas utilisé directement - les données passent par temp_csv_file puis temp_agregated
+// Cette instruction est conservée pour référence mais n'est pas utilisée
 const insertDvfTemp = db.prepare(`
     INSERT INTO terrains_batir_temp (
         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,

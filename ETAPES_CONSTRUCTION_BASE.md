@@ -120,7 +120,6 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 - **Traitement** :
   - Extraction des sections et numéros de parcelles depuis les colonnes du PA
   - Normalisation des numéros (padding à 4 chiffres)
-  - Enrichissement du nom de commune depuis `v_commune_2025.csv`
 - **Index créés** :
   - `idx_pa_parcelles_commune` sur `code_commune_dfi, parcelle_normalisee`
   - `idx_pa_parcelles_section` sur `code_commune_dvf, section`
@@ -163,7 +162,6 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 - **Traitement** :
   - Recherche dans `dfi_indexed` des relations mère-fille
   - Extraction des 3 derniers chiffres du code INSEE pour la recherche DFI
-  - Enrichissement du nom de commune depuis `v_commune_2025.csv` via `code_insee`
 - **Index créé** : `idx_pa_filles_commune_section_suffixe` sur `code_commune_dvf, section, parcelle_fille_suffixe`
 
 ### 4.3.5 : Enrichissement des superficies depuis la table parcelle

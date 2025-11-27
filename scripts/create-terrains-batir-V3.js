@@ -679,45 +679,6 @@ function attribuerTypeUsage(db) {
     });
 }
 
-// Fonction pour charger le fichier v_commune_2025.csv et créer un Map code_insee -> nom_commune
-function chargerNomsCommunes() {
-    return new Promise((resolve, reject) => {
-        const communeMap = new Map();
-        const communeFile = path.join(__dirname, '..', 'dvf_data', 'v_commune_2025.csv');
-        
-        if (!fs.existsSync(communeFile)) {
-            console.log('   ⚠️  Fichier v_commune_2025.csv non trouvé, enrichissement nom commune ignoré\n');
-            resolve(communeMap);
-            return;
-        }
-        
-        console.log('   📂 Chargement des noms de communes depuis v_commune_2025.csv...');
-        let countLoaded = 0;
-        
-        fs.createReadStream(communeFile)
-            .pipe(csv({ separator: ',', skipLinesWithError: true }))
-            .on('data', (row) => {
-                const codeInsee = (row.COM || row.com || '').trim();
-                const nomCommune = (row.LIBELLE || row.libelle || row.NCCENR || row.nccenr || '').trim();
-                
-                if (codeInsee && nomCommune) {
-                    // Normaliser le code INSEE (5 chiffres)
-                    const codeInseeNormalise = String(codeInsee).padStart(5, '0');
-                    communeMap.set(codeInseeNormalise, nomCommune.toUpperCase());
-                    countLoaded++;
-                }
-            })
-            .on('end', () => {
-                console.log(`   ✅ ${countLoaded} noms de communes chargés depuis v_commune_2025.csv\n`);
-                resolve(communeMap);
-            })
-            .on('error', (err) => {
-                console.log(`   ⚠️  Erreur lors du chargement de v_commune_2025.csv: ${err.message}\n`);
-                resolve(communeMap); // Ne pas bloquer le processus
-            });
-    });
-}
-
 // Fonction pour enrichir les coordonnées manquantes depuis les parcelles cadastrales
 function enrichirCoordonnees(db) {
     return new Promise((resolve, reject) => {
@@ -2061,8 +2022,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                 pa.numPA,
                                 codeCommuneDFI,
                                 codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
-                                pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis v_commune_2025.csv
-                                NULL,  // Nom de commune sera enrichi depuis v_commune_2025.csv
+                                pa.codeInsee || NULL,  // Code INSEE
+                                NULL,  // Nom de commune
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2076,46 +2037,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         insertManyPA();
         const nbPA = db.prepare(`SELECT COUNT(DISTINCT num_pa) as nb FROM pa_parcelles_temp`).get().nb;
         console.log(`✅ ${nbPA} PA avec parcelles explosées`);
-        
-        // Enrichir le nom de commune dans pa_parcelles_temp depuis v_commune_2025.csv
-        console.log('⚡ Enrichissement du nom de commune dans pa_parcelles_temp depuis v_commune_2025.csv...');
-        return chargerNomsCommunes().then((communeMap) => {
-            if (communeMap.size > 0) {
-                const updateNomCommune = db.prepare(`
-                    UPDATE pa_parcelles_temp
-                    SET nom_commune = ?
-                    WHERE code_insee = ?
-                      AND (nom_commune IS NULL OR nom_commune = '')
-                `);
-                
-                const updateTransaction = db.transaction(() => {
-                    const codesInsee = db.prepare(`
-                        SELECT DISTINCT code_insee 
-                        FROM pa_parcelles_temp 
-                        WHERE code_insee IS NOT NULL 
-                          AND (nom_commune IS NULL OR nom_commune = '')
-                    `).all();
-                    
-                    let countEnrichies = 0;
-                    for (const row of codesInsee) {
-                        const codeInseeNormalise = String(row.code_insee).padStart(5, '0');
-                        const nomCommune = communeMap.get(codeInseeNormalise);
-                        if (nomCommune) {
-                            const result = updateNomCommune.run(nomCommune, row.code_insee);
-                            countEnrichies += result.changes;
-                        }
-                    }
-                    return countEnrichies;
-                });
-                
-                const countEnrichies = updateTransaction();
-                console.log(`   ✅ ${countEnrichies} PA enrichis avec nom de commune depuis v_commune_2025.csv`);
-            } else {
-                console.log(`   ⚠️  Aucun nom de commune chargé depuis v_commune_2025.csv`);
-            }
-        }).catch((err) => {
-            console.log(`   ⚠️  Erreur enrichissement nom commune PA: ${err.message}`);
-        }).then(() => {
             // Créer les index APRÈS insertion (beaucoup plus efficace)
         console.log('⚡ Création des index sur pa_parcelles_temp...');
         db.exec(`
@@ -2316,8 +2237,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
-                                        pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis v_commune_2025.csv
-                                        NULL,  // Nom de commune sera enrichi depuis v_commune_2025.csv
+                                        pa.codeInsee || NULL,  // Code INSEE
+                                        NULL,  // Nom de commune
                                         sectionFille,
                                         fille,
                                         parcelleSuffixe,
@@ -2335,45 +2256,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         });
         insertFillesTransaction();
         
-        // Enrichir le nom de commune dans pa_filles_temp depuis v_commune_2025.csv
-        console.log('⚡ Enrichissement du nom de commune dans pa_filles_temp depuis v_commune_2025.csv...');
-        return chargerNomsCommunes().then((communeMap) => {
-            if (communeMap.size > 0) {
-                const updateNomCommuneFilles = db.prepare(`
-                    UPDATE pa_filles_temp
-                    SET nom_commune = ?
-                    WHERE code_insee = ?
-                      AND (nom_commune IS NULL OR nom_commune = '')
-                `);
-                
-                const updateTransaction = db.transaction(() => {
-                    const codesInsee = db.prepare(`
-                        SELECT DISTINCT code_insee 
-                        FROM pa_filles_temp 
-                        WHERE code_insee IS NOT NULL 
-                          AND (nom_commune IS NULL OR nom_commune = '')
-                    `).all();
-                    
-                    let countEnrichies = 0;
-                    for (const row of codesInsee) {
-                        const codeInseeNormalise = String(row.code_insee).padStart(5, '0');
-                        const nomCommune = communeMap.get(codeInseeNormalise);
-                        if (nomCommune) {
-                            const result = updateNomCommuneFilles.run(nomCommune, row.code_insee);
-                            countEnrichies += result.changes;
-                        }
-                    }
-                    return countEnrichies;
-                });
-                
-                const countEnrichies = updateTransaction();
-                console.log(`   ✅ ${countEnrichies} parcelles filles enrichies avec nom de commune depuis v_commune_2025.csv`);
-            } else {
-                console.log(`   ⚠️  Aucun nom de commune chargé depuis v_commune_2025.csv`);
-            }
-        }).catch((err) => {
-            console.log(`   ⚠️  Erreur enrichissement nom commune filles: ${err.message}`);
-        });
         
         // Créer des index sur pa_filles_temp pour accélérer les jointures
         db.exec(`

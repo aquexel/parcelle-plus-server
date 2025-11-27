@@ -41,8 +41,8 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   - `surface_totale`
   - `surface_reelle_bati`
   - `date_mutation`
-  - `code_departement` (✅ **extrait directement depuis la DVF**)
-  - `code_commune` (✅ **code INSEE extrait directement depuis la DVF**)
+  - `code_departement` (✅ **extrait directement depuis la DVF**, 2 chiffres)
+  - `code_commune` (✅ **code INSEE reconstruit depuis code_departement + code_commune DVF**, 5 chiffres)
   - `code_postal` (extrait depuis la DVF)
   - `section_cadastrale`
   - `parcelle_suffixe` (ex: "000BL0056")
@@ -50,7 +50,12 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   - `prix_m2` (calculé ou NULL)
   - `est_terrain_viabilise` (0 ou 1)
   - `id_pa` (NULL initialement)
-- **Note** : La DVF contient directement les colonnes `code_departement`, `code_commune` (code INSEE) et `nom_commune`, qui sont extraites telles quelles depuis les fichiers CSV
+- **Construction du code INSEE** :
+  - La DVF contient `code_departement` (2 chiffres) et `code_commune` (3 chiffres)
+  - Le code INSEE complet (5 chiffres) est reconstruit : `code_departement` (2) + `code_commune` (3) = code INSEE
+  - Exemple : Département "40" + Commune "088" = Code INSEE "40088"
+  - Ce code INSEE est stocké dans la colonne `code_commune` de `terrains_batir_temp`
+  - Il peut aussi être extrait des 5 premiers caractères de `id_parcelle` (méthode alternative)
 - **Optimisation** : Chargement direct sans table intermédiaire (économie ~14 GB)
 - **Déduplication** : Effectuée pendant le chargement (une parcelle = une ligne max)
 - **Résultat** : ~4-6M lignes (au lieu de 36M sans déduplication)
@@ -82,11 +87,11 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
   - `code_postal` (ex: "40100")
   - `code_insee` (ex: "40088")
 - **Source** : Extraction depuis `terrains_batir_temp`
-  - Code INSEE : depuis la colonne `code_commune` de la DVF (✅ **directement disponible dans la DVF**)
-  - Code INSEE peut aussi être extrait des 5 premiers chiffres de `id_parcelle` (méthode alternative)
+  - Code INSEE : depuis la colonne `code_commune` de `terrains_batir_temp` (qui contient le code INSEE 5 chiffres reconstruit)
+  - Code INSEE peut aussi être extrait des 5 premiers chiffres de `id_parcelle` : `SUBSTR(id_parcelle, 1, 5)` (méthode alternative)
   - Correspondances directes (code postal = code INSEE) également ajoutées
 - **Utilisation** : Pour les jointures PA-DVF
-- **Note** : La DVF contient déjà `code_departement` et `code_commune` (code INSEE) dans ses colonnes, pas besoin de les extraire depuis `id_parcelle`
+- **Note** : Le code INSEE est reconstruit lors du chargement DVF : `code_departement` (2 chiffres) + `code_commune` DVF (3 chiffres) = code INSEE (5 chiffres)
 
 ---
 

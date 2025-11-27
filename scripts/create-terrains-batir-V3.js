@@ -715,23 +715,24 @@ function enrichirNomCommune(db) {
             console.log('   🔗 Enrichissement du nom de commune depuis la table parcelle...');
             
             // Enrichir nom_commune depuis la table parcelle pour les transactions sans nom de commune
-            // Utiliser le code INSEE extrait de id_parcelle pour joindre
+            // Utiliser le code INSEE extrait des 5 premiers chiffres de id_parcelle pour joindre avec code_commune_insee
             const updateStmt = db.prepare(`
                 UPDATE terrains_batir_temp
                 SET nom_commune = (
                     SELECT p.nom_commune
                     FROM parcelles_db.parcelle p
-                    WHERE p.parcelle_id = terrains_batir_temp.id_parcelle
+                    WHERE p.code_commune_insee = SUBSTR(terrains_batir_temp.id_parcelle, 1, 5)
                       AND p.nom_commune IS NOT NULL
                       AND p.nom_commune != ''
                     LIMIT 1
                 )
                 WHERE (nom_commune IS NULL OR nom_commune = '')
                   AND id_parcelle IS NOT NULL
+                  AND LENGTH(id_parcelle) >= 5
                   AND EXISTS (
                       SELECT 1
                       FROM parcelles_db.parcelle p
-                      WHERE p.parcelle_id = terrains_batir_temp.id_parcelle
+                      WHERE p.code_commune_insee = SUBSTR(terrains_batir_temp.id_parcelle, 1, 5)
                         AND p.nom_commune IS NOT NULL
                         AND p.nom_commune != ''
                   )
@@ -1946,8 +1947,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     console.log('✅ Tables agrégées créées avec index\n');
 
-    // ÉTAPE 4 : Charger les PA
-    console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
+        // ÉTAPE 3.5 : Enrichir le nom de commune depuis la table parcelle (AVANT jointure PA-DVF)
+        console.log('📊 ÉTAPE 3.5 : Enrichissement du nom de commune depuis la table parcelle...');
+        enrichirNomCommune(db).then(() => {
+            console.log('✅ Enrichissement du nom de commune terminé\n');
+            
+            // ÉTAPE 4 : Charger les PA
+            console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
     
     // Vérifier que le fichier existe
     if (!fs.existsSync(LISTE_PA_FILE)) {
@@ -2157,6 +2163,42 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         const nbPA = db.prepare(`SELECT COUNT(DISTINCT num_pa) as nb FROM pa_parcelles_temp`).get().nb;
         console.log(`✅ ${nbPA} PA avec parcelles explosées`);
         
+        // Enrichir le nom de commune dans pa_parcelles_temp depuis la table parcelle
+        console.log('⚡ Enrichissement du nom de commune dans pa_parcelles_temp depuis la table parcelle...');
+        try {
+            const tableExists = db.prepare(`
+                SELECT name FROM parcelles_db.sqlite_master 
+                WHERE type='table' AND name='parcelle'
+            `).get();
+            
+            if (tableExists) {
+                // Enrichir nom_commune depuis la table parcelle en utilisant le code INSEE du PA
+                const updateNomCommune = db.prepare(`
+                    UPDATE pa_parcelles_temp
+                    SET nom_commune = (
+                        SELECT p.nom_commune
+                        FROM parcelles_db.parcelle p
+                        WHERE p.code_commune_insee = (
+                            CASE 
+                                WHEN LENGTH(pa_parcelles_temp.code_insee) = 5 THEN pa_parcelles_temp.code_insee
+                                WHEN LENGTH(pa_parcelles_temp.code_insee) = 3 THEN '00' || pa_parcelles_temp.code_insee
+                                ELSE NULL
+                            END
+                        )
+                        AND p.nom_commune IS NOT NULL
+                        AND p.nom_commune != ''
+                        LIMIT 1
+                    )
+                    WHERE (nom_commune IS NULL OR nom_commune = '')
+                      AND code_insee IS NOT NULL
+                `);
+                const result = updateNomCommune.run();
+                console.log(`   ✅ ${result.changes} PA enrichis avec nom de commune depuis la table parcelle`);
+            }
+        } catch (err) {
+            console.log(`   ⚠️  Erreur enrichissement nom commune PA: ${err.message}`);
+        }
+        
         // Créer les index APRÈS insertion (beaucoup plus efficace)
         console.log('⚡ Création des index sur pa_parcelles_temp...');
         db.exec(`
@@ -2206,6 +2248,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_postal = p.code_commune_dvf
+                AND (
+                    (p.nom_commune IS NULL OR p.nom_commune = '')
+                    OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(p.nom_commune))
+                )
                 AND t.section_cadastrale = p.section
                 AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
@@ -2287,6 +2333,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             CREATE TEMP TABLE pa_filles_temp (
                 num_pa TEXT,
                 code_commune_dvf TEXT,
+                code_insee TEXT,
                 nom_commune TEXT,
                 section TEXT,
                 parcelle_fille TEXT,
@@ -2303,7 +2350,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
         `).all();
         
-        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertFillesTransaction = db.transaction(() => {
             let countAssociations = 0;
             for (const pa of paList) {
@@ -2352,6 +2399,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
+                                        pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis table parcelle
                                         NULL,  // Nom de commune sera enrichi depuis table parcelle
                                         sectionFille,
                                         fille,
@@ -2369,6 +2417,43 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             console.log(`   ✅ ${countAssociations} associations PA → filles créées`);
         });
         insertFillesTransaction();
+        
+        // Enrichir le nom de commune dans pa_filles_temp depuis la table parcelle
+        console.log('⚡ Enrichissement du nom de commune dans pa_filles_temp depuis la table parcelle...');
+        try {
+            const tableExists = db.prepare(`
+                SELECT name FROM parcelles_db.sqlite_master 
+                WHERE type='table' AND name='parcelle'
+            `).get();
+            
+            if (tableExists) {
+                // Enrichir nom_commune depuis la table parcelle en utilisant le code INSEE stocké dans pa_filles_temp
+                const updateNomCommuneFilles = db.prepare(`
+                    UPDATE pa_filles_temp
+                    SET nom_commune = (
+                        SELECT p.nom_commune
+                        FROM parcelles_db.parcelle p
+                        WHERE p.code_commune_insee = (
+                            CASE 
+                                WHEN LENGTH(pa_filles_temp.code_insee) = 5 THEN pa_filles_temp.code_insee
+                                WHEN LENGTH(pa_filles_temp.code_insee) = 3 THEN '00' || pa_filles_temp.code_insee
+                                ELSE NULL
+                            END
+                        )
+                        AND p.nom_commune IS NOT NULL
+                        AND p.nom_commune != ''
+                        LIMIT 1
+                    )
+                    WHERE (nom_commune IS NULL OR nom_commune = '')
+                      AND code_insee IS NOT NULL
+                `);
+                
+                const result = updateNomCommuneFilles.run();
+                console.log(`   ✅ ${result.changes} parcelles filles enrichies avec nom de commune`);
+            }
+        } catch (err) {
+            console.log(`   ⚠️  Erreur enrichissement nom commune PA filles: ${err.message}`);
+        }
         
         // Créer des index sur pa_filles_temp pour accélérer les jointures
         db.exec(`
@@ -2468,6 +2553,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
                 t.code_postal = pf.code_commune_dvf
+                AND (
+                    (pf.nom_commune IS NULL OR pf.nom_commune = '')
+                    OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(pf.nom_commune))
+                )
                 AND t.section_cadastrale = pf.section
                 AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
@@ -2614,16 +2703,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         process.exit(1);
     });
     
-    // ÉTAPE 5 : Enrichissement du nom de commune depuis la table parcelle (après PA-DVF)
-    console.log('📊 ÉTAPE 5 : Enrichissement du nom de commune depuis la table parcelle...');
-    enrichirNomCommune(db).then(() => {
-        console.log('✅ Enrichissement du nom de commune terminé\n');
-        
-        // ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales
-        console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
-        enrichirCoordonnees(db).then(() => {
-        // ÉTAPE 7 : Créer la table finale simplifiée
-        console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
+    // ÉTAPE 5 : Enrichissement des coordonnées depuis les parcelles cadastrales
+    console.log('📊 ÉTAPE 5 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+    enrichirCoordonnees(db).then(() => {
+        // ÉTAPE 6 : Créer la table finale simplifiée
+        console.log('\n📊 ÉTAPE 6 : Création de la table finale simplifiée...');
         
         // ✅ Réactiver le WAL MAINTENANT (pour la table finale uniquement)
         console.log('   🔧 Réactivation du mode WAL pour la table finale...');
@@ -2718,13 +2802,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log('✅ Base terrains_batir créée avec succès !\n');
         db.close();
         process.exit(0);
-        }).catch(err => {
-            console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
-            db.close();
-            process.exit(1);
-        });
     }).catch(err => {
-        console.error('❌ Erreur lors de l\'enrichissement du nom de commune:', err);
+        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
         db.close();
         process.exit(1);
     });

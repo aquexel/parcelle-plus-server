@@ -2024,6 +2024,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 num_pa TEXT,
                 code_commune_dfi TEXT,
                 code_commune_dvf TEXT,
+                code_insee TEXT,
                 nom_commune TEXT,
                 section TEXT,
                 parcelle_normalisee TEXT,
@@ -2033,7 +2034,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         `);
         
         // Insérer toutes les parcelles PA en masse
-        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertManyPA = db.transaction(() => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
@@ -2060,6 +2061,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                 pa.numPA,
                                 codeCommuneDFI,
                                 codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
+                                pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis v_commune_2025.csv
                                 NULL,  // Nom de commune sera enrichi depuis v_commune_2025.csv
                                 sect,
                                 parcelleNormalisee,
@@ -2248,6 +2250,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             CREATE TEMP TABLE pa_filles_temp (
                 num_pa TEXT,
                 code_commune_dvf TEXT,
+                code_insee TEXT,
                 nom_commune TEXT,
                 section TEXT,
                 parcelle_fille TEXT,
@@ -2264,7 +2267,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
         `).all();
         
-        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertFillesTransaction = db.transaction(() => {
             let countAssociations = 0;
             for (const pa of paList) {
@@ -2313,6 +2316,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
+                                        pa.codeInsee || NULL,  // Code INSEE pour enrichissement depuis v_commune_2025.csv
                                         NULL,  // Nom de commune sera enrichi depuis v_commune_2025.csv
                                         sectionFille,
                                         fille,
@@ -2338,24 +2342,24 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 const updateNomCommuneFilles = db.prepare(`
                     UPDATE pa_filles_temp
                     SET nom_commune = ?
-                    WHERE code_commune_dvf = ?
+                    WHERE code_insee = ?
                       AND (nom_commune IS NULL OR nom_commune = '')
                 `);
                 
                 const updateTransaction = db.transaction(() => {
                     const codesInsee = db.prepare(`
-                        SELECT DISTINCT code_commune_dvf 
+                        SELECT DISTINCT code_insee 
                         FROM pa_filles_temp 
-                        WHERE code_commune_dvf IS NOT NULL 
+                        WHERE code_insee IS NOT NULL 
                           AND (nom_commune IS NULL OR nom_commune = '')
                     `).all();
                     
                     let countEnrichies = 0;
                     for (const row of codesInsee) {
-                        const codeInseeNormalise = String(row.code_commune_dvf).padStart(5, '0');
+                        const codeInseeNormalise = String(row.code_insee).padStart(5, '0');
                         const nomCommune = communeMap.get(codeInseeNormalise);
                         if (nomCommune) {
-                            const result = updateNomCommuneFilles.run(nomCommune, row.code_commune_dvf);
+                            const result = updateNomCommuneFilles.run(nomCommune, row.code_insee);
                             countEnrichies += result.changes;
                         }
                     }

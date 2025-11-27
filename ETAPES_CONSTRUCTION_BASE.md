@@ -179,8 +179,11 @@ Le script `create-terrains-batir-V3.js` construit une base de données SQLite co
 **Objectif** : Trouver les transactions DVF correspondant aux parcelles filles (ACHAT AVANT DIVISION)
 
 - **Table créée** : `achats_lotisseurs_filles`
-- **Critères** :
-  - Même logique que 4.2 mais sur les parcelles filles
+- **Critères de jointure** :
+  - `code_commune` (DVF) = `code_commune_dvf` (PA) ✅ **Utilisation du code INSEE uniquement**
+  - `nom_commune` (DVF) = `nom_commune` (PA) (si disponible)
+  - `section_cadastrale` (DVF) = `section` (PA)
+  - `parcelle_suffixe` (DVF) = `parcelle_fille_suffixe` (PA)
   - Jointure avec `pa_filles_temp`
 - **Calcul du rang** : Première transaction chronologiquement par PA
 - **Mise à jour** : `terrains_batir_temp.est_terrain_viabilise = 0` et `id_pa`

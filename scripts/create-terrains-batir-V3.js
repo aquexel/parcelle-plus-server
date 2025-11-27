@@ -682,73 +682,8 @@ function attribuerTypeUsage(db) {
     });
 }
 
-// Fonction pour enrichir le nom de commune depuis la table parcelle (après PA-DVF)
-function enrichirNomCommune(db) {
-    return new Promise((resolve, reject) => {
-        try {
-            // Vérifier si la table parcelle existe dans la base attachée
-            const tableExists = db.prepare(`
-                SELECT name FROM parcelles_db.sqlite_master 
-                WHERE type='table' AND name='parcelle'
-            `).get();
-            
-            if (!tableExists) {
-                console.log('   ⚠️  Table parcelle non trouvée dans parcelles_db, enrichissement nom commune ignoré\n');
-                resolve();
-                return;
-            }
-            
-            // Vérifier si la colonne nom_commune existe en essayant une requête de test
-            try {
-                const testQuery = db.prepare(`
-                    SELECT nom_commune FROM parcelles_db.parcelle LIMIT 1
-                `).get();
-            } catch (err) {
-                if (err.message.includes('no such column') || err.message.includes('nom_commune')) {
-                    console.log('   ⚠️  Colonne nom_commune non trouvée dans table parcelle, enrichissement ignoré\n');
-                    resolve();
-                    return;
-                }
-                throw err;
-            }
-            
-            console.log('   🔗 Enrichissement du nom de commune depuis la table parcelle...');
-            
-            // Enrichir nom_commune depuis la table parcelle pour les transactions sans nom de commune
-            // Utiliser le code INSEE extrait des 5 premiers chiffres de id_parcelle pour joindre avec code_commune_insee
-            const updateStmt = db.prepare(`
-                UPDATE terrains_batir_temp
-                SET nom_commune = (
-                    SELECT p.nom_commune
-                    FROM parcelles_db.parcelle p
-                    WHERE p.code_commune_insee = SUBSTR(terrains_batir_temp.id_parcelle, 1, 5)
-                      AND p.nom_commune IS NOT NULL
-                      AND p.nom_commune != ''
-                    LIMIT 1
-                )
-                WHERE (nom_commune IS NULL OR nom_commune = '')
-                  AND id_parcelle IS NOT NULL
-                  AND LENGTH(id_parcelle) >= 5
-                  AND EXISTS (
-                      SELECT 1
-                      FROM parcelles_db.parcelle p
-                      WHERE p.code_commune_insee = SUBSTR(terrains_batir_temp.id_parcelle, 1, 5)
-                        AND p.nom_commune IS NOT NULL
-                        AND p.nom_commune != ''
-                  )
-            `);
-            
-            const result = updateStmt.run();
-            const countEnrichies = result.changes;
-            
-            console.log(`   ✅ ${countEnrichies} transactions enrichies avec nom de commune depuis la table parcelle\n`);
-            resolve();
-        } catch (err) {
-            console.log(`   ⚠️  Erreur lors de l'enrichissement du nom de commune: ${err.message}\n`);
-            resolve(); // Ne pas bloquer le processus
-        }
-    });
-}
+// Note: L'enrichissement DVF n'est pas nécessaire car la DVF contient déjà le nom de commune
+// Seul l'enrichissement PA est nécessaire (fait directement dans pa_parcelles_temp et pa_filles_temp)
 
 // Fonction pour enrichir les coordonnées manquantes depuis les parcelles cadastrales
 function enrichirCoordonnees(db) {
@@ -1947,13 +1882,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     console.log('✅ Tables agrégées créées avec index\n');
 
-        // ÉTAPE 3.5 : Enrichir le nom de commune depuis la table parcelle (AVANT jointure PA-DVF)
-        console.log('📊 ÉTAPE 3.5 : Enrichissement du nom de commune depuis la table parcelle...');
-        enrichirNomCommune(db).then(() => {
-            console.log('✅ Enrichissement du nom de commune terminé\n');
-            
-            // ÉTAPE 4 : Charger les PA
-            console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
+        // ÉTAPE 4 : Charger les PA
+        console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
     
     // Vérifier que le fichier existe
     if (!fs.existsSync(LISTE_PA_FILE)) {

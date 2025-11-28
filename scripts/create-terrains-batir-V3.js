@@ -2053,7 +2053,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 date_mutation TEXT,
                 date_auth TEXT,
                 superficie REAL,
-                surface_totale_aggregee REAL
+                surface_totale_aggregee REAL,
+                code_commune TEXT
             );
         `);
         
@@ -2077,7 +2078,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 m.date_mutation,
                 p.date_auth,
                 p.superficie,
-                m.surface_totale_aggregee
+                m.surface_totale_aggregee,
+                p.code_commune_dvf as code_commune
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = p.code_commune_dvf
@@ -2127,6 +2129,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 date_auth,
                 superficie,
                 surface_totale_aggregee,
+                code_commune,
                 ROW_NUMBER() OVER (
                     PARTITION BY num_pa 
                     ORDER BY date_mutation ASC
@@ -2141,6 +2144,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         `);
         
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
+        // IMPORTANT: Vérifier que la parcelle appartient à la même commune que le PA
         const nbAchatsMeres = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2148,12 +2152,20 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                     SELECT num_pa 
                     FROM achats_lotisseurs_meres a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
+                      AND a.code_commune = terrains_batir_temp.code_commune
                       AND a.rang = 1
                     LIMIT 1
                 )
             WHERE id_mutation IN (
                 SELECT id_mutation FROM achats_lotisseurs_meres WHERE rang = 1
             )
+              AND EXISTS (
+                  SELECT 1 
+                  FROM achats_lotisseurs_meres a 
+                  WHERE a.id_mutation = terrains_batir_temp.id_mutation
+                    AND a.code_commune = terrains_batir_temp.code_commune
+                    AND a.rang = 1
+              )
         `).run().changes;
         console.log(`✅ ${nbAchatsMeres} transactions mères trouvées\n`);
         
@@ -2320,7 +2332,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 superficie REAL,
                 surface_totale_aggregee REAL,
                 valeur_totale REAL,
-                nb_parcelles INTEGER
+                nb_parcelles INTEGER,
+                code_commune TEXT
             );
         `);
         
@@ -2347,7 +2360,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 pf.superficie,
                 m.surface_totale_aggregee,
                 m.valeur_totale,
-                COUNT(DISTINCT t.id_parcelle) as nb_parcelles
+                COUNT(DISTINCT t.id_parcelle) as nb_parcelles,
+                pf.code_commune_dvf as code_commune
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = pf.code_commune_dvf
@@ -2362,7 +2376,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               AND t.id_pa IS NULL  -- Pas déjà attribué
               AND m.valeur_totale > 1  -- Prix > 1€
-            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale
+            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale, pf.code_commune_dvf
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
         `);
@@ -2402,6 +2416,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 surface_totale_aggregee,
                 valeur_totale,
                 nb_parcelles,
+                code_commune,
                 ROW_NUMBER() OVER (
                     PARTITION BY num_pa 
                     ORDER BY date_mutation ASC, nb_parcelles DESC
@@ -2422,12 +2437,20 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                     SELECT num_pa 
                     FROM achats_lotisseurs_filles a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
+                      AND a.code_commune = terrains_batir_temp.code_commune
                       AND a.rang = 1
                     LIMIT 1
                 )
             WHERE id_pa IS NULL
               AND id_mutation IN (
                   SELECT id_mutation FROM achats_lotisseurs_filles WHERE rang = 1
+              )
+              AND EXISTS (
+                  SELECT 1 
+                  FROM achats_lotisseurs_filles a 
+                  WHERE a.id_mutation = terrains_batir_temp.id_mutation
+                    AND a.code_commune = terrains_batir_temp.code_commune
+                    AND a.rang = 1
               )
         `).run().changes;
         console.log(`✅ ${nbAchatsFilles} achats lotisseurs sur parcelles filles\n`);

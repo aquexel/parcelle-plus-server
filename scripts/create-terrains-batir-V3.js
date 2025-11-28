@@ -2343,7 +2343,9 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 surface_totale_aggregee REAL,
                 valeur_totale REAL,
                 nb_parcelles INTEGER,
-                code_commune TEXT
+                code_commune TEXT,
+                section TEXT,
+                parcelle_fille_suffixe TEXT
             );
         `);
         
@@ -2371,7 +2373,9 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 m.surface_totale_aggregee,
                 m.valeur_totale,
                 COUNT(DISTINCT t.id_parcelle) as nb_parcelles,
-                pf.code_commune_dvf as code_commune
+                pf.code_commune_dvf as code_commune,
+                pf.section,
+                pf.parcelle_fille_suffixe
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = pf.code_commune_dvf
@@ -2386,7 +2390,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               AND t.id_pa IS NULL  -- Pas déjà attribué
               AND m.valeur_totale > 1  -- Prix > 1€
-            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale, pf.code_commune_dvf
+            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale, pf.code_commune_dvf, pf.section, pf.parcelle_fille_suffixe
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
         `);
@@ -2427,6 +2431,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 valeur_totale,
                 nb_parcelles,
                 code_commune,
+                section,
+                parcelle_fille_suffixe,
                 ROW_NUMBER() OVER (
                     PARTITION BY num_pa 
                     ORDER BY date_mutation ASC, nb_parcelles DESC
@@ -2440,6 +2446,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             ALTER TABLE achats_lotisseurs_filles_ranked RENAME TO achats_lotisseurs_filles;
         `);
         
+        // IMPORTANT: Vérifier que la parcelle appartient à la même commune, section et parcelle que le PA
         const nbAchatsFilles = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2448,6 +2455,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                     FROM achats_lotisseurs_filles a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
                       AND a.code_commune = terrains_batir_temp.code_commune
+                      AND a.section = terrains_batir_temp.section_cadastrale
+                      AND a.parcelle_fille_suffixe = terrains_batir_temp.parcelle_suffixe
                       AND a.rang = 1
                     LIMIT 1
                 )
@@ -2460,6 +2469,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                   FROM achats_lotisseurs_filles a 
                   WHERE a.id_mutation = terrains_batir_temp.id_mutation
                     AND a.code_commune = terrains_batir_temp.code_commune
+                    AND a.section = terrains_batir_temp.section_cadastrale
+                    AND a.parcelle_fille_suffixe = terrains_batir_temp.parcelle_suffixe
                     AND a.rang = 1
               )
         `).run().changes;

@@ -21,7 +21,7 @@
  * 3. ÉTAPE 1 - ACHAT LOTISSEUR (NON-VIABILISÉ) :
  *    - Chercher transactions DVF avec ≥2 parcelles filles du PA
  *    - Date : ±2 ans autour du PA
- *    - Surface : ±10% de la superficie du PA
+ *    - Surface : ±30% de la superficie du PA
  *    - Prendre la PREMIÈRE chronologiquement
  * 4. ÉTAPE 2 - LOTS VENDUS (VIABILISÉS) :
  *    - Toutes les autres transactions sur parcelles filles
@@ -60,7 +60,7 @@ let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
 const PARCELLES_DB_FILE = path.join(__dirname, '..', 'database', 'parcelles.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
 // Plus de filtre département - France entière
-const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)
+const TOLERANCE_SURFACE = 0.30; // 30% (assouplissement pour meilleure couverture)
 
 console.log('🏗️  === CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 ===\n');
 
@@ -2090,6 +2090,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
+              AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * (1 - ${TOLERANCE_SURFACE}) AND p.superficie * (1 + ${TOLERANCE_SURFACE}))
         `);
         
         let totalMatches = 0;
@@ -2304,7 +2305,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             }
         }).then(() => {
         // SOUS-ÉTAPE 4.4 : Trouver achats lotisseurs sur parcelles filles
-        // Filtres : ≥1 parcelle, tolérance surface ±10%, prix > 1€
+        // Filtres : ≥1 parcelle, tolérance surface ±30%, prix > 1€
         console.log('⚡ 4.4 - Recherche achats lotisseurs sur parcelles filles...');
         
         // OPTIMISATION RADICALE : Traiter par BATCH de COMMUNES pour éviter jointure massive

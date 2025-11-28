@@ -2054,7 +2054,9 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 date_auth TEXT,
                 superficie REAL,
                 surface_totale_aggregee REAL,
-                code_commune TEXT
+                code_commune TEXT,
+                section TEXT,
+                parcelle_normalisee TEXT
             );
         `);
         
@@ -2079,7 +2081,9 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 p.date_auth,
                 p.superficie,
                 m.surface_totale_aggregee,
-                p.code_commune_dvf as code_commune
+                p.code_commune_dvf as code_commune,
+                p.section,
+                p.parcelle_normalisee
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = p.code_commune_dvf
@@ -2130,6 +2134,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 superficie,
                 surface_totale_aggregee,
                 code_commune,
+                section,
+                parcelle_normalisee,
                 ROW_NUMBER() OVER (
                     PARTITION BY num_pa 
                     ORDER BY date_mutation ASC
@@ -2144,7 +2150,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         `);
         
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
-        // IMPORTANT: Vérifier que la parcelle appartient à la même commune que le PA
+        // IMPORTANT: Vérifier que la parcelle appartient à la même commune, section et parcelle que le PA
         const nbAchatsMeres = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2153,6 +2159,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                     FROM achats_lotisseurs_meres a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
                       AND a.code_commune = terrains_batir_temp.code_commune
+                      AND a.section = terrains_batir_temp.section_cadastrale
+                      AND ('000' || a.parcelle_normalisee) = terrains_batir_temp.parcelle_suffixe
                       AND a.rang = 1
                     LIMIT 1
                 )
@@ -2164,6 +2172,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                   FROM achats_lotisseurs_meres a 
                   WHERE a.id_mutation = terrains_batir_temp.id_mutation
                     AND a.code_commune = terrains_batir_temp.code_commune
+                    AND a.section = terrains_batir_temp.section_cadastrale
+                    AND ('000' || a.parcelle_normalisee) = terrains_batir_temp.parcelle_suffixe
                     AND a.rang = 1
               )
         `).run().changes;

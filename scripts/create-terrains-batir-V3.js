@@ -21,7 +21,7 @@
  * 3. ÉTAPE 1 - ACHAT LOTISSEUR (NON-VIABILISÉ) :
  *    - Chercher transactions DVF avec ≥2 parcelles filles du PA
  *    - Date : ±2 ans autour du PA
- *    - Surface : ±30% de la superficie du PA
+ *    - Surface : ±10% de la superficie du PA
  *    - Prendre la PREMIÈRE chronologiquement
  * 4. ÉTAPE 2 - LOTS VENDUS (VIABILISÉS) :
  *    - Toutes les autres transactions sur parcelles filles
@@ -60,7 +60,7 @@ let DB_FILE = path.join(__dirname, '..', 'database', 'terrains_batir.db');
 const PARCELLES_DB_FILE = path.join(__dirname, '..', 'database', 'parcelles.db');
 const LISTE_PA_FILE = path.join(__dirname, '..', 'Liste-des-permis-damenager.2025-10.csv');
 // Plus de filtre département - France entière
-const TOLERANCE_SURFACE = 0.30; // 30% (assouplissement pour meilleure couverture)
+const TOLERANCE_SURFACE = 0.10; // 10% (assouplissement pour meilleure couverture)
 
 console.log('🏗️  === CRÉATION BASE TERRAINS À BÂTIR - VERSION 2 ===\n');
 
@@ -191,6 +191,7 @@ db.exec(`
         longitude REAL,
         code_departement TEXT,
         code_commune TEXT,
+        code_postal TEXT,
         nom_commune TEXT,
         section_cadastrale TEXT,
         est_terrain_viabilise INTEGER DEFAULT 0,
@@ -1184,6 +1185,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                 latitude REAL,
                 longitude REAL,
                 code_commune TEXT,
+                code_postal TEXT,
                 section_cadastrale TEXT,
                 parcelle_suffixe TEXT,
                 nom_commune TEXT
@@ -1208,8 +1210,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     id_parcelle, id_mutation, code_departement,
                     valeur_fonciere, surface_totale, surface_reelle_bati,
                     date_mutation, latitude, longitude,
-                    code_commune, section_cadastrale, parcelle_suffixe, nom_commune
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             // Batch transaction pour performance (comme script DPE)
@@ -1277,6 +1279,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         'valeur_fonciere': ['valeur_fonciere', 'valeur_fonciere_globale'],
                         'code_departement': ['code_departement', 'dep'],
                         'code_commune': ['code_commune', 'comm', 'code_commune_insee'],
+                        'code_postal': ['code_postal', 'code_postal_commune', 'postal_code'],
                         'nom_commune': ['nom_commune', 'commune'],
                         'id_parcelle': ['id_parcelle', 'identifiant_local', 'parcelle'],
                         'section': ['section', 'section_cadastrale'],
@@ -1481,6 +1484,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     const latitude = parseFloat(row.lat || row.latitude || 0) || null;
                     const longitude = parseFloat(row.lon || row.longitude || 0) || null;
                     
+                    // Extraire le code postal depuis la DVF
+                    const codePostal = getColumnValue(row, ['code_postal', 'code_postal_commune', 'postal_code']) || null;
+                    
                     // Précalculer le suffixe parcelle et code commune (optimisation)
                     const parcelleSuffixe = idParcelle.length >= 6 ? idParcelle.substring(5) : null;
                     const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
@@ -1503,6 +1509,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             latitude,
                             longitude,
                             codeCommune,
+                            codePostal,  // Ajouter code_postal
                             section,
                             parcelleSuffixe,
                             nomCommune || null  // Ajouter nom_commune (peut être vide)
@@ -1586,6 +1593,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         longitude REAL,
                         code_departement TEXT,
                         code_commune TEXT,
+                        code_postal TEXT,
                         section_cadastrale TEXT,
                         parcelle_suffixe TEXT,
                         nom_commune TEXT
@@ -1606,6 +1614,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                             AVG(longitude) as longitude,
                             code_departement,
                             MAX(code_commune) as code_commune,
+                            MAX(code_postal) as code_postal,
                             MAX(section_cadastrale) as section_cadastrale,
                             MAX(parcelle_suffixe) as parcelle_suffixe,
                             MAX(nom_commune) as nom_commune
@@ -1657,14 +1666,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
         INSERT INTO terrains_batir_temp (
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, latitude, longitude,
-                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune,
-                        prix_m2, est_terrain_viabilise, id_pa
+                        code_departement, code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
         )
         SELECT 
                         id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
                         date_mutation, latitude, longitude,
-                        code_departement, code_commune, section_cadastrale, parcelle_suffixe, nom_commune,
-                        NULL as prix_m2, 0 as est_terrain_viabilise, NULL as id_pa
+                        code_departement, code_commune, code_postal, section_cadastrale, parcelle_suffixe, nom_commune
                     FROM temp_agregated;
                     `);
                     const dbSizeAfterFusion = getDbSizeMB(DB_FILE);
@@ -1718,9 +1725,16 @@ chargerParcellesDansDB().then(() => {
 console.log('📊 ÉTAPE 1 : Chargement DVF directement dans la table de travail...\n');
 console.log('   🔥 Optimisation : Pas de table temporaire intermédiaire (économie ~14 GB)\n');
 
-// Note: insertDvfTemp n'est pas utilisé - les données passent par temp_csv_file puis temp_agregated
-// chargerTousLesCSV n'utilise pas le paramètre insertStmt
-chargerTousLesCSV(db, null).then((totalInserted) => {
+// Préparer l'insertion DIRECTE dans terrains_batir_temp
+const insertDvfTemp = db.prepare(`
+    INSERT INTO terrains_batir_temp (
+        id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+        date_mutation, code_departement, code_commune, code_postal, section_cadastrale,
+        parcelle_suffixe, nom_commune, prix_m2, est_terrain_viabilise, id_pa
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, NULL)
+`);
+
+chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log(`✅ ${totalInserted.toLocaleString()} transactions DVF chargées dans terrains_batir_temp\n`);
     
     // ⚡ Données déjà dans terrains_batir_temp, on passe directement à l'indexation
@@ -1767,6 +1781,46 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
     console.log('✅ Index créés sur terrains_batir_temp');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
 
+    // ÉTAPE 2.5 : Créer table de correspondance code postal → code INSEE
+    // Le PA utilise le code postal (colonne COMM) mais DVF utilise le code INSEE dans id_parcelle
+    // On extrait le code INSEE depuis id_parcelle (SUBSTR(id_parcelle, 1, 5))
+    console.log('⚡ ÉTAPE 2.5 : Création table correspondance code postal → code INSEE...');
+    db.exec(`
+        DROP TABLE IF EXISTS correspondance_postal_insee;
+        CREATE TEMP TABLE correspondance_postal_insee (
+            code_postal TEXT,
+            code_insee TEXT,
+            PRIMARY KEY (code_postal, code_insee)
+        );
+    `);
+    
+    // Extraire les correspondances depuis terrains_batir_temp
+    // On crée une correspondance entre le code postal (colonne code_commune) et le code INSEE (extrait de id_parcelle)
+    // Si plusieurs codes INSEE existent pour un même code postal, on les garde tous
+    db.exec(`
+        INSERT INTO correspondance_postal_insee (code_postal, code_insee)
+        SELECT DISTINCT
+            code_commune as code_postal,
+            SUBSTR(id_parcelle, 1, 5) as code_insee
+        FROM terrains_batir_temp
+        WHERE id_parcelle IS NOT NULL 
+          AND LENGTH(id_parcelle) >= 5
+          AND code_commune IS NOT NULL
+          AND code_commune != SUBSTR(id_parcelle, 1, 5)
+    `);
+    
+    // Ajouter aussi les correspondances directes (code postal = code INSEE)
+    db.exec(`
+        INSERT OR IGNORE INTO correspondance_postal_insee (code_postal, code_insee)
+        SELECT DISTINCT
+            code_commune as code_postal,
+            code_commune as code_insee
+        FROM terrains_batir_temp
+        WHERE code_commune IS NOT NULL
+    `);
+    
+    const nbCorrespondances = db.prepare(`SELECT COUNT(*) as nb FROM correspondance_postal_insee`).get().nb;
+    console.log(`✅ ${nbCorrespondances.toLocaleString()} correspondances créées\n`);
 
     // ÉTAPE 3 : Créer vue agrégée par id_mutation
     // ✅ Déduplication déjà faite après chaque fichier CSV (voir ÉTAPE 1)
@@ -1823,8 +1877,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
     
     console.log('✅ Tables agrégées créées avec index\n');
 
-        // ÉTAPE 4 : Charger les PA
-        console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
+    // ÉTAPE 4 : Charger les PA
+    console.log('📊 ÉTAPE 4 : Chargement de la liste des PA...');
     
     // Vérifier que le fichier existe
     if (!fs.existsSync(LISTE_PA_FILE)) {
@@ -1859,7 +1913,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 firstRowColumns = Object.keys(row);
                 console.log(`   📋 Colonnes détectées (${firstRowColumns.length}): ${firstRowColumns.slice(0, 10).join(', ')}...`);
                 // Afficher aussi un exemple de valeurs pour debug
-                console.log(`   🔍 Exemple première ligne: NUM_PA="${row.NUM_PA}", DATE_REELLE_AUTORISATION="${row.DATE_REELLE_AUTORISATION}", COMM="${row.COMM}" (code INSEE), ADR_CODPOS_TER="${row.ADR_CODPOS_TER}" (code postal)`);
+                console.log(`   🔍 Exemple première ligne: NUM_PA="${row.NUM_PA}", DATE_REELLE_AUTORISATION="${row.DATE_REELLE_AUTORISATION}", COMM="${row.COMM}"`);
             }
             
             // Utiliser directement la première ligne comme en-tête (comme le script PC)
@@ -1867,9 +1921,9 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             
             const numPA = row.NUM_PA;
             const dateAuth = row.DATE_REELLE_AUTORISATION;
-            // COMM contient le code INSEE
-            const codeInseePA = row.COMM || ''; // Code INSEE pour jointure DVF et enrichissement
-            const comm = codeInseePA; // Utiliser le code INSEE pour la jointure DVF
+            // Utiliser ADR_CODPOS_TER (code postal) pour la jointure PA-DVF
+            const codePostalPA = row.ADR_CODPOS_TER || row.COMM;
+            const comm = codePostalPA; // Utiliser le code postal pour la jointure
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -1937,8 +1991,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             paList.push({
                     numPA: numPA,
                     dateAuth: dateAuthFormatee,
-                    comm: commNormalise,  // Code postal pour jointure DVF
-                    codeInsee: codeInseePA,  // Code INSEE pour enrichissement depuis table parcelle
+                    comm: commNormalise,  // Code postal (sera converti en INSEE plus tard)
                     superficie: superficie,
                     sections: Array.from(sections),
                     parcelles: parcelles,
@@ -1980,8 +2033,6 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 num_pa TEXT,
                 code_commune_dfi TEXT,
                 code_commune_dvf TEXT,
-                code_insee TEXT,
-                nom_commune TEXT,
                 section TEXT,
                 parcelle_normalisee TEXT,
                 superficie REAL,
@@ -1990,17 +2041,14 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         `);
         
         // Insérer toutes les parcelles PA en masse
-        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
         const insertManyPA = db.transaction(() => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
                 
-                // pa.comm est maintenant le code INSEE (COMM)
-                const codeInseeDVF = String(pa.comm).padStart(5, '0');
-                // Extraire les 3 derniers chiffres du code INSEE pour la recherche dans la DFI
-                const codeCommuneDFI = pa.codeInsee 
-                    ? String(pa.codeInsee).padStart(5, '0').substring(2)  // Extraire les 3 derniers chiffres (ex: 40088 -> 088)
-                    : codeInseeDVF.substring(codeInseeDVF.length - 3);
+                // pa.comm est maintenant le code postal (ADR_CODPOS_TER)
+                const codePostalDVF = String(pa.comm).padStart(5, '0');
+                const codeCommuneDFI = codePostalDVF.substring(codePostalDVF.length - 3);
                 
                 for (const parcelle of pa.parcelles) {
                     const parcelleStr = String(parcelle).trim().toUpperCase();
@@ -2016,9 +2064,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                             insertPA.run(
                                 pa.numPA,
                                 codeCommuneDFI,
-                                codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
-                                pa.codeInsee || null,  // Code INSEE
-                                null,  // Nom de commune
+                                codePostalDVF,  // Utiliser le code postal pour la jointure DVF
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2032,7 +2078,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         insertManyPA();
         const nbPA = db.prepare(`SELECT COUNT(DISTINCT num_pa) as nb FROM pa_parcelles_temp`).get().nb;
         console.log(`✅ ${nbPA} PA avec parcelles explosées`);
-            // Créer les index APRÈS insertion (beaucoup plus efficace)
+        
+        // Créer les index APRÈS insertion (beaucoup plus efficace)
         console.log('⚡ Création des index sur pa_parcelles_temp...');
         db.exec(`
             CREATE INDEX idx_pa_parcelles_commune ON pa_parcelles_temp(code_commune_dfi, parcelle_normalisee);
@@ -2053,10 +2100,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 date_mutation TEXT,
                 date_auth TEXT,
                 superficie REAL,
-                surface_totale_aggregee REAL,
-                code_commune TEXT,
-                section TEXT,
-                parcelle_normalisee TEXT
+                surface_totale_aggregee REAL
             );
         `);
         
@@ -2070,8 +2114,8 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         console.log(`   → Traitement par batch de ${communesAvecPA.length} communes avec PA...`);
         
         // Traiter commune par commune (évite jointure 87k PA × 36M DVF en une fois)
-        // IMPORTANT: Utiliser le code INSEE pour la jointure PA-DVF
-        // Le PA utilise COMM (code INSEE) et la DVF a aussi le code INSEE dans code_commune
+        // IMPORTANT: Utiliser le code postal pour la jointure PA-DVF
+        // Le PA utilise ADR_CODPOS_TER (code postal) et la DVF a aussi le code postal dans code_postal
         const insertBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_meres 
             SELECT DISTINCT
@@ -2080,23 +2124,15 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 m.date_mutation,
                 p.date_auth,
                 p.superficie,
-                m.surface_totale_aggregee,
-                p.code_commune_dvf as code_commune,
-                p.section,
-                p.parcelle_normalisee
+                m.surface_totale_aggregee
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = p.code_commune_dvf
-                AND (
-                    (p.nom_commune IS NULL OR p.nom_commune = '')
-                    OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(p.nom_commune))
-                )
                 AND t.section_cadastrale = p.section
                 AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
-              AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * (1 - ${TOLERANCE_SURFACE}) AND p.superficie * (1 + ${TOLERANCE_SURFACE}))
         `);
         
         let totalMatches = 0;
@@ -2118,30 +2154,51 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         
         console.log(`   → Jointure terminée : ${totalMatches} associations PA-DVF\n`);
         
-        // Créer index AVANT le ROW_NUMBER() OVER pour éviter tri massif en mémoire
+        // Optimisation : Checkpoint avant calcul du rang pour libérer l'espace
+        console.log('   → Libération de l\'espace disque...');
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        
+        // Créer index AVANT le calcul du rang pour optimiser
         console.log('   → Création index pour optimiser le calcul du rang...');
         db.exec(`CREATE INDEX idx_achats_meres_pa_date ON achats_lotisseurs_meres(num_pa, date_mutation);`);
         
-        // Ajouter le rang (sur une table réduite) - l'index va accélérer le PARTITION BY + ORDER BY
+        // Optimisation : Augmenter temporairement le cache pour le tri
+        const oldCacheSize = db.prepare('PRAGMA cache_size').get();
+        db.pragma('cache_size = -128000'); // 128 MB temporairement
+        
+        // Approche optimisée : On n'a besoin que du rang 1, donc on peut éviter ROW_NUMBER()
+        // en utilisant une jointure avec une table de premières dates (plus rapide qu'une sous-requête corrélée)
         console.log('   → Calcul du rang (première transaction par PA)...');
+        console.log('   → Étape 1/2 : Identification des premières dates par PA...');
+        db.exec(`
+            CREATE TEMP TABLE premieres_dates_pa AS
+            SELECT 
+                num_pa,
+                MIN(date_mutation) as premiere_date
+            FROM achats_lotisseurs_meres
+            GROUP BY num_pa
+        `);
+        
+        console.log('   → Étape 2/2 : Sélection des premières transactions...');
         db.exec(`
             CREATE TEMP TABLE achats_lotisseurs_meres_ranked AS
             SELECT 
-                num_pa,
-                id_mutation,
-                date_mutation,
-                date_auth,
-                superficie,
-                surface_totale_aggregee,
-                code_commune,
-                section,
-                parcelle_normalisee,
-                ROW_NUMBER() OVER (
-                    PARTITION BY num_pa 
-                    ORDER BY date_mutation ASC
-                ) as rang
-            FROM achats_lotisseurs_meres
+                a.num_pa,
+                a.id_mutation,
+                a.date_mutation,
+                a.date_auth,
+                a.superficie,
+                a.surface_totale_aggregee,
+                1 as rang
+            FROM achats_lotisseurs_meres a
+            INNER JOIN premieres_dates_pa p ON a.num_pa = p.num_pa AND a.date_mutation = p.premiere_date
         `);
+        
+        // Nettoyer la table temporaire
+        db.exec('DROP TABLE premieres_dates_pa;');
+        
+        // Restaurer le cache_size
+        db.pragma(`cache_size = ${oldCacheSize.cache_size}`);
         
         // Remplacer l'ancienne table
         db.exec(`
@@ -2150,7 +2207,6 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         `);
         
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
-        // IMPORTANT: Vérifier que la parcelle appartient à la même commune, section et parcelle que le PA
         const nbAchatsMeres = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2158,24 +2214,12 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                     SELECT num_pa 
                     FROM achats_lotisseurs_meres a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
-                      AND a.code_commune = terrains_batir_temp.code_commune
-                      AND a.section = terrains_batir_temp.section_cadastrale
-                      AND ('000' || a.parcelle_normalisee) = terrains_batir_temp.parcelle_suffixe
                       AND a.rang = 1
                     LIMIT 1
                 )
             WHERE id_mutation IN (
                 SELECT id_mutation FROM achats_lotisseurs_meres WHERE rang = 1
             )
-              AND EXISTS (
-                  SELECT 1 
-                  FROM achats_lotisseurs_meres a 
-                  WHERE a.id_mutation = terrains_batir_temp.id_mutation
-                    AND a.code_commune = terrains_batir_temp.code_commune
-                    AND a.section = terrains_batir_temp.section_cadastrale
-                    AND ('000' || a.parcelle_normalisee) = terrains_batir_temp.parcelle_suffixe
-                    AND a.rang = 1
-              )
         `).run().changes;
         console.log(`✅ ${nbAchatsMeres} transactions mères trouvées\n`);
         
@@ -2189,8 +2233,6 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             CREATE TEMP TABLE pa_filles_temp (
                 num_pa TEXT,
                 code_commune_dvf TEXT,
-                code_insee TEXT,
-                nom_commune TEXT,
                 section TEXT,
                 parcelle_fille TEXT,
                 parcelle_fille_suffixe TEXT,
@@ -2206,7 +2248,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
         `).all();
         
-        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertFille = db.prepare(`INSERT INTO pa_filles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
         const insertFillesTransaction = db.transaction(() => {
             let countAssociations = 0;
             for (const pa of paList) {
@@ -2218,10 +2260,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 if (aMere) continue; // Skip si déjà traité sur parcelle mère
                 
                 const codeCommuneDVF = String(pa.comm).padStart(5, '0');
-                // Extraire les 3 derniers chiffres du code INSEE pour la recherche dans la DFI
-                const codeCommuneDFI = pa.codeInsee 
-                    ? String(pa.codeInsee).padStart(5, '0').substring(2)  // Extraire les 3 derniers chiffres (ex: 40088 -> 088)
-                    : codeCommuneDVF.substring(codeCommuneDVF.length - 3);
+                const codeCommuneDFI = codeCommuneDVF.substring(codeCommuneDVF.length - 3);
                 
                 // Pour chaque parcelle du PA
                 for (const parcelle of pa.parcelles || []) {
@@ -2255,8 +2294,6 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                                     insertFille.run(
                                         pa.numPA,
                                         codeCommuneDVF,
-                                        pa.codeInsee || null,  // Code INSEE
-                                        null,  // Nom de commune
                                         sectionFille,
                                         fille,
                                         parcelleSuffixe,
@@ -2273,7 +2310,6 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             console.log(`   ✅ ${countAssociations} associations PA → filles créées`);
         });
         insertFillesTransaction();
-        
         
         // Créer des index sur pa_filles_temp pour accélérer les jointures
         db.exec(`
@@ -2327,7 +2363,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             }
         }).then(() => {
         // SOUS-ÉTAPE 4.4 : Trouver achats lotisseurs sur parcelles filles
-        // Filtres : ≥1 parcelle, tolérance surface ±30%, prix > 1€
+        // Filtres : ≥1 parcelle, tolérance surface ±10%, prix > 1€
         console.log('⚡ 4.4 - Recherche achats lotisseurs sur parcelles filles...');
         
         // OPTIMISATION RADICALE : Traiter par BATCH de COMMUNES pour éviter jointure massive
@@ -2342,10 +2378,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 superficie REAL,
                 surface_totale_aggregee REAL,
                 valeur_totale REAL,
-                nb_parcelles INTEGER,
-                code_commune TEXT,
-                section TEXT,
-                parcelle_fille_suffixe TEXT
+                nb_parcelles INTEGER
             );
         `);
         
@@ -2372,17 +2405,10 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                 pf.superficie,
                 m.surface_totale_aggregee,
                 m.valeur_totale,
-                COUNT(DISTINCT t.id_parcelle) as nb_parcelles,
-                pf.code_commune_dvf as code_commune,
-                pf.section,
-                pf.parcelle_fille_suffixe
+                COUNT(DISTINCT t.id_parcelle) as nb_parcelles
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
-                t.code_commune = pf.code_commune_dvf
-                AND (
-                    (pf.nom_commune IS NULL OR pf.nom_commune = '')
-                    OR UPPER(TRIM(t.nom_commune)) = UPPER(TRIM(pf.nom_commune))
-                )
+                t.code_postal = pf.code_commune_dvf
                 AND t.section_cadastrale = pf.section
                 AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
@@ -2390,7 +2416,7 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               AND t.id_pa IS NULL  -- Pas déjà attribué
               AND m.valeur_totale > 1  -- Prix > 1€
-            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale, pf.code_commune_dvf, pf.section, pf.parcelle_fille_suffixe
+            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
         `);
@@ -2413,32 +2439,71 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
         
-        // Créer index AVANT le ROW_NUMBER() OVER pour optimiser
+        // Optimisation : Checkpoint avant calcul du rang pour libérer l'espace
+        console.log('   → Libération de l\'espace disque...');
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        
+        // Créer index AVANT le calcul du rang pour optimiser
         console.log('   → Création index pour optimiser le calcul du rang...');
         db.exec(`CREATE INDEX idx_achats_filles_pa_date ON achats_lotisseurs_filles(num_pa, date_mutation, nb_parcelles);`);
         
-        // Ajouter le rang (sur une table réduite)
+        // Optimisation : Augmenter temporairement le cache pour le tri
+        const oldCacheSizeFilles = db.prepare('PRAGMA cache_size').get();
+        db.pragma('cache_size = -128000'); // 128 MB temporairement
+        
+        // Approche optimisée : On n'a besoin que du rang 1, donc on peut éviter ROW_NUMBER()
+        // en utilisant une jointure avec une table de premières transactions (plus rapide)
+        // Note: ORDER BY était date_mutation ASC, nb_parcelles DESC
         console.log('   → Calcul du rang (première transaction par PA)...');
+        console.log('   → Étape 1/2 : Identification des premières dates par PA...');
+        db.exec(`
+            CREATE TEMP TABLE premieres_dates_filles AS
+            SELECT 
+                num_pa,
+                MIN(date_mutation) as premiere_date
+            FROM achats_lotisseurs_filles
+            GROUP BY num_pa
+        `);
+        
+        console.log('   → Étape 2/3 : Identification du max parcelles pour chaque PA/première date...');
+        db.exec(`
+            CREATE TEMP TABLE max_parcelles_premiere_date AS
+            SELECT 
+                a.num_pa,
+                a.date_mutation,
+                MAX(a.nb_parcelles) as max_parcelles
+            FROM achats_lotisseurs_filles a
+            INNER JOIN premieres_dates_filles p ON a.num_pa = p.num_pa AND a.date_mutation = p.premiere_date
+            GROUP BY a.num_pa, a.date_mutation
+        `);
+        
+        console.log('   → Étape 3/3 : Sélection des premières transactions...');
         db.exec(`
             CREATE TEMP TABLE achats_lotisseurs_filles_ranked AS
             SELECT 
-                num_pa,
-                id_mutation,
-                date_mutation,
-                date_auth,
-                superficie,
-                surface_totale_aggregee,
-                valeur_totale,
-                nb_parcelles,
-                code_commune,
-                section,
-                parcelle_fille_suffixe,
-                ROW_NUMBER() OVER (
-                    PARTITION BY num_pa 
-                    ORDER BY date_mutation ASC, nb_parcelles DESC
-                ) as rang
-            FROM achats_lotisseurs_filles
+                a.num_pa,
+                a.id_mutation,
+                a.date_mutation,
+                a.date_auth,
+                a.superficie,
+                a.surface_totale_aggregee,
+                a.valeur_totale,
+                a.nb_parcelles,
+                1 as rang
+            FROM achats_lotisseurs_filles a
+            INNER JOIN premieres_dates_filles p ON a.num_pa = p.num_pa AND a.date_mutation = p.premiere_date
+            INNER JOIN max_parcelles_premiere_date m ON 
+                a.num_pa = m.num_pa 
+                AND a.date_mutation = m.date_mutation
+                AND a.nb_parcelles = m.max_parcelles
         `);
+        
+        // Nettoyer les tables temporaires
+        db.exec('DROP TABLE premieres_dates_filles;');
+        db.exec('DROP TABLE max_parcelles_premiere_date;');
+        
+        // Restaurer le cache_size
+        db.pragma(`cache_size = ${oldCacheSizeFilles.cache_size}`);
         
         // Remplacer l'ancienne table
         db.exec(`
@@ -2446,7 +2511,6 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
             ALTER TABLE achats_lotisseurs_filles_ranked RENAME TO achats_lotisseurs_filles;
         `);
         
-        // IMPORTANT: Vérifier que la parcelle appartient à la même commune, section et parcelle que le PA
         const nbAchatsFilles = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2454,24 +2518,12 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
                     SELECT num_pa 
                     FROM achats_lotisseurs_filles a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
-                      AND a.code_commune = terrains_batir_temp.code_commune
-                      AND a.section = terrains_batir_temp.section_cadastrale
-                      AND a.parcelle_fille_suffixe = terrains_batir_temp.parcelle_suffixe
                       AND a.rang = 1
                     LIMIT 1
                 )
             WHERE id_pa IS NULL
               AND id_mutation IN (
                   SELECT id_mutation FROM achats_lotisseurs_filles WHERE rang = 1
-              )
-              AND EXISTS (
-                  SELECT 1 
-                  FROM achats_lotisseurs_filles a 
-                  WHERE a.id_mutation = terrains_batir_temp.id_mutation
-                    AND a.code_commune = terrains_batir_temp.code_commune
-                    AND a.section = terrains_batir_temp.section_cadastrale
-                    AND a.parcelle_fille_suffixe = terrains_batir_temp.parcelle_suffixe
-                    AND a.rang = 1
               )
         `).run().changes;
         console.log(`✅ ${nbAchatsFilles} achats lotisseurs sur parcelles filles\n`);
@@ -2545,11 +2597,10 @@ chargerTousLesCSV(db, null).then((totalInserted) => {
         process.exit(1);
     });
     
-    // ÉTAPE 5 : Enrichissement des coordonnées depuis les parcelles cadastrales
-    console.log('📊 ÉTAPE 5 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+    console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
     enrichirCoordonnees(db).then(() => {
-        // ÉTAPE 6 : Créer la table finale simplifiée
-        console.log('\n📊 ÉTAPE 6 : Création de la table finale simplifiée...');
+        // ÉTAPE 7 : Créer la table finale simplifiée
+        console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
         
         // ✅ Réactiver le WAL MAINTENANT (pour la table finale uniquement)
         console.log('   🔧 Réactivation du mode WAL pour la table finale...');

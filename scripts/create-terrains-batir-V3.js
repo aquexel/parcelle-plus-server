@@ -2423,8 +2423,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
         `);
         
-        // OPTIMISATION : Augmenter temporairement le cache pour accélérer les jointures
+        // OPTIMISATION : Sauvegarder la valeur originale du cache (utilisée pour les deux optimisations)
         const oldCacheSizeFilles = db.prepare('PRAGMA cache_size').get();
+        
+        // Augmenter temporairement le cache pour accélérer les jointures
         db.pragma('cache_size = -64000'); // 64 MB temporairement
         
         let totalFillesMatches = 0;
@@ -2459,8 +2461,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log('   → Création index pour optimiser le calcul du rang...');
         db.exec(`CREATE INDEX idx_achats_filles_pa_date ON achats_lotisseurs_filles(num_pa, date_mutation, nb_parcelles);`);
         
-        // Optimisation : Augmenter temporairement le cache pour le tri
-        const oldCacheSizeFilles = db.prepare('PRAGMA cache_size').get();
+        // Optimisation : Augmenter temporairement le cache pour le tri (réutilise oldCacheSizeFilles sauvegardé plus haut)
         db.pragma('cache_size = -128000'); // 128 MB temporairement
         
         // Approche optimisée : On n'a besoin que du rang 1, donc on peut éviter ROW_NUMBER()

@@ -2101,7 +2101,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 date_mutation TEXT,
                 date_auth TEXT,
                 superficie REAL,
-                surface_totale_aggregee REAL
+                surface_totale_aggregee REAL,
+                code_commune TEXT,
+                section TEXT,
+                parcelle_normalisee TEXT
             );
         `);
         
@@ -2125,15 +2128,21 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 m.date_mutation,
                 p.date_auth,
                 p.superficie,
-                m.surface_totale_aggregee
+                m.surface_totale_aggregee,
+                p.code_commune_dvf,
+                p.section,
+                p.parcelle_normalisee
             FROM pa_parcelles_temp p
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = p.code_commune_dvf
                 AND t.section_cadastrale = p.section
-                AND t.parcelle_suffixe = ('000' || p.parcelle_normalisee)
+                AND (t.parcelle_suffixe = ('000' || p.parcelle_normalisee) 
+                     OR t.parcelle_suffixe = p.parcelle_normalisee)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
+              -- Filtre de surface avec tolérance de 30%
+              AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3)
         `);
         
         let totalMatches = 0;
@@ -2190,6 +2199,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 a.date_auth,
                 a.superficie,
                 a.surface_totale_aggregee,
+                a.code_commune,
+                a.section,
+                a.parcelle_normalisee,
                 1 as rang
             FROM achats_lotisseurs_meres a
             INNER JOIN premieres_dates_pa p ON a.num_pa = p.num_pa AND a.date_mutation = p.premiere_date
@@ -2208,6 +2220,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         `);
         
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
+        // Vérifier commune, section et parcelle pour éviter les associations incorrectes
         const nbAchatsMeres = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2216,6 +2229,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     FROM achats_lotisseurs_meres a 
                     WHERE a.id_mutation = terrains_batir_temp.id_mutation
                       AND a.rang = 1
+                      AND a.code_commune = terrains_batir_temp.code_commune
+                      AND a.section = terrains_batir_temp.section_cadastrale
+                      AND (terrains_batir_temp.parcelle_suffixe = ('000' || a.parcelle_normalisee)
+                           OR terrains_batir_temp.parcelle_suffixe = a.parcelle_normalisee)
                     LIMIT 1
                 )
             WHERE id_mutation IN (

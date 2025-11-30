@@ -1781,47 +1781,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     console.log('✅ Index créés sur terrains_batir_temp');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
 
-    // ÉTAPE 2.5 : Créer table de correspondance code postal → code INSEE
-    // Le PA utilise le code postal (colonne COMM) mais DVF utilise le code INSEE dans id_parcelle
-    // On extrait le code INSEE depuis id_parcelle (SUBSTR(id_parcelle, 1, 5))
-    console.log('⚡ ÉTAPE 2.5 : Création table correspondance code postal → code INSEE...');
-    db.exec(`
-        DROP TABLE IF EXISTS correspondance_postal_insee;
-        CREATE TEMP TABLE correspondance_postal_insee (
-            code_postal TEXT,
-            code_insee TEXT,
-            PRIMARY KEY (code_postal, code_insee)
-        );
-    `);
-    
-    // Extraire les correspondances depuis terrains_batir_temp
-    // On crée une correspondance entre le code postal (colonne code_commune) et le code INSEE (extrait de id_parcelle)
-    // Si plusieurs codes INSEE existent pour un même code postal, on les garde tous
-    db.exec(`
-        INSERT INTO correspondance_postal_insee (code_postal, code_insee)
-        SELECT DISTINCT
-            code_commune as code_postal,
-            SUBSTR(id_parcelle, 1, 5) as code_insee
-        FROM terrains_batir_temp
-        WHERE id_parcelle IS NOT NULL 
-          AND LENGTH(id_parcelle) >= 5
-          AND code_commune IS NOT NULL
-          AND code_commune != SUBSTR(id_parcelle, 1, 5)
-    `);
-    
-    // Ajouter aussi les correspondances directes (code postal = code INSEE)
-    db.exec(`
-        INSERT OR IGNORE INTO correspondance_postal_insee (code_postal, code_insee)
-        SELECT DISTINCT
-            code_commune as code_postal,
-            code_commune as code_insee
-        FROM terrains_batir_temp
-        WHERE code_commune IS NOT NULL
-    `);
-    
-    const nbCorrespondances = db.prepare(`SELECT COUNT(*) as nb FROM correspondance_postal_insee`).get().nb;
-    console.log(`✅ ${nbCorrespondances.toLocaleString()} correspondances créées\n`);
-
     // ÉTAPE 3 : Créer vue agrégée par id_mutation
     // ✅ Déduplication déjà faite après chaque fichier CSV (voir ÉTAPE 1)
     // On a maintenant ~4-6M lignes au lieu de 36M

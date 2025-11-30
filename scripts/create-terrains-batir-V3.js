@@ -1873,6 +1873,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     db.exec(`
     CREATE INDEX idx_mutations_agg_id ON mutations_aggregees(id_mutation);
     CREATE INDEX idx_mutations_agg_date ON mutations_aggregees(date_mutation);
+    CREATE INDEX idx_mutations_agg_valeur ON mutations_aggregees(valeur_totale) WHERE valeur_totale > 1;
     `);
     
     console.log('✅ Tables agrégées créées avec index\n');
@@ -2392,9 +2393,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   → Traitement par batch de ${communesAvecFillesPA.length} communes avec PA filles...`);
         
         // Traiter commune par commune
-        // IMPORTANT: Utiliser le code commune extrait de id_parcelle (comme dans enrichirCoordonnees)
-        // au lieu de la colonne code_commune, car le PA utilise le code postal (40100) 
-        // alors que la DVF utilise le code INSEE (40088) dans id_parcelle
+        // OPTIMISATION : Créer index sur id_pa pour accélérer le filtre t.id_pa IS NULL
+        console.log('   → Création index pour optimiser la jointure...');
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_pa_null ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe) WHERE id_pa IS NULL;`);
+        
         const insertFillesBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_filles 
             SELECT 
@@ -2408,18 +2410,22 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 COUNT(DISTINCT t.id_parcelle) as nb_parcelles
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
-                t.code_postal = pf.code_commune_dvf
+                t.code_commune = pf.code_commune_dvf
                 AND t.section_cadastrale = pf.section
                 AND t.parcelle_suffixe = pf.parcelle_fille_suffixe
+                AND t.id_pa IS NULL  -- Pas déjà attribué (déplacé dans JOIN pour utiliser l'index)
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
             WHERE pf.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
-              AND t.id_pa IS NULL  -- Pas déjà attribué
               AND m.valeur_totale > 1  -- Prix > 1€
             GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
         `);
+        
+        // OPTIMISATION : Augmenter temporairement le cache pour accélérer les jointures
+        const oldCacheSizeFilles = db.prepare('PRAGMA cache_size').get();
+        db.pragma('cache_size = -64000'); // 64 MB temporairement
         
         let totalFillesMatches = 0;
         for (let i = 0; i < communesAvecFillesPA.length; i++) {
@@ -2427,8 +2433,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             const result = insertFillesBatch.run(commune);
             totalFillesMatches += result.changes;
             
-            // CHECKPOINT régulier pour libérer l'espace disque temporaire
-            if ((i + 1) % 50 === 0) {
+            // CHECKPOINT moins fréquent pour améliorer les performances
+            if ((i + 1) % 200 === 0) {
                 db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
             }
             
@@ -2436,6 +2442,12 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 console.log(`   → ${i + 1}/${communesAvecFillesPA.length} communes traitées (${totalFillesMatches} matches trouvés)`);
             }
         }
+        
+        // Restaurer le cache_size original
+        db.pragma(`cache_size = ${oldCacheSizeFilles.cache_size}`);
+        
+        // Supprimer l'index temporaire pour libérer de l'espace
+        db.exec('DROP INDEX IF EXISTS idx_temp_pa_null;');
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
         

@@ -1881,9 +1881,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             
             const numPA = row.NUM_PA;
             const dateAuth = row.DATE_REELLE_AUTORISATION;
-            // Utiliser ADR_CODPOS_TER (code postal) pour la jointure PA-DVF
-            const codePostalPA = row.ADR_CODPOS_TER || row.COMM;
-            const comm = codePostalPA; // Utiliser le code postal pour la jointure
+            // Utiliser COMM (code INSEE) pour la jointure PA-DVF (comme dans la DVF)
+            const codeInseePA = row.COMM || '';
+            const comm = codeInseePA; // Utiliser le code INSEE pour la jointure
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -2006,9 +2006,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
                 
-                // pa.comm est maintenant le code postal (ADR_CODPOS_TER)
-                const codePostalDVF = String(pa.comm).padStart(5, '0');
-                const codeCommuneDFI = codePostalDVF.substring(codePostalDVF.length - 3);
+                // pa.comm est maintenant le code INSEE (COMM)
+                const codeInseeDVF = String(pa.comm).padStart(5, '0');
+                const codeCommuneDFI = codeInseeDVF.substring(codeInseeDVF.length - 3);
                 
                 for (const parcelle of pa.parcelles) {
                     const parcelleStr = String(parcelle).trim().toUpperCase();
@@ -2024,7 +2024,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                             insertPA.run(
                                 pa.numPA,
                                 codeCommuneDFI,
-                                codePostalDVF,  // Utiliser le code postal pour la jointure DVF
+                                codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,

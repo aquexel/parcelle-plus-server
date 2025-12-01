@@ -1884,6 +1884,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             // Utiliser COMM (code INSEE) pour la jointure PA-DVF (comme dans la DVF)
             const codeInseePA = row.COMM || '';
             const comm = codeInseePA; // Utiliser le code INSEE pour la jointure
+            const depCode = row.DEP_CODE || ''; // Code département du PA
             const superficie = parseFloat(row.SUPERFICIE_TERRAIN || 0);
             const lieuDit = (row.ADR_LIEUDIT_TER || '').trim().toUpperCase();
             const adresseVoie = (row.ADR_LIBVOIE_TER || '').trim().toUpperCase();
@@ -1951,7 +1952,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             paList.push({
                     numPA: numPA,
                     dateAuth: dateAuthFormatee,
-                    comm: commNormalise,  // Code postal (sera converti en INSEE plus tard)
+                    comm: commNormalise,  // Code INSEE
+                    depCode: depCode,  // Code département
                     superficie: superficie,
                     sections: Array.from(sections),
                     parcelles: parcelles,
@@ -1993,6 +1995,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 num_pa TEXT,
                 code_commune_dfi TEXT,
                 code_commune_dvf TEXT,
+                code_departement TEXT,
                 section TEXT,
                 parcelle_normalisee TEXT,
                 superficie REAL,
@@ -2001,7 +2004,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         `);
         
         // Insérer toutes les parcelles PA en masse
-        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?)`);
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertManyPA = db.transaction(() => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
@@ -2025,6 +2028,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                 pa.numPA,
                                 codeCommuneDFI,
                                 codeInseeDVF,  // Utiliser le code INSEE pour la jointure DVF
+                                pa.depCode,  // Code département du PA
                                 sect,
                                 parcelleNormalisee,
                                 pa.superficie,
@@ -2122,6 +2126,39 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         }
         
         console.log(`   → Jointure terminée : ${totalMatches} associations PA-DVF\n`);
+        
+        // NOUVEAU : Filtrer pour ne garder que le PA le plus récent (date_auth) en cas de correspondances multiples
+        console.log('   → Filtrage : sélection du PA le plus récent par parcelle...');
+        db.exec(`
+            CREATE TEMP TABLE achats_lotisseurs_meres_filtered AS
+            SELECT 
+                a1.*
+            FROM achats_lotisseurs_meres a1
+            INNER JOIN (
+                SELECT 
+                    code_commune,
+                    section,
+                    parcelle_normalisee,
+                    id_mutation,
+                    MAX(date_auth) as max_date_auth
+                FROM achats_lotisseurs_meres
+                GROUP BY code_commune, section, parcelle_normalisee, id_mutation
+            ) a2 ON a1.code_commune = a2.code_commune
+                 AND a1.section = a2.section
+                 AND a1.parcelle_normalisee = a2.parcelle_normalisee
+                 AND a1.id_mutation = a2.id_mutation
+                 AND a1.date_auth = a2.max_date_auth
+        `);
+        
+        const nbAvantFiltre = db.prepare('SELECT COUNT(*) as cnt FROM achats_lotisseurs_meres').get().cnt;
+        const nbApresFiltre = db.prepare('SELECT COUNT(*) as cnt FROM achats_lotisseurs_meres_filtered').get().cnt;
+        console.log(`   → Filtrage terminé : ${nbAvantFiltre} → ${nbApresFiltre} associations (${nbAvantFiltre - nbApresFiltre} doublons supprimés)\n`);
+        
+        // Remplacer la table originale par la version filtrée
+        db.exec(`
+            DROP TABLE achats_lotisseurs_meres;
+            ALTER TABLE achats_lotisseurs_meres_filtered RENAME TO achats_lotisseurs_meres;
+        `);
         
         // Optimisation : Checkpoint avant calcul du rang pour libérer l'espace
         console.log('   → Libération de l\'espace disque...');
@@ -2355,7 +2392,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 superficie REAL,
                 surface_totale_aggregee REAL,
                 valeur_totale REAL,
-                nb_parcelles INTEGER
+                nb_parcelles INTEGER,
+                code_commune_dvf TEXT,
+                section TEXT,
+                parcelle_fille_suffixe TEXT
             );
         `);
         
@@ -2383,7 +2423,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 pf.superficie,
                 m.surface_totale_aggregee,
                 m.valeur_totale,
-                COUNT(DISTINCT t.id_parcelle) as nb_parcelles
+                COUNT(DISTINCT t.id_parcelle) as nb_parcelles,
+                pf.code_commune_dvf,
+                pf.section,
+                pf.parcelle_fille_suffixe
             FROM pa_filles_temp pf
             INNER JOIN terrains_batir_temp t ON 
                 t.code_commune = pf.code_commune_dvf
@@ -2394,7 +2437,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE pf.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               AND m.valeur_totale > 1  -- Prix > 1€
-            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale
+            GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale, pf.code_commune_dvf, pf.section, pf.parcelle_fille_suffixe
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
         `);
@@ -2428,6 +2471,39 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         db.exec('DROP INDEX IF EXISTS idx_temp_pa_null;');
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
+        
+        // NOUVEAU : Filtrer pour ne garder que le PA le plus récent (date_auth) en cas de correspondances multiples
+        console.log('   → Filtrage : sélection du PA le plus récent par parcelle fille...');
+        db.exec(`
+            CREATE TEMP TABLE achats_lotisseurs_filles_filtered AS
+            SELECT 
+                a1.*
+            FROM achats_lotisseurs_filles a1
+            INNER JOIN (
+                SELECT 
+                    code_commune_dvf,
+                    section,
+                    parcelle_fille_suffixe,
+                    id_mutation,
+                    MAX(date_auth) as max_date_auth
+                FROM achats_lotisseurs_filles
+                GROUP BY code_commune_dvf, section, parcelle_fille_suffixe, id_mutation
+            ) a2 ON a1.code_commune_dvf = a2.code_commune_dvf
+                 AND a1.section = a2.section
+                 AND a1.parcelle_fille_suffixe = a2.parcelle_fille_suffixe
+                 AND a1.id_mutation = a2.id_mutation
+                 AND a1.date_auth = a2.max_date_auth
+        `);
+        
+        const nbAvantFiltreFilles = db.prepare('SELECT COUNT(*) as cnt FROM achats_lotisseurs_filles').get().cnt;
+        const nbApresFiltreFilles = db.prepare('SELECT COUNT(*) as cnt FROM achats_lotisseurs_filles_filtered').get().cnt;
+        console.log(`   → Filtrage terminé : ${nbAvantFiltreFilles} → ${nbApresFiltreFilles} associations (${nbAvantFiltreFilles - nbApresFiltreFilles} doublons supprimés)\n`);
+        
+        // Remplacer la table originale par la version filtrée
+        db.exec(`
+            DROP TABLE achats_lotisseurs_filles;
+            ALTER TABLE achats_lotisseurs_filles_filtered RENAME TO achats_lotisseurs_filles;
+        `);
         
         // Optimisation : Checkpoint avant calcul du rang pour libérer l'espace
         console.log('   → Libération de l\'espace disque...');
@@ -2478,6 +2554,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 a.surface_totale_aggregee,
                 a.valeur_totale,
                 a.nb_parcelles,
+                a.code_commune_dvf,
+                a.section,
+                a.parcelle_fille_suffixe,
                 1 as rang
             FROM achats_lotisseurs_filles a
             INNER JOIN premieres_dates_filles p ON a.num_pa = p.num_pa AND a.date_mutation = p.premiere_date

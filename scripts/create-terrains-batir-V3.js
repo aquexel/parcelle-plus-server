@@ -1497,6 +1497,25 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     }
                     
                     try {
+                        // LOG: Tracer la transaction du 11/10/2019 Dax ~426000€
+                        const isTargetTransaction = (
+                            dateMutation && dateMutation.includes('2019-10-11') &&
+                            valeurFonciere > 400000 && valeurFonciere < 450000 &&
+                            (nomCommune && nomCommune.toUpperCase().includes('DAX'))
+                        );
+                        if (isTargetTransaction) {
+                            console.log(`\n🔍 [TRACE] Transaction cible détectée lors du chargement DVF:`);
+                            console.log(`   → idParcelle: ${idParcelle}`);
+                            console.log(`   → dateMutation: ${dateMutation}`);
+                            console.log(`   → valeurFonciere: ${valeurFonciere}`);
+                            console.log(`   → surfaceTerrain: ${surfaceTerrain}`);
+                            console.log(`   → surfaceBati: ${surfaceBati}`);
+                            console.log(`   → section: ${section}`);
+                            console.log(`   → parcelleSuffixe: ${parcelleSuffixe}`);
+                            console.log(`   → nomCommune: ${nomCommune}`);
+                            console.log(`   → codeCommune: ${codeCommune}`);
+                        }
+                        
                         // Ajouter au batch (comme script DPE)
                         batch.push([
                             idParcelle,
@@ -1799,6 +1818,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         id_mutation,
         valeur_fonciere,
         surface_totale,
+        surface_reelle_bati,
         date_mutation,
         code_departement,
         nom_commune,
@@ -1818,6 +1838,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     SELECT 
         id_mutation,
         SUM(surface_totale) as surface_totale_aggregee,
+        SUM(surface_reelle_bati) as surface_reelle_bati_aggregee,
         MAX(valeur_fonciere) as valeur_totale,
         MIN(date_mutation) as date_mutation,
         code_departement,
@@ -2106,13 +2127,52 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               -- Filtre de surface avec tolérance de 30%
               AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3)
+              -- NOTE: On n'exclut PAS les transactions avec surface bati pour les parcelles mères
+              -- car elles peuvent avoir une petite surface bati (hangar, construction existante) et doivent être identifiées comme NON_VIABILISE
         `);
         
         let totalMatches = 0;
         for (let i = 0; i < communesAvecPA.length; i++) {
             const commune = communesAvecPA[i].code_commune_dvf;
+            
+            // LOG: Vérifier si la transaction cible est dans cette commune
+            if (commune === '40088') {
+                const targetCheck = db.prepare(`
+                    SELECT COUNT(*) as cnt FROM pa_parcelles_temp p
+                    INNER JOIN terrains_batir_temp t ON 
+                        t.code_commune = p.code_commune_dvf
+                        AND t.section_cadastrale = p.section
+                        AND (t.parcelle_suffixe = ('000' || p.parcelle_normalisee) 
+                             OR t.parcelle_suffixe = p.parcelle_normalisee)
+                    INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
+                    WHERE p.code_commune_dvf = ?
+                      AND m.date_mutation LIKE '2019-10-11%'
+                      AND m.valeur_totale > 400000 AND m.valeur_totale < 450000
+                `).get(commune);
+                if (targetCheck.cnt > 0) {
+                    console.log(`\n🔍 [TRACE] Transaction cible trouvée dans commune ${commune} avant jointure achats_lotisseurs_meres`);
+                }
+            }
+            
             const result = insertBatch.run(commune);
             totalMatches += result.changes;
+            
+            // LOG: Vérifier si la transaction cible a été associée
+            if (commune === '40088' && result.changes > 0) {
+                const targetCheck = db.prepare(`
+                    SELECT * FROM achats_lotisseurs_meres
+                    WHERE code_commune = ?
+                      AND date_mutation LIKE '2019-10-11%'
+                      AND surface_totale_aggregee > 20000
+                `).get(commune);
+                if (targetCheck) {
+                    console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_meres:`);
+                    console.log(`   → num_pa: ${targetCheck.num_pa}`);
+                    console.log(`   → id_mutation: ${targetCheck.id_mutation}`);
+                    console.log(`   → date_mutation: ${targetCheck.date_mutation}`);
+                    console.log(`   → surface_totale_aggregee: ${targetCheck.surface_totale_aggregee}`);
+                }
+            }
             
             // CHECKPOINT régulier pour libérer l'espace disque temporaire
             // SQLite accumule des fichiers temporaires même avec journal_mode=DELETE
@@ -2217,6 +2277,19 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
         // Vérifier commune, section et parcelle pour éviter les associations incorrectes
+        // LOG: Vérifier si la transaction cible est dans achats_lotisseurs_meres avant mise à jour
+        const targetCheckBefore = db.prepare(`
+            SELECT * FROM achats_lotisseurs_meres
+            WHERE code_commune = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND surface_totale_aggregee > 20000
+        `).get();
+        if (targetCheckBefore) {
+            console.log(`\n🔍 [TRACE] Transaction cible trouvée dans achats_lotisseurs_meres avant UPDATE:`);
+            console.log(`   → num_pa: ${targetCheckBefore.num_pa}`);
+            console.log(`   → id_mutation: ${targetCheckBefore.id_mutation}`);
+        }
+        
         const nbAchatsMeres = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2234,7 +2307,23 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE id_mutation IN (
                 SELECT id_mutation FROM achats_lotisseurs_meres WHERE rang = 1
             )
+              -- NOTE: On n'exclut PAS les transactions avec surface bati pour les parcelles mères
+              -- car elles peuvent avoir une petite surface bati (hangar, construction existante) et doivent être identifiées comme NON_VIABILISE
         `).run().changes;
+        
+        // LOG: Vérifier si la transaction cible a été mise à jour
+        const targetCheckAfter = db.prepare(`
+            SELECT * FROM terrains_batir_temp
+            WHERE code_commune = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+        `).get();
+        if (targetCheckAfter) {
+            console.log(`\n🔍 [TRACE] Transaction cible après UPDATE terrains_batir_temp:`);
+            console.log(`   → id_pa: ${targetCheckAfter.id_pa}`);
+            console.log(`   → est_terrain_viabilise: ${targetCheckAfter.est_terrain_viabilise}`);
+            console.log(`   → surface_reelle_bati: ${targetCheckAfter.surface_reelle_bati}`);
+        }
         console.log(`✅ ${nbAchatsMeres} transactions mères trouvées\n`);
         
         // SOUS-ÉTAPE 4.3 : Associer PA → DFI → Parcelles filles (pour PA sans transaction mère)
@@ -2437,6 +2526,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE pf.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               AND m.valeur_totale > 1  -- Prix > 1€
+              -- Exclure les transactions avec surface bati (terrains déjà construits)
+              AND (m.surface_reelle_bati_aggregee IS NULL OR m.surface_reelle_bati_aggregee = 0)
             GROUP BY pf.num_pa, t.id_mutation, m.date_mutation, pf.date_auth, pf.superficie, m.surface_totale_aggregee, m.valeur_totale, pf.code_commune_dvf, pf.section, pf.parcelle_fille_suffixe
             HAVING COUNT(DISTINCT t.id_parcelle) >= 1
                AND (pf.superficie IS NULL OR pf.superficie = 0 OR m.surface_totale_aggregee BETWEEN pf.superficie * 0.7 AND pf.superficie * 1.3)
@@ -2593,6 +2684,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
               AND id_mutation IN (
                   SELECT id_mutation FROM achats_lotisseurs_filles WHERE rang = 1
               )
+              -- Exclure les transactions avec surface bati
+              AND (surface_reelle_bati IS NULL OR surface_reelle_bati = 0)
         `).run().changes;
         console.log(`✅ ${nbAchatsFilles} achats lotisseurs sur parcelles filles\n`);
         
@@ -2655,6 +2748,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     AND p.section = terrains_batir_temp.section_cadastrale
                     AND p.parcelle_suffixe = terrains_batir_temp.parcelle_suffixe
               )
+              -- Exclure les transactions avec surface bati (terrains déjà construits)
+              AND (surface_reelle_bati IS NULL OR surface_reelle_bati = 0)
         `).run().changes;
         
         // Checkpoint après UPDATE massif
@@ -2740,6 +2835,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 id_pa
             FROM terrains_batir_temp
             WHERE id_pa IS NOT NULL
+              -- Exclure les transactions avec surface bati (terrains déjà construits)
+              AND (surface_reelle_bati IS NULL OR surface_reelle_bati = 0)
             GROUP BY id_mutation, est_terrain_viabilise, id_pa;
         `);
         

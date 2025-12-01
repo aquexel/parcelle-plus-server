@@ -2603,6 +2603,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // puis utiliser cette table pour UPDATE directement
         db.exec(`
             -- Créer une table de correspondance parcelle -> PA avec clé composite indexée
+            -- IMPORTANT : Prendre le PA le plus récent (date_auth) en cas de correspondances multiples
             DROP TABLE IF EXISTS parcelle_pa_map;
             CREATE TEMP TABLE parcelle_pa_map (
                 code_commune TEXT,
@@ -2612,9 +2613,26 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 PRIMARY KEY (code_commune, section, parcelle_suffixe)
             );
             
+            -- Filtrer pour ne garder que le PA le plus récent par parcelle
             INSERT OR IGNORE INTO parcelle_pa_map (code_commune, section, parcelle_suffixe, num_pa)
-            SELECT DISTINCT code_commune_dvf, section, parcelle_fille_suffixe, num_pa
-            FROM pa_filles_temp;
+            SELECT 
+                pf1.code_commune_dvf,
+                pf1.section,
+                pf1.parcelle_fille_suffixe,
+                pf1.num_pa
+            FROM pa_filles_temp pf1
+            INNER JOIN (
+                SELECT 
+                    code_commune_dvf,
+                    section,
+                    parcelle_fille_suffixe,
+                    MAX(date_auth) as max_date_auth
+                FROM pa_filles_temp
+                GROUP BY code_commune_dvf, section, parcelle_fille_suffixe
+            ) pf2 ON pf1.code_commune_dvf = pf2.code_commune_dvf
+                 AND pf1.section = pf2.section
+                 AND pf1.parcelle_fille_suffixe = pf2.parcelle_fille_suffixe
+                 AND pf1.date_auth = pf2.max_date_auth;
         `);
         
         // UPDATE direct avec la table de correspondance (beaucoup plus rapide)

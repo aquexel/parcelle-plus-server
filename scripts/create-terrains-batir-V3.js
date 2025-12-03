@@ -1497,25 +1497,6 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     }
                     
                     try {
-                        // LOG: Tracer la transaction du 11/10/2019 Dax ~426000€
-                        const isTargetTransaction = (
-                            dateMutation && dateMutation.includes('2019-10-11') &&
-                            valeurFonciere > 400000 && valeurFonciere < 450000 &&
-                            (nomCommune && nomCommune.toUpperCase().includes('DAX'))
-                        );
-                        if (isTargetTransaction) {
-                            console.log(`\n🔍 [TRACE] Transaction cible détectée lors du chargement DVF:`);
-                            console.log(`   → idParcelle: ${idParcelle}`);
-                            console.log(`   → dateMutation: ${dateMutation}`);
-                            console.log(`   → valeurFonciere: ${valeurFonciere}`);
-                            console.log(`   → surfaceTerrain: ${surfaceTerrain}`);
-                            console.log(`   → surfaceBati: ${surfaceBati}`);
-                            console.log(`   → section: ${section}`);
-                            console.log(`   → parcelleSuffixe: ${parcelleSuffixe}`);
-                            console.log(`   → nomCommune: ${nomCommune}`);
-                            console.log(`   → codeCommune: ${codeCommune}`);
-                        }
-                        
                         // Ajouter au batch (comme script DPE)
                         batch.push([
                             idParcelle,
@@ -1799,6 +1780,40 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     console.log('✅ Index créés sur terrains_batir_temp');
     console.log('   ⚠️  Mode journal_mode=DELETE maintenu pour tout le traitement PA/DVF\n');
+    
+    // 🔍 TRACE: Afficher la transaction du 11/10/2019 Dax ~426000€ (après index pour performance)
+    console.log('🔍 [TRACE] Recherche de la transaction cible (2019-10-11, Dax, ~426000€)...');
+    const targetTransaction = db.prepare(`
+        SELECT 
+            id_parcelle, id_mutation, valeur_fonciere, surface_totale, surface_reelle_bati,
+            date_mutation, code_departement, code_commune, code_postal, section_cadastrale,
+            parcelle_suffixe, nom_commune
+        FROM terrains_batir_temp
+        WHERE date_mutation LIKE '2019-10-11%'
+            AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+            AND (nom_commune LIKE '%DAX%' OR code_commune = '40088')
+        LIMIT 10
+    `).all();
+    
+    if (targetTransaction.length > 0) {
+        console.log(`\n🔍 [TRACE] ${targetTransaction.length} transaction(s) cible(s) trouvée(s) :`);
+        targetTransaction.forEach((tx, idx) => {
+            console.log(`\n   Transaction ${idx + 1}:`);
+            console.log(`   → id_parcelle: ${tx.id_parcelle}`);
+            console.log(`   → id_mutation: ${tx.id_mutation}`);
+            console.log(`   → date_mutation: ${tx.date_mutation}`);
+            console.log(`   → valeur_fonciere: ${tx.valeur_fonciere}`);
+            console.log(`   → surface_totale: ${tx.surface_totale}`);
+            console.log(`   → surface_reelle_bati: ${tx.surface_reelle_bati}`);
+            console.log(`   → section_cadastrale: ${tx.section_cadastrale}`);
+            console.log(`   → parcelle_suffixe: ${tx.parcelle_suffixe}`);
+            console.log(`   → nom_commune: ${tx.nom_commune}`);
+            console.log(`   → code_commune: ${tx.code_commune}`);
+        });
+    } else {
+        console.log('   ⚠️  Aucune transaction cible trouvée dans terrains_batir_temp');
+    }
+    console.log('');
 
     // ÉTAPE 3 : Créer vue agrégée par id_mutation
     // ✅ Déduplication déjà faite après chaque fichier CSV (voir ÉTAPE 1)

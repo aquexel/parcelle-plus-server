@@ -2152,8 +2152,59 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             
             // LOG: Vérifier si la transaction cible est dans cette commune
             if (commune === '40088') {
-                const targetCheck = db.prepare(`
-                    SELECT COUNT(*) as cnt FROM pa_parcelles_temp p
+                // Vérifier les parcelles du PA dans pa_parcelles_temp
+                const paParcelles = db.prepare(`
+                    SELECT * FROM pa_parcelles_temp
+                    WHERE code_commune_dvf = '40088'
+                      AND section = 'BL'
+                      AND (parcelle_normalisee LIKE '%56' OR parcelle_normalisee LIKE '%60' OR parcelle_normalisee LIKE '%61')
+                    LIMIT 10
+                `).all();
+                if (paParcelles.length > 0) {
+                    console.log(`\n🔍 [TRACE] Parcelles PA trouvées dans pa_parcelles_temp pour commune 40088 section BL:`);
+                    paParcelles.forEach((p, idx) => {
+                        console.log(`   Parcelle PA ${idx + 1}:`);
+                        console.log(`   → num_pa: ${p.num_pa}`);
+                        console.log(`   → section: ${p.section}`);
+                        console.log(`   → parcelle_normalisee: ${p.parcelle_normalisee}`);
+                        console.log(`   → code_commune_dvf: ${p.code_commune_dvf}`);
+                        console.log(`   → superficie: ${p.superficie}`);
+                    });
+                } else {
+                    console.log(`\n⚠️ [TRACE] Aucune parcelle PA trouvée dans pa_parcelles_temp pour commune 40088 section BL`);
+                }
+                
+                // Vérifier les parcelles DVF dans terrains_batir_temp
+                const dvfParcelles = db.prepare(`
+                    SELECT DISTINCT parcelle_suffixe, section_cadastrale, id_mutation
+                    FROM terrains_batir_temp
+                    WHERE code_commune = '40088'
+                      AND date_mutation LIKE '2019-10-11%'
+                      AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+                `).all();
+                if (dvfParcelles.length > 0) {
+                    console.log(`\n🔍 [TRACE] Parcelles DVF trouvées dans terrains_batir_temp:`);
+                    dvfParcelles.forEach((p, idx) => {
+                        console.log(`   Parcelle DVF ${idx + 1}:`);
+                        console.log(`   → parcelle_suffixe: ${p.parcelle_suffixe}`);
+                        console.log(`   → section_cadastrale: ${p.section_cadastrale}`);
+                        console.log(`   → id_mutation: ${p.id_mutation}`);
+                    });
+                }
+                
+                // Vérifier la jointure exacte
+                const jointureTest = db.prepare(`
+                    SELECT 
+                        p.num_pa,
+                        p.section as pa_section,
+                        p.parcelle_normalisee as pa_parcelle,
+                        t.parcelle_suffixe as dvf_parcelle,
+                        t.section_cadastrale as dvf_section,
+                        m.date_mutation,
+                        m.valeur_totale,
+                        m.surface_totale_aggregee,
+                        p.superficie as pa_superficie
+                    FROM pa_parcelles_temp p
                     INNER JOIN terrains_batir_temp t ON 
                         t.code_commune = p.code_commune_dvf
                         AND t.section_cadastrale = p.section
@@ -2163,9 +2214,19 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     WHERE p.code_commune_dvf = ?
                       AND m.date_mutation LIKE '2019-10-11%'
                       AND m.valeur_totale > 400000 AND m.valeur_totale < 450000
-                `).get(commune);
-                if (targetCheck.cnt > 0) {
-                    console.log(`\n🔍 [TRACE] Transaction cible trouvée dans commune ${commune} avant jointure achats_lotisseurs_meres`);
+                `).all(commune);
+                if (jointureTest.length > 0) {
+                    console.log(`\n🔍 [TRACE] Jointure PA-DVF réussie avant insertion (${jointureTest.length} ligne(s)):`);
+                    jointureTest.forEach((j, idx) => {
+                        console.log(`   Jointure ${idx + 1}:`);
+                        console.log(`   → num_pa: ${j.num_pa}`);
+                        console.log(`   → PA section: ${j.pa_section}, parcelle: ${j.pa_parcelle}`);
+                        console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
+                        console.log(`   → PA superficie: ${j.pa_superficie}, DVF surface: ${j.surface_totale_aggregee}`);
+                        console.log(`   → Match surface: ${j.pa_superficie ? (j.surface_totale_aggregee >= j.pa_superficie * 0.7 && j.surface_totale_aggregee <= j.pa_superficie * 1.3) : 'N/A'}`);
+                    });
+                } else {
+                    console.log(`\n⚠️ [TRACE] Aucune jointure PA-DVF trouvée avant insertion`);
                 }
             }
             
@@ -2173,12 +2234,12 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             totalMatches += result.changes;
             
             // LOG: Vérifier si la transaction cible a été associée
-            if (commune === '40088' && result.changes > 0) {
+            if (commune === '40088') {
                 const targetCheck = db.prepare(`
                     SELECT * FROM achats_lotisseurs_meres
                     WHERE code_commune = ?
                       AND date_mutation LIKE '2019-10-11%'
-                      AND surface_totale_aggregee > 20000
+                      AND (surface_totale_aggregee > 20000 OR id_mutation = '000001')
                 `).all(commune);
                 if (targetCheck.length > 0) {
                     console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_meres (${targetCheck.length} ligne(s)):`);
@@ -2193,6 +2254,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         console.log(`   → section: ${tx.section}`);
                         console.log(`   → parcelle_normalisee: ${tx.parcelle_normalisee}`);
                     });
+                } else if (result.changes > 0) {
+                    console.log(`\n⚠️ [TRACE] Des insertions ont été faites (${result.changes}) mais la transaction cible n'est pas dans achats_lotisseurs_meres`);
+                } else {
+                    console.log(`\n⚠️ [TRACE] Aucune insertion pour la commune 40088 (${result.changes} changements)`);
                 }
             }
             
@@ -2235,6 +2300,25 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         const nbAvantFiltre = db.prepare('SELECT COUNT(*) as cnt FROM achats_lotisseurs_meres').get().cnt;
         const nbApresFiltre = db.prepare('SELECT COUNT(*) as cnt FROM achats_lotisseurs_meres_filtered').get().cnt;
         console.log(`   → Filtrage terminé : ${nbAvantFiltre} → ${nbApresFiltre} associations (${nbAvantFiltre - nbApresFiltre} doublons supprimés)\n`);
+        
+        // LOG: Vérifier si la transaction cible est toujours là après filtrage
+        const targetCheckFiltre = db.prepare(`
+            SELECT * FROM achats_lotisseurs_meres_filtered
+            WHERE code_commune = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND (surface_totale_aggregee > 20000 OR id_mutation = '000001')
+        `).all();
+        if (targetCheckFiltre.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible dans achats_lotisseurs_meres après filtrage (${targetCheckFiltre.length} ligne(s)):`);
+            targetCheckFiltre.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → num_pa: ${tx.num_pa}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → date_auth: ${tx.date_auth}`);
+            });
+        } else {
+            console.log(`\n⚠️ [TRACE] Transaction cible absente après filtrage`);
+        }
         
         // Remplacer la table originale par la version filtrée
         db.exec(`
@@ -2297,6 +2381,26 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             ALTER TABLE achats_lotisseurs_meres_ranked RENAME TO achats_lotisseurs_meres;
         `);
         
+        // LOG: Vérifier si la transaction cible est dans achats_lotisseurs_meres après calcul du rang
+        const targetCheckRang = db.prepare(`
+            SELECT * FROM achats_lotisseurs_meres
+            WHERE code_commune = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND (surface_totale_aggregee > 20000 OR id_mutation = '000001')
+        `).all();
+        if (targetCheckRang.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible dans achats_lotisseurs_meres après calcul du rang (${targetCheckRang.length} ligne(s)):`);
+            targetCheckRang.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → num_pa: ${tx.num_pa}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → rang: ${tx.rang}`);
+                console.log(`   → date_mutation: ${tx.date_mutation}`);
+            });
+        } else {
+            console.log(`\n⚠️ [TRACE] Transaction cible absente après calcul du rang`);
+        }
+        
         // UPDATE pour les achats sur parcelles mères (prendre le premier chronologiquement)
         // Vérifier commune, section et parcelle pour éviter les associations incorrectes
         // LOG: Vérifier si la transaction cible est dans achats_lotisseurs_meres avant mise à jour
@@ -2304,7 +2408,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             SELECT * FROM achats_lotisseurs_meres
             WHERE code_commune = '40088'
               AND date_mutation LIKE '2019-10-11%'
-              AND surface_totale_aggregee > 20000
+              AND (surface_totale_aggregee > 20000 OR id_mutation = '000001')
+              AND rang = 1
         `).all();
         if (targetCheckBefore.length > 0) {
             console.log(`\n🔍 [TRACE] Transaction cible dans achats_lotisseurs_meres avant UPDATE (${targetCheckBefore.length} ligne(s)):`);

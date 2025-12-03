@@ -2179,13 +2179,20 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     WHERE code_commune = ?
                       AND date_mutation LIKE '2019-10-11%'
                       AND surface_totale_aggregee > 20000
-                `).get(commune);
-                if (targetCheck) {
-                    console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_meres:`);
-                    console.log(`   → num_pa: ${targetCheck.num_pa}`);
-                    console.log(`   → id_mutation: ${targetCheck.id_mutation}`);
-                    console.log(`   → date_mutation: ${targetCheck.date_mutation}`);
-                    console.log(`   → surface_totale_aggregee: ${targetCheck.surface_totale_aggregee}`);
+                `).all(commune);
+                if (targetCheck.length > 0) {
+                    console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_meres (${targetCheck.length} ligne(s)):`);
+                    targetCheck.forEach((tx, idx) => {
+                        console.log(`   Transaction ${idx + 1}:`);
+                        console.log(`   → num_pa: ${tx.num_pa}`);
+                        console.log(`   → id_mutation: ${tx.id_mutation}`);
+                        console.log(`   → date_mutation: ${tx.date_mutation}`);
+                        console.log(`   → date_auth: ${tx.date_auth}`);
+                        console.log(`   → superficie PA: ${tx.superficie}`);
+                        console.log(`   → surface_totale_aggregee: ${tx.surface_totale_aggregee}`);
+                        console.log(`   → section: ${tx.section}`);
+                        console.log(`   → parcelle_normalisee: ${tx.parcelle_normalisee}`);
+                    });
                 }
             }
             
@@ -2298,11 +2305,16 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE code_commune = '40088'
               AND date_mutation LIKE '2019-10-11%'
               AND surface_totale_aggregee > 20000
-        `).get();
-        if (targetCheckBefore) {
-            console.log(`\n🔍 [TRACE] Transaction cible trouvée dans achats_lotisseurs_meres avant UPDATE:`);
-            console.log(`   → num_pa: ${targetCheckBefore.num_pa}`);
-            console.log(`   → id_mutation: ${targetCheckBefore.id_mutation}`);
+        `).all();
+        if (targetCheckBefore.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible dans achats_lotisseurs_meres avant UPDATE (${targetCheckBefore.length} ligne(s)):`);
+            targetCheckBefore.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → num_pa: ${tx.num_pa}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → date_mutation: ${tx.date_mutation}`);
+                console.log(`   → surface_totale_aggregee: ${tx.surface_totale_aggregee}`);
+            });
         }
         
         const nbAchatsMeres = db.prepare(`
@@ -2332,12 +2344,21 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE code_commune = '40088'
               AND date_mutation LIKE '2019-10-11%'
               AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
-        `).get();
-        if (targetCheckAfter) {
-            console.log(`\n🔍 [TRACE] Transaction cible après UPDATE terrains_batir_temp:`);
-            console.log(`   → id_pa: ${targetCheckAfter.id_pa}`);
-            console.log(`   → est_terrain_viabilise: ${targetCheckAfter.est_terrain_viabilise}`);
-            console.log(`   → surface_reelle_bati: ${targetCheckAfter.surface_reelle_bati}`);
+        `).all();
+        if (targetCheckAfter.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible après UPDATE terrains_batir_temp (parcelles mères) (${targetCheckAfter.length} ligne(s)):`);
+            targetCheckAfter.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → id_parcelle: ${tx.id_parcelle}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → id_pa: ${tx.id_pa}`);
+                console.log(`   → est_terrain_viabilise: ${tx.est_terrain_viabilise}`);
+                console.log(`   → valeur_fonciere: ${tx.valeur_fonciere}`);
+                console.log(`   → surface_totale: ${tx.surface_totale}`);
+                console.log(`   → surface_reelle_bati: ${tx.surface_reelle_bati}`);
+                console.log(`   → section_cadastrale: ${tx.section_cadastrale}`);
+                console.log(`   → parcelle_suffixe: ${tx.parcelle_suffixe}`);
+            });
         }
         console.log(`✅ ${nbAchatsMeres} transactions mères trouvées\n`);
         
@@ -2560,6 +2581,31 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             const result = insertFillesBatch.run(commune);
             totalFillesMatches += result.changes;
             
+            // LOG: Vérifier si la transaction cible a été associée dans achats_lotisseurs_filles
+            if (commune === '40088' && result.changes > 0) {
+                const targetCheckFilles = db.prepare(`
+                    SELECT * FROM achats_lotisseurs_filles
+                    WHERE code_commune_dvf = ?
+                      AND date_mutation LIKE '2019-10-11%'
+                      AND valeur_totale > 400000 AND valeur_totale < 450000
+                `).all(commune);
+                if (targetCheckFilles.length > 0) {
+                    console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_filles (${targetCheckFilles.length} ligne(s)):`);
+                    targetCheckFilles.forEach((tx, idx) => {
+                        console.log(`   Transaction ${idx + 1}:`);
+                        console.log(`   → num_pa: ${tx.num_pa}`);
+                        console.log(`   → id_mutation: ${tx.id_mutation}`);
+                        console.log(`   → date_mutation: ${tx.date_mutation}`);
+                        console.log(`   → date_auth: ${tx.date_auth}`);
+                        console.log(`   → valeur_totale: ${tx.valeur_totale}`);
+                        console.log(`   → surface_totale_aggregee: ${tx.surface_totale_aggregee}`);
+                        console.log(`   → nb_parcelles: ${tx.nb_parcelles}`);
+                        console.log(`   → section: ${tx.section}`);
+                        console.log(`   → parcelle_fille_suffixe: ${tx.parcelle_fille_suffixe}`);
+                    });
+                }
+            }
+            
             // CHECKPOINT moins fréquent pour améliorer les performances
             if ((i + 1) % 200 === 0) {
                 db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
@@ -2685,6 +2731,24 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             ALTER TABLE achats_lotisseurs_filles_ranked RENAME TO achats_lotisseurs_filles;
         `);
         
+        // LOG: Vérifier si la transaction cible est dans achats_lotisseurs_filles avant UPDATE
+        const targetCheckFillesBefore = db.prepare(`
+            SELECT * FROM achats_lotisseurs_filles
+            WHERE code_commune_dvf = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND valeur_totale > 400000 AND valeur_totale < 450000
+              AND rang = 1
+        `).all();
+        if (targetCheckFillesBefore.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible dans achats_lotisseurs_filles avant UPDATE (${targetCheckFillesBefore.length} ligne(s)):`);
+            targetCheckFillesBefore.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → num_pa: ${tx.num_pa}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → valeur_totale: ${tx.valeur_totale}`);
+            });
+        }
+        
         const nbAchatsFilles = db.prepare(`
             UPDATE terrains_batir_temp
             SET est_terrain_viabilise = 0,
@@ -2702,6 +2766,29 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
               -- Exclure les transactions avec surface bati
               AND (surface_reelle_bati IS NULL OR surface_reelle_bati = 0)
         `).run().changes;
+        
+        // LOG: Vérifier si la transaction cible a été mise à jour (parcelles filles)
+        const targetCheckFillesAfter = db.prepare(`
+            SELECT * FROM terrains_batir_temp
+            WHERE code_commune = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+              AND id_pa IS NOT NULL
+        `).all();
+        if (targetCheckFillesAfter.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible après UPDATE terrains_batir_temp (parcelles filles) (${targetCheckFillesAfter.length} ligne(s)):`);
+            targetCheckFillesAfter.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → id_parcelle: ${tx.id_parcelle}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → id_pa: ${tx.id_pa}`);
+                console.log(`   → est_terrain_viabilise: ${tx.est_terrain_viabilise}`);
+                console.log(`   → valeur_fonciere: ${tx.valeur_fonciere}`);
+                console.log(`   → surface_totale: ${tx.surface_totale}`);
+                console.log(`   → surface_reelle_bati: ${tx.surface_reelle_bati}`);
+            });
+        }
+        
         console.log(`✅ ${nbAchatsFilles} achats lotisseurs sur parcelles filles\n`);
         
         // SOUS-ÉTAPE 4.5 : Lots vendus (viabilisés) - toutes les autres transactions sur parcelles filles
@@ -2743,6 +2830,37 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                  AND pf1.date_auth = pf2.max_date_auth;
         `);
         
+        // LOG: Vérifier si la transaction cible est dans parcelle_pa_map avant UPDATE (lots vendus)
+        const targetCheckLotsBefore = db.prepare(`
+            SELECT * FROM parcelle_pa_map
+            WHERE code_commune = '40088'
+        `).all();
+        if (targetCheckLotsBefore.length > 0) {
+            // Vérifier si les parcelles de la transaction cible sont dans parcelle_pa_map
+            const targetParcelles = db.prepare(`
+                SELECT DISTINCT parcelle_suffixe, section_cadastrale
+                FROM terrains_batir_temp
+                WHERE code_commune = '40088'
+                  AND date_mutation LIKE '2019-10-11%'
+                  AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+            `).all();
+            if (targetParcelles.length > 0) {
+                console.log(`\n🔍 [TRACE] Parcelles de la transaction cible dans parcelle_pa_map avant UPDATE (lots vendus):`);
+                targetParcelles.forEach((parc, idx) => {
+                    const paMap = db.prepare(`
+                        SELECT * FROM parcelle_pa_map
+                        WHERE code_commune = '40088'
+                          AND section = ?
+                          AND parcelle_suffixe = ?
+                    `).get(parc.section_cadastrale, parc.parcelle_suffixe);
+                    if (paMap) {
+                        console.log(`   Parcelle ${idx + 1} (${parc.section_cadastrale}/${parc.parcelle_suffixe}):`);
+                        console.log(`   → num_pa: ${paMap.num_pa}`);
+                    }
+                });
+            }
+        }
+        
         // UPDATE direct avec la table de correspondance (beaucoup plus rapide)
         const nbLotsVendus = db.prepare(`
             UPDATE terrains_batir_temp
@@ -2766,6 +2884,28 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
               -- Exclure les transactions avec surface bati (terrains déjà construits)
               AND (surface_reelle_bati IS NULL OR surface_reelle_bati = 0)
         `).run().changes;
+        
+        // LOG: Vérifier si la transaction cible a été mise à jour (lots vendus)
+        const targetCheckLotsAfter = db.prepare(`
+            SELECT * FROM terrains_batir_temp
+            WHERE code_commune = '40088'
+              AND date_mutation LIKE '2019-10-11%'
+              AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+              AND est_terrain_viabilise = 1
+        `).all();
+        if (targetCheckLotsAfter.length > 0) {
+            console.log(`\n🔍 [TRACE] Transaction cible après UPDATE terrains_batir_temp (lots vendus) (${targetCheckLotsAfter.length} ligne(s)):`);
+            targetCheckLotsAfter.forEach((tx, idx) => {
+                console.log(`   Transaction ${idx + 1}:`);
+                console.log(`   → id_parcelle: ${tx.id_parcelle}`);
+                console.log(`   → id_mutation: ${tx.id_mutation}`);
+                console.log(`   → id_pa: ${tx.id_pa}`);
+                console.log(`   → est_terrain_viabilise: ${tx.est_terrain_viabilise}`);
+                console.log(`   → valeur_fonciere: ${tx.valeur_fonciere}`);
+                console.log(`   → section_cadastrale: ${tx.section_cadastrale}`);
+                console.log(`   → parcelle_suffixe: ${tx.parcelle_suffixe}`);
+            });
+        }
         
         // Checkpoint après UPDATE massif
         try {

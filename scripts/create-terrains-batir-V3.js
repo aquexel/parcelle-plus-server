@@ -2087,6 +2087,33 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         `);
         console.log(`✅ Index créés\n`);
         
+        // Enrichir les superficies individuelles depuis terrains_batir_temp
+        // La superficie dans pa_parcelles_temp est actuellement la superficie totale du PA
+        // On va la remplacer par la superficie individuelle de chaque parcelle depuis DVF
+        console.log('⚡ Enrichissement des superficies individuelles depuis DVF...');
+        const updateSuperficies = db.prepare(`
+            UPDATE pa_parcelles_temp
+            SET superficie = (
+                SELECT AVG(t.surface_totale)
+                FROM terrains_batir_temp t
+                WHERE t.code_commune = pa_parcelles_temp.code_commune_dvf
+                  AND t.section_cadastrale = pa_parcelles_temp.section
+                  AND (t.parcelle_suffixe = ('000' || pa_parcelles_temp.parcelle_normalisee)
+                       OR t.parcelle_suffixe = pa_parcelles_temp.parcelle_normalisee)
+                LIMIT 1
+            )
+            WHERE EXISTS (
+                SELECT 1
+                FROM terrains_batir_temp t
+                WHERE t.code_commune = pa_parcelles_temp.code_commune_dvf
+                  AND t.section_cadastrale = pa_parcelles_temp.section
+                  AND (t.parcelle_suffixe = ('000' || pa_parcelles_temp.parcelle_normalisee)
+                       OR t.parcelle_suffixe = pa_parcelles_temp.parcelle_normalisee)
+            )
+        `);
+        const nbSuperficiesUpdatees = updateSuperficies.run().changes;
+        console.log(`✅ ${nbSuperficiesUpdatees} superficies individuelles enrichies depuis DVF\n`);
+        
         // SOUS-ÉTAPE 4.2 : Chercher parcelles mères dans DVF (ACHAT AVANT DIVISION)
         console.log('⚡ 4.2 - Recherche achats lotisseurs sur parcelles mères...');
         

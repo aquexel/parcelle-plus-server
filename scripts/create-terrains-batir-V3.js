@@ -2164,7 +2164,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 AND t.section_cadastrale = p.section
                 AND (t.parcelle_suffixe = ('000' || p.parcelle_normalisee) 
                      OR t.parcelle_suffixe = p.parcelle_normalisee)
-            INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
+            INNER JOIN mutations_aggregees m ON 
+                m.id_mutation = t.id_mutation
+                AND m.code_commune = t.code_commune
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               -- Filtre de surface avec tolérance de 30% : compare la superficie TOTALE du PA avec la surface agrégée de la mutation

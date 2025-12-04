@@ -2253,6 +2253,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                             p.parcelle_normalisee,
                             ('000' || p.parcelle_normalisee) as avec_prefixe,
                             t.parcelle_suffixe,
+                            t.id_mutation,
                             CASE WHEN t.parcelle_suffixe = ('000' || p.parcelle_normalisee) THEN 'OUI' ELSE 'NON' END as match_avec_prefixe,
                             CASE WHEN t.parcelle_suffixe = p.parcelle_normalisee THEN 'OUI' ELSE 'NON' END as match_sans_prefixe
                         FROM pa_parcelles_temp p
@@ -2272,9 +2273,91 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                             console.log(`   → PA parcelle_normalisee: "${t.parcelle_normalisee}"`);
                             console.log(`   → Avec préfixe: "${t.avec_prefixe}"`);
                             console.log(`   → DVF parcelle_suffixe: "${t.parcelle_suffixe}"`);
+                            console.log(`   → DVF id_mutation: "${t.id_mutation}"`);
                             console.log(`   → Match avec préfixe: ${t.match_avec_prefixe}`);
                             console.log(`   → Match sans préfixe: ${t.match_sans_prefixe}`);
                         });
+                    }
+                    
+                    // Test avec mutations_aggregees pour voir si le problème vient de là
+                    const testAvecMutations = db.prepare(`
+                        SELECT 
+                            p.num_pa,
+                            p.parcelle_normalisee,
+                            t.parcelle_suffixe,
+                            t.id_mutation,
+                            m.id_mutation as m_id_mutation,
+                            m.surface_totale_aggregee,
+                            m.valeur_totale,
+                            p.superficie,
+                            CASE 
+                                WHEN m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3 
+                                THEN 'OUI' 
+                                ELSE 'NON' 
+                            END as match_surface
+                        FROM pa_parcelles_temp p
+                        INNER JOIN terrains_batir_temp t ON 
+                            t.code_commune = p.code_commune_dvf
+                            AND t.section_cadastrale = p.section
+                            AND (t.parcelle_suffixe = ('000' || p.parcelle_normalisee) 
+                                 OR t.parcelle_suffixe = p.parcelle_normalisee)
+                        LEFT JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
+                        WHERE p.code_commune_dvf = '40088'
+                          AND p.section = 'BL'
+                          AND t.date_mutation LIKE '2019-10-11%'
+                          AND (p.parcelle_normalisee LIKE '%56' OR p.parcelle_normalisee LIKE '%60' OR p.parcelle_normalisee LIKE '%61')
+                        LIMIT 10
+                    `).all();
+                    if (testAvecMutations.length > 0) {
+                        console.log(`\n🔍 [TRACE] Test avec mutations_aggregees:`);
+                        testAvecMutations.forEach((t, idx) => {
+                            console.log(`   Test ${idx + 1}:`);
+                            console.log(`   → num_pa: ${t.num_pa}`);
+                            console.log(`   → PA parcelle: "${t.parcelle_normalisee}", superficie: ${t.superficie}`);
+                            console.log(`   → DVF parcelle: "${t.parcelle_suffixe}", id_mutation: "${t.id_mutation}"`);
+                            console.log(`   → Mutation id: ${t.m_id_mutation}, surface: ${t.surface_totale_aggregee}, valeur: ${t.valeur_totale}`);
+                            console.log(`   → Match surface: ${t.match_surface}`);
+                            if (t.superficie && t.surface_totale_aggregee) {
+                                const min = t.superficie * 0.7;
+                                const max = t.superficie * 1.3;
+                                console.log(`   → Surface check: ${t.surface_totale_aggregee} BETWEEN ${min} AND ${max} = ${t.surface_totale_aggregee >= min && t.surface_totale_aggregee <= max}`);
+                            }
+                        });
+                    } else {
+                        console.log(`\n⚠️ [TRACE] Aucun résultat même avec LEFT JOIN sur mutations_aggregees`);
+                        
+                        // Vérifier si la mutation est dans mutations_aggregees
+                        const checkMutation = db.prepare(`
+                            SELECT * FROM mutations_aggregees
+                            WHERE id_mutation = '000001'
+                              AND date_mutation LIKE '2019-10-11%'
+                        `).all();
+                        if (checkMutation.length > 0) {
+                            console.log(`\n🔍 [TRACE] Mutation trouvée dans mutations_aggregees:`);
+                            checkMutation.forEach((m, idx) => {
+                                console.log(`   Mutation ${idx + 1}:`);
+                                console.log(`   → id_mutation: ${m.id_mutation}`);
+                                console.log(`   → date_mutation: ${m.date_mutation}`);
+                                console.log(`   → surface_totale_aggregee: ${m.surface_totale_aggregee}`);
+                                console.log(`   → valeur_totale: ${m.valeur_totale}`);
+                            });
+                        } else {
+                            console.log(`\n⚠️ [TRACE] Mutation 000001 du 2019-10-11 ABSENTE de mutations_aggregees !`);
+                            
+                            // Vérifier toutes les mutations du 2019-10-11
+                            const allMutations = db.prepare(`
+                                SELECT id_mutation, date_mutation, COUNT(*) as nb_parcelles
+                                FROM terrains_batir_temp
+                                WHERE code_commune = '40088'
+                                  AND date_mutation LIKE '2019-10-11%'
+                                  AND valeur_fonciere > 400000 AND valeur_fonciere < 450000
+                                GROUP BY id_mutation, date_mutation
+                            `).all();
+                            console.log(`\n🔍 [TRACE] Mutations trouvées dans terrains_batir_temp pour cette date:`);
+                            allMutations.forEach((m, idx) => {
+                                console.log(`   Mutation ${idx + 1}: id_mutation=${m.id_mutation}, date=${m.date_mutation}, nb_parcelles=${m.nb_parcelles}`);
+                            });
+                        }
                     }
                 }
             }

@@ -1859,9 +1859,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         code_departement,
         MIN(nom_commune) as nom_commune,
         MIN(section_cadastrale) as section_cadastrale,
-        MIN(code_commune) as code_commune
+        code_commune
     FROM terrains_batir_deduplique
-    GROUP BY id_mutation, code_departement
+    GROUP BY id_mutation, code_commune
     `);
     
     console.log('   → Création index sur mutations_aggregees...');

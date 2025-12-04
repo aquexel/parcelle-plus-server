@@ -2140,8 +2140,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
-              -- Filtre de surface avec tolérance de 30%
-              AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3)
+              -- NOTE: Filtre de surface supprimé pour les parcelles mères car :
+              -- 1. La superficie dans pa_parcelles_temp est la superficie TOTALE du PA, pas celle de la parcelle individuelle
+              -- 2. La surface_totale_aggregee de la mutation est la somme de toutes les parcelles de la transaction
+              -- 3. On ne peut pas comparer une superficie totale de PA avec une surface agrégée de mutation multi-parcelles
               -- NOTE: On n'exclut PAS les transactions avec surface bati pour les parcelles mères
               -- car elles peuvent avoir une petite surface bati (hangar, construction existante) et doivent être identifiées comme NON_VIABILISE
         `);
@@ -2192,8 +2194,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     });
                 }
                 
-                // Vérifier la jointure exacte
-                const jointureTest = db.prepare(`
+                // Vérifier la jointure exacte SANS filtre de surface
+                const jointureTestSansFiltre = db.prepare(`
                     SELECT 
                         p.num_pa,
                         p.section as pa_section,
@@ -2203,7 +2205,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         m.date_mutation,
                         m.valeur_totale,
                         m.surface_totale_aggregee,
-                        p.superficie as pa_superficie
+                        p.superficie as pa_superficie,
+                        ('000' || p.parcelle_normalisee) as parcelle_avec_prefixe,
+                        CASE 
+                            WHEN t.parcelle_suffixe = ('000' || p.parcelle_normalisee) THEN 'Match avec 000'
+                            WHEN t.parcelle_suffixe = p.parcelle_normalisee THEN 'Match sans 000'
+                            ELSE 'Pas de match'
+                        END as type_match
                     FROM pa_parcelles_temp p
                     INNER JOIN terrains_batir_temp t ON 
                         t.code_commune = p.code_commune_dvf
@@ -2215,18 +2223,53 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                       AND m.date_mutation LIKE '2019-10-11%'
                       AND m.valeur_totale > 400000 AND m.valeur_totale < 450000
                 `).all(commune);
-                if (jointureTest.length > 0) {
-                    console.log(`\n🔍 [TRACE] Jointure PA-DVF réussie avant insertion (${jointureTest.length} ligne(s)):`);
-                    jointureTest.forEach((j, idx) => {
+                if (jointureTestSansFiltre.length > 0) {
+                    console.log(`\n🔍 [TRACE] Jointure PA-DVF réussie SANS filtre surface (${jointureTestSansFiltre.length} ligne(s)):`);
+                    jointureTestSansFiltre.forEach((j, idx) => {
                         console.log(`   Jointure ${idx + 1}:`);
                         console.log(`   → num_pa: ${j.num_pa}`);
                         console.log(`   → PA section: ${j.pa_section}, parcelle: ${j.pa_parcelle}`);
+                        console.log(`   → Parcelle avec préfixe: ${j.parcelle_avec_prefixe}`);
                         console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
+                        console.log(`   → Type match: ${j.type_match}`);
                         console.log(`   → PA superficie: ${j.pa_superficie}, DVF surface: ${j.surface_totale_aggregee}`);
-                        console.log(`   → Match surface: ${j.pa_superficie ? (j.surface_totale_aggregee >= j.pa_superficie * 0.7 && j.surface_totale_aggregee <= j.pa_superficie * 1.3) : 'N/A'}`);
+                        const minSurface = j.pa_superficie * 0.7;
+                        const maxSurface = j.pa_superficie * 1.3;
+                        const matchSurface = j.pa_superficie ? (j.surface_totale_aggregee >= minSurface && j.surface_totale_aggregee <= maxSurface) : null;
+                        console.log(`   → Match surface: ${matchSurface} (min: ${minSurface}, max: ${maxSurface})`);
                     });
                 } else {
-                    console.log(`\n⚠️ [TRACE] Aucune jointure PA-DVF trouvée avant insertion`);
+                    console.log(`\n⚠️ [TRACE] Aucune jointure PA-DVF trouvée SANS filtre surface`);
+                    
+                    // Test manuel de la condition de parcelle
+                    const testParcelle = db.prepare(`
+                        SELECT 
+                            p.parcelle_normalisee,
+                            ('000' || p.parcelle_normalisee) as avec_prefixe,
+                            t.parcelle_suffixe,
+                            CASE WHEN t.parcelle_suffixe = ('000' || p.parcelle_normalisee) THEN 'OUI' ELSE 'NON' END as match_avec_prefixe,
+                            CASE WHEN t.parcelle_suffixe = p.parcelle_normalisee THEN 'OUI' ELSE 'NON' END as match_sans_prefixe
+                        FROM pa_parcelles_temp p
+                        CROSS JOIN terrains_batir_temp t
+                        WHERE p.code_commune_dvf = '40088'
+                          AND p.section = 'BL'
+                          AND t.code_commune = '40088'
+                          AND t.section_cadastrale = 'BL'
+                          AND t.date_mutation LIKE '2019-10-11%'
+                          AND (p.parcelle_normalisee LIKE '%56' OR p.parcelle_normalisee LIKE '%60' OR p.parcelle_normalisee LIKE '%61')
+                        LIMIT 10
+                    `).all();
+                    if (testParcelle.length > 0) {
+                        console.log(`\n🔍 [TRACE] Test manuel condition parcelle:`);
+                        testParcelle.forEach((t, idx) => {
+                            console.log(`   Test ${idx + 1}:`);
+                            console.log(`   → PA parcelle_normalisee: "${t.parcelle_normalisee}"`);
+                            console.log(`   → Avec préfixe: "${t.avec_prefixe}"`);
+                            console.log(`   → DVF parcelle_suffixe: "${t.parcelle_suffixe}"`);
+                            console.log(`   → Match avec préfixe: ${t.match_avec_prefixe}`);
+                            console.log(`   → Match sans préfixe: ${t.match_sans_prefixe}`);
+                        });
+                    }
                 }
             }
             

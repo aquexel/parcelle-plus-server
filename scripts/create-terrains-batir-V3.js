@@ -2239,7 +2239,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                             WHEN t.parcelle_suffixe = ('000' || p.parcelle_normalisee) THEN 'Match avec 000'
                             WHEN t.parcelle_suffixe = p.parcelle_normalisee THEN 'Match sans 000'
                             ELSE 'Pas de match'
-                        END as type_match
+                        END as type_match,
+                        CASE 
+                            WHEN m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3 
+                            THEN 'OUI' 
+                            ELSE 'NON' 
+                        END as passe_filtre_surface,
+                        p.superficie * 0.7 as min_surface,
+                        p.superficie * 1.3 as max_surface
                     FROM pa_parcelles_temp p
                     INNER JOIN terrains_batir_temp t ON 
                         t.code_commune = p.code_commune_dvf
@@ -2261,14 +2268,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
                         console.log(`   → Type match: ${j.type_match}`);
                         console.log(`   → PA superficie: ${j.pa_superficie}, DVF surface: ${j.surface_totale_aggregee}`);
-                        const minSurface = j.pa_superficie ? j.pa_superficie * 0.7 : null;
-                        const maxSurface = j.pa_superficie ? j.pa_superficie * 1.3 : null;
-                        const matchSurface = j.pa_superficie ? (j.surface_totale_aggregee >= minSurface && j.surface_totale_aggregee <= maxSurface) : null;
-                        console.log(`   → Match surface: ${matchSurface} (min: ${minSurface}, max: ${maxSurface})`);
+                        console.log(`   → Passe filtre surface: ${j.passe_filtre_surface} (min: ${j.min_surface}, max: ${j.max_surface})`);
                         
                         // Test avec le filtre de surface pour voir pourquoi ça ne passe pas
-                        if (!matchSurface && j.pa_superficie) {
-                            console.log(`   ⚠️  Surface ne correspond pas : PA=${j.pa_superficie}, DVF=${j.surface_totale_aggregee}, écart=${Math.abs(j.surface_totale_aggregee - j.pa_superficie)}, pourcentage=${((j.surface_totale_aggregee / j.pa_superficie - 1) * 100).toFixed(1)}%`);
+                        if (j.passe_filtre_surface === 'NON' && j.pa_superficie) {
+                            const ecart = Math.abs(j.surface_totale_aggregee - j.pa_superficie);
+                            const pourcentage = ((j.surface_totale_aggregee / j.pa_superficie - 1) * 100).toFixed(1);
+                            console.log(`   ⚠️  Surface ne correspond pas : PA=${j.pa_superficie}, DVF=${j.surface_totale_aggregee}, écart=${ecart}, pourcentage=${pourcentage}%`);
                         }
                     });
                 } else {

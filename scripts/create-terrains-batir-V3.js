@@ -1460,17 +1460,17 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     // ID mutation
                     let idMutation = idMutationRaw || '';
                     if (!idMutation) {
-                        // Créer un identifiant basé sur date + prix + section cadastrale
+                        // Créer un identifiant basé sur date + prix + commune (sans parcelle pour que toutes les parcelles de la même transaction aient le même ID)
                         const dateForId = dateMutation || '';
                         const prixForId = Math.round(valeurFonciere);
-                        const sectionForId = section || '';
                         const dateNorm = dateForId.substring(0, 10); // yyyy-mm-dd
                         
                         if (!dateNorm || dateNorm.length < 10) {
                             idMutation = `DVF_UNKNOWN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                         } else {
-                            const parcellePrefix = idParcelle.substring(0, 12);
-                            idMutation = `DVF_${dateNorm}_${prixForId}_${sectionForId}_${parcellePrefix}`.replace(/[^A-Z0-9_-]/g, '');
+                            // Utiliser code_commune au lieu du préfixe de parcelle pour que toutes les parcelles de la même transaction aient le même ID
+                            const codeCommuneForId = codeCommune || idParcelle.substring(0, 5) || '00000';
+                            idMutation = `DVF_${dateNorm}_${prixForId}_${codeCommuneForId}`.replace(/[^A-Z0-9_-]/g, '');
                         }
                     }
                     

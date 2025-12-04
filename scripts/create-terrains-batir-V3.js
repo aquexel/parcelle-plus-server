@@ -1334,6 +1334,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             const separateurDVF = detecterSeparateur(filePath);
             console.log(`\n      🔧 Séparateur détecté: "${separateurDVF}"\n`);
             
+            // Compteur pour générer des IDs uniques pour les transactions sans id_mutation
+            let transactionCounter = 0;
+            
             fs.createReadStream(filePath)
                 .pipe(csv({ separator: separateurDVF, skipLinesWithError: true }))
                 .on('data', (row) => {
@@ -1460,17 +1463,23 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     // ID mutation
                     let idMutation = idMutationRaw || '';
                     if (!idMutation) {
-                        // Créer un identifiant basé sur date + prix + commune (sans parcelle pour que toutes les parcelles de la même transaction aient le même ID)
+                        // Créer un identifiant basé sur date + prix + commune + section
+                        // Pour éviter les collisions entre transactions distinctes, on utilise aussi la première parcelle vue
+                        // Mais on doit s'assurer que toutes les parcelles de la même transaction aient le même ID
+                        // Solution : utiliser un hash basé sur date + prix + commune + section (sans numéro de parcelle)
                         const dateForId = dateMutation || '';
                         const prixForId = Math.round(valeurFonciere);
                         const dateNorm = dateForId.substring(0, 10); // yyyy-mm-dd
                         
                         if (!dateNorm || dateNorm.length < 10) {
-                            idMutation = `DVF_UNKNOWN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                            transactionCounter++;
+                            idMutation = `DVF_UNKNOWN_${transactionCounter}_${Date.now()}`;
                         } else {
-                            // Utiliser code_commune au lieu du préfixe de parcelle pour que toutes les parcelles de la même transaction aient le même ID
+                            // Utiliser code_commune + section (sans numéro de parcelle) pour que toutes les parcelles de la même transaction aient le même ID
+                            // Si plusieurs transactions ont la même date/prix/commune/section, elles seront fusionnées (acceptable car très rare)
                             const codeCommuneForId = codeCommune || idParcelle.substring(0, 5) || '00000';
-                            idMutation = `DVF_${dateNorm}_${prixForId}_${codeCommuneForId}`.replace(/[^A-Z0-9_-]/g, '');
+                            const sectionForId = (section || '').substring(0, 2).padStart(2, '0');
+                            idMutation = `DVF_${dateNorm}_${prixForId}_${codeCommuneForId}_${sectionForId}`.replace(/[^A-Z0-9_-]/g, '');
                         }
                     }
                     

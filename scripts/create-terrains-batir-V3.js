@@ -2140,10 +2140,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
-              -- NOTE: Filtre de surface supprimé pour les parcelles mères car :
-              -- 1. La superficie dans pa_parcelles_temp est la superficie TOTALE du PA, pas celle de la parcelle individuelle
-              -- 2. La surface_totale_aggregee de la mutation est la somme de toutes les parcelles de la transaction
-              -- 3. On ne peut pas comparer une superficie totale de PA avec une surface agrégée de mutation multi-parcelles
+              -- Filtre de surface avec tolérance de 30% : compare la superficie TOTALE du PA avec la surface agrégée de la mutation
+              -- La superficie dans pa_parcelles_temp est la superficie totale du PA
+              -- La surface_totale_aggregee est la somme de toutes les parcelles de la transaction
+              -- On compare donc la superficie totale du PA avec la surface totale de la transaction (logique cohérente)
+              AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3)
               -- NOTE: On n'exclut PAS les transactions avec surface bati pour les parcelles mères
               -- car elles peuvent avoir une petite surface bati (hangar, construction existante) et doivent être identifiées comme NON_VIABILISE
         `);
@@ -2233,10 +2234,15 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
                         console.log(`   → Type match: ${j.type_match}`);
                         console.log(`   → PA superficie: ${j.pa_superficie}, DVF surface: ${j.surface_totale_aggregee}`);
-                        const minSurface = j.pa_superficie * 0.7;
-                        const maxSurface = j.pa_superficie * 1.3;
+                        const minSurface = j.pa_superficie ? j.pa_superficie * 0.7 : null;
+                        const maxSurface = j.pa_superficie ? j.pa_superficie * 1.3 : null;
                         const matchSurface = j.pa_superficie ? (j.surface_totale_aggregee >= minSurface && j.surface_totale_aggregee <= maxSurface) : null;
                         console.log(`   → Match surface: ${matchSurface} (min: ${minSurface}, max: ${maxSurface})`);
+                        
+                        // Test avec le filtre de surface pour voir pourquoi ça ne passe pas
+                        if (!matchSurface && j.pa_superficie) {
+                            console.log(`   ⚠️  Surface ne correspond pas : PA=${j.pa_superficie}, DVF=${j.surface_totale_aggregee}, écart=${Math.abs(j.surface_totale_aggregee - j.pa_superficie)}, pourcentage=${((j.surface_totale_aggregee / j.pa_superficie - 1) * 100).toFixed(1)}%`);
+                        }
                     });
                 } else {
                     console.log(`\n⚠️ [TRACE] Aucune jointure PA-DVF trouvée SANS filtre surface`);

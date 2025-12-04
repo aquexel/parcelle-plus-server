@@ -1855,13 +1855,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         SUM(surface_totale) as surface_totale_aggregee,
         SUM(surface_reelle_bati) as surface_reelle_bati_aggregee,
         MAX(valeur_fonciere) as valeur_totale,
-        MIN(date_mutation) as date_mutation,
+        date_mutation,
         code_departement,
         MIN(nom_commune) as nom_commune,
         MIN(section_cadastrale) as section_cadastrale,
         code_commune
     FROM terrains_batir_deduplique
-    GROUP BY id_mutation, code_commune
+    GROUP BY id_mutation, code_commune, date_mutation
     `);
     
     console.log('   → Création index sur mutations_aggregees...');

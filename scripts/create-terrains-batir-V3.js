@@ -1850,7 +1850,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     // Maintenant avec seulement ~4-6M lignes, l'agrégation est rapide
     db.exec(`
     CREATE TEMP TABLE mutations_aggregees AS
-    SELECT 
+    SELECT DISTINCT
         id_mutation,
         SUM(surface_totale) as surface_totale_aggregee,
         SUM(surface_reelle_bati) as surface_reelle_bati_aggregee,
@@ -1861,7 +1861,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         MIN(section_cadastrale) as section_cadastrale,
         code_commune
     FROM terrains_batir_deduplique
-    GROUP BY id_mutation, code_commune, date_mutation
+    GROUP BY id_mutation, code_commune, date_mutation, valeur_fonciere
     `);
     
     console.log('   → Création index sur mutations_aggregees...');

@@ -1835,9 +1835,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     db.exec(`DROP VIEW IF EXISTS terrains_batir_deduplique`);
     db.exec(`DROP TABLE IF EXISTS terrains_batir_deduplique`);
     
+    // Éliminer les doublons complets (lignes identiques) avant l'agrégation
+    // Important pour les données DVF avant 2019 qui peuvent contenir des lignes dupliquées
     db.exec(`
     CREATE TEMP TABLE terrains_batir_deduplique AS
-    SELECT 
+    SELECT DISTINCT
         id_parcelle,
         id_mutation,
         valeur_fonciere,

@@ -1274,7 +1274,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     // Mapping des colonnes possibles
                     const columnMappings = {
-                        'id_mutation': ['id_mutation', 'no_disposition', 'numero_disposition'],
+                        'id_mutation': ['id_mutation'], // numero_disposition n'est PAS un id_mutation
                         'date_mutation': ['date_mutation'],
                         'valeur_fonciere': ['valeur_fonciere', 'valeur_fonciere_globale'],
                         'code_departement': ['code_departement', 'dep'],

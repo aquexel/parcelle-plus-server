@@ -2046,12 +2046,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 section TEXT,
                 parcelle_normalisee TEXT,
                 superficie REAL,
+                superficie_totale_pa REAL,
                 date_auth TEXT
             );
         `);
         
         // Insérer toutes les parcelles PA en masse
-        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+        const insertPA = db.prepare(`INSERT INTO pa_parcelles_temp VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const insertManyPA = db.transaction(() => {
             for (const pa of paList) {
                 if (!pa.parcelles || pa.parcelles.length === 0) continue;
@@ -2078,7 +2079,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                                 pa.depCode,  // Code département du PA
                                 sect,
                                 parcelleNormalisee,
-                                pa.superficie,
+                                pa.superficie,  // Superficie totale du PA (sera remplacée par superficie individuelle)
+                                pa.superficie,  // Conserver la superficie totale du PA
                                 pa.dateAuth
                             );
                         }
@@ -2181,10 +2183,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
               -- Filtre de surface avec tolérance de 30% : compare la superficie TOTALE du PA avec la surface agrégée de la mutation
-              -- La superficie dans pa_parcelles_temp est la superficie totale du PA
+              -- Utiliser superficie_totale_pa (superficie totale du PA) et non superficie (superficie individuelle après enrichissement)
               -- La surface_totale_aggregee est la somme de toutes les parcelles de la transaction
               -- On compare donc la superficie totale du PA avec la surface totale de la transaction (logique cohérente)
-              AND (p.superficie IS NULL OR p.superficie = 0 OR m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3)
+              AND (p.superficie_totale_pa IS NULL OR p.superficie_totale_pa = 0 OR m.surface_totale_aggregee BETWEEN p.superficie_totale_pa * 0.7 AND p.superficie_totale_pa * 1.3)
               -- NOTE: On n'exclut PAS les transactions avec surface bati pour les parcelles mères
               -- car elles peuvent avoir une petite surface bati (hangar, construction existante) et doivent être identifiées comme NON_VIABILISE
         `);
@@ -2254,12 +2256,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                             ELSE 'Pas de match'
                         END as type_match,
                         CASE 
-                            WHEN m.surface_totale_aggregee BETWEEN p.superficie * 0.7 AND p.superficie * 1.3 
+                            WHEN m.surface_totale_aggregee BETWEEN p.superficie_totale_pa * 0.7 AND p.superficie_totale_pa * 1.3 
                             THEN 'OUI' 
                             ELSE 'NON' 
                         END as passe_filtre_surface,
-                        p.superficie * 0.7 as min_surface,
-                        p.superficie * 1.3 as max_surface
+                        p.superficie_totale_pa * 0.7 as min_surface,
+                        p.superficie_totale_pa * 1.3 as max_surface,
+                        p.superficie_totale_pa as pa_superficie_totale
                     FROM pa_parcelles_temp p
                     INNER JOIN terrains_batir_temp t ON 
                         t.code_commune = p.code_commune_dvf
@@ -2280,14 +2283,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         console.log(`   → Parcelle avec préfixe: ${j.parcelle_avec_prefixe}`);
                         console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
                         console.log(`   → Type match: ${j.type_match}`);
-                        console.log(`   → PA superficie: ${j.pa_superficie}, DVF surface: ${j.surface_totale_aggregee}`);
+                        console.log(`   → PA superficie individuelle: ${j.pa_superficie}, PA superficie totale: ${j.pa_superficie_totale}, DVF surface: ${j.surface_totale_aggregee}`);
                         console.log(`   → Passe filtre surface: ${j.passe_filtre_surface} (min: ${j.min_surface}, max: ${j.max_surface})`);
                         
                         // Test avec le filtre de surface pour voir pourquoi ça ne passe pas
-                        if (j.passe_filtre_surface === 'NON' && j.pa_superficie) {
-                            const ecart = Math.abs(j.surface_totale_aggregee - j.pa_superficie);
-                            const pourcentage = ((j.surface_totale_aggregee / j.pa_superficie - 1) * 100).toFixed(1);
-                            console.log(`   ⚠️  Surface ne correspond pas : PA=${j.pa_superficie}, DVF=${j.surface_totale_aggregee}, écart=${ecart}, pourcentage=${pourcentage}%`);
+                        if (j.passe_filtre_surface === 'NON' && j.pa_superficie_totale) {
+                            const ecart = Math.abs(j.surface_totale_aggregee - j.pa_superficie_totale);
+                            const pourcentage = ((j.surface_totale_aggregee / j.pa_superficie_totale - 1) * 100).toFixed(1);
+                            console.log(`   ⚠️  Surface ne correspond pas : PA total=${j.pa_superficie_totale}, DVF=${j.surface_totale_aggregee}, écart=${ecart}, pourcentage=${pourcentage}%`);
                         }
                     });
                 } else {

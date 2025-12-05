@@ -945,15 +945,17 @@ function normaliserFichierDVF(filePath) {
                     
                     // Signature pour détecter les doublons complets
                     const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}`;
+                    // Utiliser un hash au lieu de la signature complète pour économiser la mémoire
+                    const hash = simpleHash(signature);
                     
                     // Si la ligne a déjà été vue, la sauter
-                    if (seenLines.has(signature)) {
+                    if (seenLines.has(hash)) {
                         duplicatesSkipped++;
                         return;
                     }
                     
-                    // Ajouter la signature au Set
-                    seenLines.add(signature);
+                    // Ajouter le hash au Set
+                    seenLines.add(hash);
                     
                     // Écrire la ligne normalisée (sans escapeCSV qui ajouterait des guillemets)
                     const values = columns.map(col => normalizedRow[col] || '');
@@ -1040,14 +1042,26 @@ function normaliserFichierDVF(filePath) {
     });
 }
 
-// Fonction pour dédupliquer un fichier DVF déjà normalisé
+// Fonction pour calculer un hash simple (réduit l'utilisation mémoire)
+function simpleHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convertir en entier 32 bits
+    }
+    return hash.toString(36); // Convertir en base 36 pour un hash plus court
+}
+
+// Fonction pour dédupliquer un fichier DVF déjà normalisé (optimisée mémoire)
 async function dedupliquerFichierDVF(filePath) {
     return new Promise((resolve, reject) => {
         console.log(`   🧹 Déduplication de ${path.basename(filePath)}...`);
         
         const tempFile = filePath + '.tmp';
         const writeStream = fs.createWriteStream(tempFile, { encoding: 'utf8' });
-        const seenLines = new Set();
+        // Utiliser un Set de hash au lieu de signatures complètes pour économiser la mémoire
+        const seenHashes = new Set();
         let count = 0;
         let duplicatesSkipped = 0;
         let headerWritten = false;
@@ -1090,14 +1104,16 @@ async function dedupliquerFichierDVF(filePath) {
                 const surfaceBati = row.surface_reelle_bati || '';
                 
                 const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}`;
+                // Utiliser un hash au lieu de la signature complète pour économiser la mémoire
+                const hash = simpleHash(signature);
                 
                 // Si la ligne a déjà été vue, la sauter
-                if (seenLines.has(signature)) {
+                if (seenHashes.has(hash)) {
                     duplicatesSkipped++;
                     return;
                 }
                 
-                seenLines.add(signature);
+                seenHashes.add(hash);
                 
                 // Écrire la ligne
                 const values = Object.keys(row).map(key => row[key] || '');
@@ -1121,6 +1137,8 @@ async function dedupliquerFichierDVF(filePath) {
                         fs.renameSync(tempFile, filePath);
                         
                         console.log(`\r   ✅ ${count} lignes conservées (${duplicatesSkipped} doublons supprimés)\n`);
+                        // Libérer la mémoire
+                        seenHashes.clear();
                         resolve();
                     } catch (err) {
                         reject(err);

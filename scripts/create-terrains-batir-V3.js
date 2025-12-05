@@ -2234,6 +2234,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 }
                 
                 // Vérifier la jointure exacte (sans filtre de surface pour les parcelles mères)
+                // IMPORTANT: m.surface_totale_aggregee est la surface totale de TOUTE la mutation (toutes parcelles)
+                // t.surface_totale est la surface de la parcelle individuelle dans cette mutation
                 const jointureTestSansFiltre = db.prepare(`
                     SELECT 
                         p.num_pa,
@@ -2241,10 +2243,12 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         p.parcelle_normalisee as pa_parcelle,
                         t.parcelle_suffixe as dvf_parcelle,
                         t.section_cadastrale as dvf_section,
+                        t.id_parcelle as dvf_id_parcelle,
+                        t.surface_totale as dvf_surface_parcelle_individuelle,
                         m.id_mutation,
                         m.date_mutation,
                         m.valeur_totale,
-                        m.surface_totale_aggregee,
+                        m.surface_totale_aggregee as dvf_surface_totale_mutation,
                         p.superficie as pa_superficie_individuelle,
                         p.superficie_totale_pa as pa_superficie_totale,
                         p.date_auth as pa_date_auth,
@@ -2269,7 +2273,16 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     ORDER BY m.date_mutation, m.valeur_totale
                 `).all(commune);
                 if (jointureTestSansFiltre.length > 0) {
-                    console.log(`\n🔍 [TRACE] Jointure PA-DVF trouvée (${jointureTestSansFiltre.length} ligne(s)) - PAS de filtre surface pour parcelles mères:`);
+                    // Compter les mutations uniques
+                    const mutationsUniques = new Set(jointureTestSansFiltre.map(j => j.id_mutation));
+                    console.log(`\n🔍 [TRACE] Jointure PA-DVF trouvée (${jointureTestSansFiltre.length} ligne(s), ${mutationsUniques.size} mutation(s) unique(s)) - PAS de filtre surface pour parcelles mères:`);
+                    
+                    // Si beaucoup de lignes mais peu de mutations uniques, c'est probablement un problème de doublons
+                    if (jointureTestSansFiltre.length > mutationsUniques.size * 2) {
+                        console.log(`   ⚠️  ATTENTION: Beaucoup plus de lignes que de mutations uniques - possible problème de doublons`);
+                        console.log(`   → Mutations uniques: ${Array.from(mutationsUniques).join(', ')}`);
+                    }
+                    
                     // Afficher seulement les 20 premières pour éviter les logs trop longs
                     const maxLogs = Math.min(20, jointureTestSansFiltre.length);
                     jointureTestSansFiltre.slice(0, maxLogs).forEach((j, idx) => {
@@ -2277,9 +2290,10 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         console.log(`   → num_pa: ${j.num_pa}`);
                         console.log(`   → PA section: ${j.pa_section}, parcelle: ${j.pa_parcelle}`);
                         console.log(`   → PA date_auth: ${j.pa_date_auth}`);
-                        console.log(`   → DVF id_mutation: ${j.id_mutation}, date_mutation: ${j.date_mutation}, valeur: ${j.valeur_totale}`);
-                        console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
-                        console.log(`   → DVF surface_totale_aggregee: ${j.surface_totale_aggregee}`);
+                        console.log(`   → DVF id_parcelle: ${j.dvf_id_parcelle}, id_mutation: ${j.id_mutation}`);
+                        console.log(`   → DVF date_mutation: ${j.date_mutation}, valeur: ${j.valeur_totale}`);
+                        console.log(`   → DVF surface PARCELLE (cette parcelle seule): ${j.dvf_surface_parcelle_individuelle}`);
+                        console.log(`   → DVF surface TOTALE MUTATION (toutes parcelles): ${j.dvf_surface_totale_mutation}`);
                         console.log(`   → PA superficie individuelle: ${j.pa_superficie_individuelle}, PA superficie totale: ${j.pa_superficie_totale}`);
                         console.log(`   → Type match: ${j.type_match}`);
                     });

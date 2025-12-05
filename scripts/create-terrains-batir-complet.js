@@ -901,8 +901,11 @@ function normaliserFichierDVF(filePath) {
             writeStream.write(columns.join(',') + '\n');
             
             let count = 0;
+            let duplicatesSkipped = 0;
+            // Set pour stocker les signatures des lignes déjà vues (déduplication)
+            const seenLines = new Set();
             
-            // Deuxième passe : normaliser et écrire
+            // Deuxième passe : normaliser et écrire (avec déduplication)
             fs.createReadStream(filePath)
                 .pipe(csv({ separator, skipLinesWithError: true }))
                 .on('data', (row) => {
@@ -931,6 +934,27 @@ function normaliserFichierDVF(filePath) {
                         }
                     }
                     
+                    // Créer une signature unique pour la ligne (basée sur les colonnes clés)
+                    // Utiliser les colonnes principales pour détecter les doublons
+                    const idParcelle = normalizedRow.id_parcelle || '';
+                    const idMutation = normalizedRow.id_mutation || normalizedRow.numero_disposition || '';
+                    const dateMutation = normalizedRow.date_mutation || '';
+                    const valeurFonciere = normalizedRow.valeur_fonciere || '';
+                    const surfaceTerrain = normalizedRow.surface_terrain || '';
+                    const surfaceBati = normalizedRow.surface_reelle_bati || '';
+                    
+                    // Signature pour détecter les doublons complets
+                    const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}`;
+                    
+                    // Si la ligne a déjà été vue, la sauter
+                    if (seenLines.has(signature)) {
+                        duplicatesSkipped++;
+                        return;
+                    }
+                    
+                    // Ajouter la signature au Set
+                    seenLines.add(signature);
+                    
                     // Écrire la ligne normalisée (sans escapeCSV qui ajouterait des guillemets)
                     const values = columns.map(col => normalizedRow[col] || '');
                     writeStream.write(values.join(',') + '\n');
@@ -938,7 +962,7 @@ function normaliserFichierDVF(filePath) {
                     count++;
                     
                     if (count % 100000 === 0) {
-                        process.stdout.write(`\r      → ${count} lignes normalisées...`);
+                        process.stdout.write(`\r      → ${count} lignes normalisées (${duplicatesSkipped} doublons ignorés)...`);
                     }
                 })
                 .on('end', () => {
@@ -984,7 +1008,7 @@ function normaliserFichierDVF(filePath) {
                             });
                             
                             rlVerifNorm.on('close', () => {
-                                console.log(`   ✅ ${count} lignes normalisées - Fichier remplacé`);
+                                console.log(`   ✅ ${count} lignes normalisées (${duplicatesSkipped} doublons supprimés) - Fichier remplacé`);
                                 if (verifNormLines.length >= 2) {
                                     console.log(`   🔍 Vérif ligne 1 après normalisation: "${verifNormLines[0].substring(0, 80)}..."`);
                                     console.log(`   🔍 Vérif ligne 2 après normalisation: "${verifNormLines[1].substring(0, 80)}..."\n`);

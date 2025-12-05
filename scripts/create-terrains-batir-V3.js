@@ -2182,11 +2182,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 AND m.code_commune = t.code_commune
             WHERE p.code_commune_dvf = ?
               -- Fenêtre temporelle supprimée : association basée uniquement sur la correspondance parcellaire
-              -- Filtre de surface avec tolérance de 30% : compare la superficie TOTALE du PA avec la surface agrégée de la mutation
-              -- Utiliser superficie_totale_pa (superficie totale du PA) et non superficie (superficie individuelle après enrichissement)
-              -- La surface_totale_aggregee est la somme de toutes les parcelles de la transaction
-              -- On compare donc la superficie totale du PA avec la surface totale de la transaction (logique cohérente)
-              AND (p.superficie_totale_pa IS NULL OR p.superficie_totale_pa = 0 OR m.surface_totale_aggregee BETWEEN p.superficie_totale_pa * 0.7 AND p.superficie_totale_pa * 1.3)
+              -- Pas de filtre de surface pour les parcelles mères : si une parcelle est dans le PA, elle fait partie du lotissement
               -- NOTE: On n'exclut PAS les transactions avec surface bati pour les parcelles mères
               -- car elles peuvent avoir une petite surface bati (hangar, construction existante) et doivent être identifiées comme NON_VIABILISE
         `);

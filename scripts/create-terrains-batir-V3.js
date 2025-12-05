@@ -1462,6 +1462,20 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     
                     // ID mutation
                     let idMutation = idMutationRaw || '';
+                    // Ignorer les valeurs d'id_mutation invalides (valeurs par défaut dans DVF avant 2020)
+                    // Les valeurs comme "000001", "000000", "1", "0" sont des placeholders, pas de vrais IDs
+                    const idMutationClean = idMutation.trim();
+                    const isInvalidId = !idMutationClean || 
+                                       idMutationClean === '0' || 
+                                       idMutationClean === '000000' || 
+                                       idMutationClean === '000001' || 
+                                       idMutationClean === '1' ||
+                                       /^0+$/.test(idMutationClean); // Tous des zéros
+                    
+                    if (isInvalidId) {
+                        idMutation = ''; // Traiter comme s'il n'y avait pas d'id_mutation
+                    }
+                    
                     if (!idMutation) {
                         // Créer un identifiant basé sur date + prix + commune + section
                         // Pour éviter les collisions entre transactions distinctes, on utilise aussi la première parcelle vue

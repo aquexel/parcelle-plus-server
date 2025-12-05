@@ -2233,7 +2233,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     });
                 }
                 
-                // Vérifier la jointure exacte SANS filtre de surface
+                // Vérifier la jointure exacte (sans filtre de surface pour les parcelles mères)
                 const jointureTestSansFiltre = db.prepare(`
                     SELECT 
                         p.num_pa,
@@ -2241,54 +2241,51 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                         p.parcelle_normalisee as pa_parcelle,
                         t.parcelle_suffixe as dvf_parcelle,
                         t.section_cadastrale as dvf_section,
+                        m.id_mutation,
                         m.date_mutation,
                         m.valeur_totale,
                         m.surface_totale_aggregee,
-                        p.superficie as pa_superficie,
+                        p.superficie as pa_superficie_individuelle,
+                        p.superficie_totale_pa as pa_superficie_totale,
+                        p.date_auth as pa_date_auth,
                         ('000' || p.parcelle_normalisee) as parcelle_avec_prefixe,
                         CASE 
                             WHEN t.parcelle_suffixe = ('000' || p.parcelle_normalisee) THEN 'Match avec 000'
                             WHEN t.parcelle_suffixe = p.parcelle_normalisee THEN 'Match sans 000'
                             ELSE 'Pas de match'
-                        END as type_match,
-                        CASE 
-                            WHEN m.surface_totale_aggregee BETWEEN p.superficie_totale_pa * 0.7 AND p.superficie_totale_pa * 1.3 
-                            THEN 'OUI' 
-                            ELSE 'NON' 
-                        END as passe_filtre_surface,
-                        p.superficie_totale_pa * 0.7 as min_surface,
-                        p.superficie_totale_pa * 1.3 as max_surface,
-                        p.superficie_totale_pa as pa_superficie_totale
+                        END as type_match
                     FROM pa_parcelles_temp p
                     INNER JOIN terrains_batir_temp t ON 
                         t.code_commune = p.code_commune_dvf
                         AND t.section_cadastrale = p.section
                         AND (t.parcelle_suffixe = ('000' || p.parcelle_normalisee) 
                              OR t.parcelle_suffixe = p.parcelle_normalisee)
-                    INNER JOIN mutations_aggregees m ON m.id_mutation = t.id_mutation
+                    INNER JOIN mutations_aggregees m ON 
+                        m.id_mutation = t.id_mutation
+                        AND m.code_commune = t.code_commune
                     WHERE p.code_commune_dvf = ?
                       AND m.date_mutation LIKE '2019-10-11%'
                       AND m.valeur_totale > 400000 AND m.valeur_totale < 450000
+                    ORDER BY m.date_mutation, m.valeur_totale
                 `).all(commune);
                 if (jointureTestSansFiltre.length > 0) {
-                    console.log(`\n🔍 [TRACE] Jointure PA-DVF réussie SANS filtre surface (${jointureTestSansFiltre.length} ligne(s)):`);
-                    jointureTestSansFiltre.forEach((j, idx) => {
+                    console.log(`\n🔍 [TRACE] Jointure PA-DVF trouvée (${jointureTestSansFiltre.length} ligne(s)) - PAS de filtre surface pour parcelles mères:`);
+                    // Afficher seulement les 20 premières pour éviter les logs trop longs
+                    const maxLogs = Math.min(20, jointureTestSansFiltre.length);
+                    jointureTestSansFiltre.slice(0, maxLogs).forEach((j, idx) => {
                         console.log(`   Jointure ${idx + 1}:`);
                         console.log(`   → num_pa: ${j.num_pa}`);
                         console.log(`   → PA section: ${j.pa_section}, parcelle: ${j.pa_parcelle}`);
-                        console.log(`   → Parcelle avec préfixe: ${j.parcelle_avec_prefixe}`);
+                        console.log(`   → PA date_auth: ${j.pa_date_auth}`);
+                        console.log(`   → DVF id_mutation: ${j.id_mutation}, date_mutation: ${j.date_mutation}, valeur: ${j.valeur_totale}`);
                         console.log(`   → DVF section: ${j.dvf_section}, parcelle: ${j.dvf_parcelle}`);
+                        console.log(`   → DVF surface_totale_aggregee: ${j.surface_totale_aggregee}`);
+                        console.log(`   → PA superficie individuelle: ${j.pa_superficie_individuelle}, PA superficie totale: ${j.pa_superficie_totale}`);
                         console.log(`   → Type match: ${j.type_match}`);
-                        console.log(`   → PA superficie individuelle: ${j.pa_superficie}, PA superficie totale: ${j.pa_superficie_totale}, DVF surface: ${j.surface_totale_aggregee}`);
-                        console.log(`   → Passe filtre surface: ${j.passe_filtre_surface} (min: ${j.min_surface}, max: ${j.max_surface})`);
-                        
-                        // Test avec le filtre de surface pour voir pourquoi ça ne passe pas
-                        if (j.passe_filtre_surface === 'NON' && j.pa_superficie_totale) {
-                            const ecart = Math.abs(j.surface_totale_aggregee - j.pa_superficie_totale);
-                            const pourcentage = ((j.surface_totale_aggregee / j.pa_superficie_totale - 1) * 100).toFixed(1);
-                            console.log(`   ⚠️  Surface ne correspond pas : PA total=${j.pa_superficie_totale}, DVF=${j.surface_totale_aggregee}, écart=${ecart}, pourcentage=${pourcentage}%`);
-                        }
                     });
+                    if (jointureTestSansFiltre.length > maxLogs) {
+                        console.log(`   ... (${jointureTestSansFiltre.length - maxLogs} autres jointures non affichées)`);
+                    }
                 } else {
                     console.log(`\n⚠️ [TRACE] Aucune jointure PA-DVF trouvée SANS filtre surface`);
                     

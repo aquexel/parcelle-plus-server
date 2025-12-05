@@ -1040,6 +1040,99 @@ function normaliserFichierDVF(filePath) {
     });
 }
 
+// Fonction pour dédupliquer un fichier DVF déjà normalisé
+async function dedupliquerFichierDVF(filePath) {
+    return new Promise((resolve, reject) => {
+        console.log(`   🧹 Déduplication de ${path.basename(filePath)}...`);
+        
+        const tempFile = filePath + '.tmp';
+        const writeStream = fs.createWriteStream(tempFile, { encoding: 'utf8' });
+        const seenLines = new Set();
+        let count = 0;
+        let duplicatesSkipped = 0;
+        let headerWritten = false;
+        const separator = detecterSeparateur(filePath);
+        
+        fs.createReadStream(filePath)
+            .pipe(csv({ separator, skipLinesWithError: true }))
+            .on('data', (row) => {
+                // Écrire l'en-tête une seule fois
+                if (!headerWritten) {
+                    const header = Object.keys(row).join(',');
+                    writeStream.write(header + '\n');
+                    headerWritten = true;
+                }
+                
+                // Construire id_parcelle si manquant
+                if (!row.id_parcelle && (row.code_departement || row.code_commune)) {
+                    const dept = (row.code_departement || '').trim().padStart(2, '0');
+                    const comm = (row.code_commune || '').trim().padStart(3, '0');
+                    const prefixe = (row.prefixe_de_section || row.prefixe_section || '000').trim().padStart(3, '0');
+                    const section = (row.section || '').trim().toUpperCase();
+                    const numero = (row.numero_plan || row.no_plan || '').trim().padStart(4, '0');
+                    
+                    if (dept.length === 2 && comm.length === 3 && section && numero.length === 4) {
+                        let sectionNorm = section;
+                        if (sectionNorm.length === 1) {
+                            sectionNorm = '0' + sectionNorm;
+                        }
+                        sectionNorm = sectionNorm.padStart(2, '0').substring(0, 2);
+                        row.id_parcelle = dept + comm + prefixe + sectionNorm + numero;
+                    }
+                }
+                
+                // Créer une signature unique pour la ligne
+                const idParcelle = row.id_parcelle || '';
+                const idMutation = row.id_mutation || row.numero_disposition || '';
+                const dateMutation = row.date_mutation || '';
+                const valeurFonciere = row.valeur_fonciere || '';
+                const surfaceTerrain = row.surface_terrain || '';
+                const surfaceBati = row.surface_reelle_bati || '';
+                
+                const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}`;
+                
+                // Si la ligne a déjà été vue, la sauter
+                if (seenLines.has(signature)) {
+                    duplicatesSkipped++;
+                    return;
+                }
+                
+                seenLines.add(signature);
+                
+                // Écrire la ligne
+                const values = Object.keys(row).map(key => row[key] || '');
+                writeStream.write(values.join(',') + '\n');
+                
+                count++;
+                
+                if (count % 100000 === 0) {
+                    process.stdout.write(`\r      → ${count} lignes traitées (${duplicatesSkipped} doublons ignorés)...`);
+                }
+            })
+            .on('end', () => {
+                writeStream.end();
+                
+                writeStream.on('finish', () => {
+                    try {
+                        // Remplacer le fichier original
+                        if (fs.existsSync(filePath)) {
+                            fs.unlinkSync(filePath);
+                        }
+                        fs.renameSync(tempFile, filePath);
+                        
+                        console.log(`\r   ✅ ${count} lignes conservées (${duplicatesSkipped} doublons supprimés)\n`);
+                        resolve();
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+                
+                writeStream.on('error', reject);
+            })
+            .on('error', reject);
+    });
+}
+
 // Normaliser tous les fichiers DVF existants
 async function normaliserTousLesDVF() {
     console.log('\n📋 Normalisation des fichiers DVF au format uniforme...\n');
@@ -1065,7 +1158,9 @@ async function normaliserTousLesDVF() {
         try {
             // Vérifier si le fichier est déjà normalisé AVANT tout traitement
             if (estDejaNormalise(fichier)) {
-                console.log(`   ⏭️  ${path.basename(fichier)} déjà normalisé, ignoré\n`);
+                console.log(`   ⏭️  ${path.basename(fichier)} déjà normalisé, déduplication...`);
+                // Dédupliquer même si déjà normalisé
+                await dedupliquerFichierDVF(fichier);
                 continue;
             }
             
@@ -1075,18 +1170,20 @@ async function normaliserTousLesDVF() {
             // Vérifier à nouveau si le fichier est normalisé APRÈS nettoyage
             // (le nettoyage peut avoir révélé que le fichier était déjà normalisé)
             if (estDejaNormalise(fichier)) {
-                console.log(`   ⏭️  ${path.basename(fichier)} déjà normalisé après nettoyage, ignoré\n`);
+                console.log(`   ⏭️  ${path.basename(fichier)} déjà normalisé après nettoyage, déduplication...`);
+                // Dédupliquer même si déjà normalisé
+                await dedupliquerFichierDVF(fichier);
                 continue;
             }
             
-            // 🔄 Étape 2 : Normaliser le format
+            // 🔄 Étape 2 : Normaliser le format (avec déduplication intégrée)
             await normaliserFichierDVF(fichier);
         } catch (err) {
             console.error(`   ❌ Erreur normalisation ${path.basename(fichier)}: ${err.message}\n`);
         }
     }
     
-    console.log('✅ Normalisation terminée\n');
+    console.log('✅ Normalisation et déduplication terminées\n');
 }
 
 // Télécharger DFI

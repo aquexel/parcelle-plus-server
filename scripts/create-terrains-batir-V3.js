@@ -3272,16 +3272,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   - ${nbAchatsMeres + nbAchatsFilles} achats lotisseurs (non-viabilisés)`);
         console.log(`   - ${nbLotsVendus} lots vendus (viabilisés)\n`);
         
-        // FIN ÉTAPE 4 - Passer directement aux statistiques
-        });
-    }).catch(err => {
-        console.error('❌ Erreur lors du chargement des données:', err);
-        db.close();
-        process.exit(1);
-    });
-    
-    console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
-    enrichirCoordonnees(db).then(() => {
+        // FIN ÉTAPE 4 - Passer à l'enrichissement GPS
+        console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
+        enrichirCoordonnees(db).then(() => {
         // ÉTAPE 7 : Créer la table finale simplifiée
         console.log('\n📊 ÉTAPE 7 : Création de la table finale simplifiée...');
         
@@ -3380,14 +3373,15 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log('✅ Base terrains_batir créée avec succès !\n');
         db.close();
         process.exit(0);
+        }).catch(err => {
+            console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
+            db.close();
+            process.exit(1);
+        });
     }).catch(err => {
-        console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
+        console.error('❌ Erreur lors du chargement des données PA:', err);
         db.close();
         process.exit(1);
     });
-});
-}).catch(err => {
-    console.error('❌ Erreur:', err);
-    process.exit(1);
 });
 } // Fin de demarrerCreationBase()

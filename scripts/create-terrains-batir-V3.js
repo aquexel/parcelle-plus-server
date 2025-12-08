@@ -1491,20 +1491,7 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         } else {
                             // Utiliser code_commune + section (sans numéro de parcelle) pour que toutes les parcelles de la même transaction aient le même ID
                             // Si plusieurs transactions ont la même date/prix/commune/section, elles seront fusionnées (acceptable car très rare)
-                            // Extraire code_commune depuis idParcelle si pas encore disponible (sera défini plus tard)
-                            let codeCommuneForId = idParcelle && idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
-                            if (!codeCommuneForId) {
-                                // Essayer depuis la colonne code_commune
-                                const codeCommuneFromCol = getColumnValue(row, ['code_commune']);
-                                if (codeCommuneFromCol) {
-                                    // Combiner code_departement + code_commune pour avoir le format DDCCC
-                                    const dept = codeDept.padStart(2, '0');
-                                    const comm = codeCommuneFromCol.padStart(3, '0');
-                                    codeCommuneForId = dept + comm;
-                                } else {
-                                    codeCommuneForId = '00000';
-                                }
-                            }
+                            const codeCommuneForId = codeCommune || idParcelle.substring(0, 5) || '00000';
                             const sectionForId = (section || '').substring(0, 2).padStart(2, '0');
                             idMutation = `DVF_${dateNorm}_${prixForId}_${codeCommuneForId}_${sectionForId}`.replace(/[^A-Z0-9_-]/g, '');
                         }
@@ -1902,8 +1889,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     section_cadastrale
                 ORDER BY id
             ) as rn
-    FROM terrains_batir_temp
-    WHERE id_parcelle IS NOT NULL
+        FROM terrains_batir_temp
+        WHERE id_parcelle IS NOT NULL
     )
     WHERE rn = 1
     `);
@@ -3370,18 +3357,23 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   - NON_VIABILISE : ${finalStats.non_viabilises}`);
         console.log(`   - PA distincts : ${finalStats.nb_pa}\n`);
         
-        console.log('✅ Base terrains_batir créée avec succès !\n');
-        db.close();
-        process.exit(0);
+            console.log('✅ Base terrains_batir créée avec succès !\n');
+            db.close();
+            process.exit(0);
         }).catch(err => {
             console.error('❌ Erreur lors de l\'enrichissement des coordonnées:', err);
             db.close();
             process.exit(1);
         });
+        });
     }).catch(err => {
-        console.error('❌ Erreur lors du chargement des données PA:', err);
+        console.error('❌ Erreur lors du chargement des données:', err);
         db.close();
         process.exit(1);
     });
+});
+}).catch(err => {
+    console.error('❌ Erreur:', err);
+    process.exit(1);
 });
 } // Fin de demarrerCreationBase()

@@ -1430,6 +1430,9 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                         return;
                     }
                     
+                    // Extraire code commune depuis id_parcelle (5 premiers caractères)
+                    const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
+                    
                     // Filtre département si spécifié
                     if (departementFiltre && codeDept !== departementFiltre) {
                         return; // Skip si pas le bon département
@@ -1510,9 +1513,8 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     // Extraire le code postal depuis la DVF
                     const codePostal = getColumnValue(row, ['code_postal', 'code_postal_commune', 'postal_code']) || null;
                     
-                    // Précalculer le suffixe parcelle et code commune (optimisation)
+                    // Précalculer le suffixe parcelle (optimisation)
                     const parcelleSuffixe = idParcelle.length >= 6 ? idParcelle.substring(5) : null;
-                    const codeCommune = idParcelle.length >= 5 ? idParcelle.substring(0, 5) : null;
                     
                     // DEBUG: Afficher les 3 premières lignes pour vérifier code_departement
                     if (count < 3) {

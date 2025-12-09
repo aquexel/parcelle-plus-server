@@ -320,11 +320,20 @@ async function telechargerDVF() {
     
     for (const annee of ANNEES_DVF) {
         const fichier = path.join(DVF_DIR, `dvf_${annee}.csv`);
-        if (!fs.existsSync(fichier) || fs.statSync(fichier).size === 0) {
+        const existe = fs.existsSync(fichier);
+        const size = existe ? fs.statSync(fichier).size : 0;
+        
+        if (!existe) {
             fichiersManquants.push(annee);
             console.log(`   ⚠️  dvf_${annee}.csv manquant`);
+        } else if (size === 0) {
+            fichiersManquants.push(annee);
+            console.log(`   ⚠️  dvf_${annee}.csv vide (0.0 MB) - À re-télécharger`);
+        } else if (size < 1024 * 100) {
+            // Fichier < 100 KB, probablement corrompu ou incomplet
+            fichiersManquants.push(annee);
+            console.log(`   ⚠️  dvf_${annee}.csv trop petit (${(size / 1024).toFixed(1)} KB) - Probablement corrompu`);
         } else {
-            const size = fs.statSync(fichier).size;
             console.log(`   ✅ dvf_${annee}.csv présent (${(size / 1024 / 1024).toFixed(1)} MB)`);
         }
     }

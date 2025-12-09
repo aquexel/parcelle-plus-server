@@ -361,10 +361,22 @@ async function telechargerDVFAnnee(annee) {
     return new Promise((resolve, reject) => {
         const outputFile = path.join(DVF_DIR, `dvf_${annee}.csv`);
         
-        if (fs.existsSync(outputFile) && fs.statSync(outputFile).size > 0) {
-            console.log(`   ✅ dvf_${annee}.csv déjà présent`);
+        // Vérifier si le fichier existe ET est de taille raisonnable (> 100 KB)
+        // Les fichiers corrompus/vides seront re-téléchargés
+        const existe = fs.existsSync(outputFile);
+        const size = existe ? fs.statSync(outputFile).size : 0;
+        const tailleMinimale = 1024 * 100; // 100 KB
+        
+        if (existe && size >= tailleMinimale) {
+            console.log(`   ✅ dvf_${annee}.csv déjà présent (${(size / 1024 / 1024).toFixed(1)} MB)`);
             resolve();
             return;
+        }
+        
+        // Supprimer le fichier corrompu s'il existe
+        if (existe && size < tailleMinimale) {
+            console.log(`   🗑️  Suppression du fichier corrompu dvf_${annee}.csv (${(size / 1024).toFixed(1)} KB)`);
+            fs.unlinkSync(outputFile);
         }
         
         console.log(`   📥 Téléchargement DVF ${annee}...`);

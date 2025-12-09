@@ -963,20 +963,22 @@ function normaliserFichierDVF(filePath) {
                     const valeurFonciere = normalizedRow.valeur_fonciere || '';
                     const surfaceTerrain = normalizedRow.surface_terrain || '';
                     const surfaceBati = normalizedRow.surface_reelle_bati || '';
+                    const typeLocal = normalizedRow.type_local || '';
+                    const section = normalizedRow.section || '';
+                    const numero = normalizedRow.numero_plan || normalizedRow.no_plan || '';
                     
                     // Signature pour détecter les doublons complets
-                    const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}`;
-                    // Utiliser un hash au lieu de la signature complète pour économiser la mémoire
-                    const hash = simpleHash(signature);
+                    // Utiliser SIGNATURE COMPLÈTE (pas de hash) pour éviter les collisions
+                    const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}|${typeLocal}|${section}|${numero}`;
                     
                     // Si la ligne a déjà été vue, la sauter
-                    if (seenLines.has(hash)) {
+                    if (seenLines.has(signature)) {
                         duplicatesSkipped++;
                         return;
                     }
                     
-                    // Ajouter le hash au Set
-                    seenLines.add(hash);
+                    // Ajouter la signature au Set
+                    seenLines.add(signature);
                     
                     // Écrire la ligne normalisée (sans escapeCSV qui ajouterait des guillemets)
                     const values = columns.map(col => normalizedRow[col] || '');
@@ -1123,18 +1125,20 @@ async function dedupliquerFichierDVF(filePath) {
                 const valeurFonciere = row.valeur_fonciere || '';
                 const surfaceTerrain = row.surface_terrain || '';
                 const surfaceBati = row.surface_reelle_bati || '';
+                const typeLocal = row.type_local || '';
+                const section = row.section || '';
+                const numero = row.numero_plan || row.no_plan || '';
                 
-                const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}`;
-                // Utiliser un hash au lieu de la signature complète pour économiser la mémoire
-                const hash = simpleHash(signature);
+                // Signature complète (pas de hash) pour éviter les collisions
+                const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}|${typeLocal}|${section}|${numero}`;
                 
                 // Si la ligne a déjà été vue, la sauter
-                if (seenHashes.has(hash)) {
+                if (seenHashes.has(signature)) {
                     duplicatesSkipped++;
                     return;
                 }
                 
-                seenHashes.add(hash);
+                seenHashes.add(signature);
                 
                 // Écrire la ligne
                 const values = Object.keys(row).map(key => row[key] || '');

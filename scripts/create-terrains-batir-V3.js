@@ -1876,22 +1876,24 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     // Agréger les parcelles d'une même mutation
     // Pour DVF 2019+ : utiliser id_mutation
-    // Pour DVF avant 2019 : chaque ligne est une mutation séparée (pas d'id_mutation fiable)
-    // Solution : Grouper UNIQUEMENT par id_mutation quand il existe
+    // Pour DVF avant 2019 : grouper par date + valeur + commune (même transaction)
     db.exec(`
     CREATE TEMP TABLE mutations_aggregees AS
     SELECT 
-        id_mutation,
+        MAX(id_mutation) as id_mutation,
         SUM(surface_totale) as surface_totale_aggregee,
         SUM(surface_reelle_bati) as surface_reelle_bati_aggregee,
         MAX(valeur_fonciere) as valeur_totale,
-        MAX(date_mutation) as date_mutation,
-        MAX(code_departement) as code_departement,
+        date_mutation,
+        code_departement,
         MAX(nom_commune) as nom_commune,
         MAX(section_cadastrale) as section_cadastrale,
-        MAX(code_commune) as code_commune
+        code_commune
     FROM terrains_batir_deduplique
-    GROUP BY id_mutation
+    GROUP BY 
+        COALESCE(NULLIF(id_mutation, ''), date_mutation || '_' || valeur_fonciere || '_' || code_commune),
+        date_mutation,
+        code_commune
     `);
     
     console.log('   → Création index sur mutations_aggregees...');

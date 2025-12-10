@@ -1230,6 +1230,12 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
             // Réinitialiser le mapping des colonnes pour ce fichier
             let columnMapping = null;
             
+            // Map pour générer des id_mutation séquentiels par année: ANNÉE-NUMÉRO
+            // Clé: signature de transaction (date+valeur+commune+section)
+            // Valeur: id_mutation généré (ex: 2019-000001)
+            const mutationCounterByYear = new Map(); // année -> compteur
+            const mutationIdMap = new Map(); // signature -> id_mutation
+            
             let count = 0;
             let totalRows = 0;
             let lastLog = Date.now();
@@ -1480,23 +1486,36 @@ function chargerTousLesCSV(db, insertStmt, departementFiltre = null) {
                     }
                     
                     if (!idMutation) {
-                        // Créer un identifiant basé sur date + prix + commune + section
-                        // Pour éviter les collisions entre transactions distinctes, on utilise aussi la première parcelle vue
-                        // Mais on doit s'assurer que toutes les parcelles de la même transaction aient le même ID
-                        // Solution : utiliser un hash basé sur date + prix + commune + section (sans numéro de parcelle)
+                        // Créer un identifiant au format ANNÉE-NUMÉRO (ex: 2019-000001)
+                        // Toutes les parcelles de la même transaction (même date+valeur+commune) ont le même numéro
                         const dateForId = dateMutation || '';
                         const prixForId = Math.round(valeurFonciere);
                         const dateNorm = dateForId.substring(0, 10); // yyyy-mm-dd
                         
                         if (!dateNorm || dateNorm.length < 10) {
                             transactionCounter++;
-                            idMutation = `DVF_UNKNOWN_${transactionCounter}_${Date.now()}`;
+                            idMutation = `UNKNOWN-${transactionCounter.toString().padStart(6, '0')}`;
                         } else {
-                            // Utiliser code_commune + section (sans numéro de parcelle) pour que toutes les parcelles de la même transaction aient le même ID
-                            // Si plusieurs transactions ont la même date/prix/commune/section, elles seront fusionnées (acceptable car très rare)
+                            const annee = dateNorm.substring(0, 4); // YYYY
                             const codeCommuneForId = codeCommune || idParcelle.substring(0, 5) || '00000';
                             const sectionForId = (section || '').substring(0, 2).padStart(2, '0');
-                            idMutation = `DVF_${dateNorm}_${prixForId}_${codeCommuneForId}_${sectionForId}`.replace(/[^A-Z0-9_-]/g, '');
+                            
+                            // Créer une signature unique pour cette transaction
+                            const transactionSignature = `${dateNorm}_${prixForId}_${codeCommuneForId}_${sectionForId}`;
+                            
+                            // Vérifier si on a déjà assigné un numéro à cette transaction
+                            if (mutationIdMap.has(transactionSignature)) {
+                                idMutation = mutationIdMap.get(transactionSignature);
+                            } else {
+                                // Incrémenter le compteur pour cette année
+                                const currentCounter = mutationCounterByYear.get(annee) || 0;
+                                const newCounter = currentCounter + 1;
+                                mutationCounterByYear.set(annee, newCounter);
+                                
+                                // Générer l'ID au format ANNÉE-NUMÉRO (ex: 2019-000001)
+                                idMutation = `${annee}-${newCounter.toString().padStart(6, '0')}`;
+                                mutationIdMap.set(transactionSignature, idMutation);
+                            }
                         }
                     }
                     

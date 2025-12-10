@@ -1851,9 +1851,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     db.exec(`DROP VIEW IF EXISTS terrains_batir_deduplique`);
     db.exec(`DROP TABLE IF EXISTS terrains_batir_deduplique`);
     
-    // Éliminer les doublons complets (lignes identiques) avant l'agrégation
-    // Important pour les données DVF avant 2019 qui peuvent contenir des lignes dupliquées
-    // Utiliser GROUP BY au lieu de ROW_NUMBER() pour éviter les problèmes de mémoire
+    // Simple copie - la déduplication a déjà été faite pendant le chargement CSV
+    // Pas besoin de GROUP BY complexe qui fait planter SQLite sur gros volumes
     db.exec(`
     CREATE TEMP TABLE terrains_batir_deduplique AS
     SELECT 
@@ -1869,17 +1868,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         code_commune
     FROM terrains_batir_temp
     WHERE id_parcelle IS NOT NULL
-    GROUP BY 
-        id_parcelle,
-        id_mutation,
-        valeur_fonciere,
-        surface_totale,
-        surface_reelle_bati,
-        date_mutation,
-        code_commune,
-        section_cadastrale,
-        nom_commune,
-        code_departement
     `);
     
     console.log('   → Agrégation des mutations (beaucoup plus rapide maintenant)...');

@@ -1853,7 +1853,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     
     // Éliminer les doublons complets (lignes identiques) avant l'agrégation
     // Important pour les données DVF avant 2019 qui peuvent contenir des lignes dupliquées
-    // Utiliser ROW_NUMBER() pour garantir l'élimination des doublons même avec des différences subtiles (espaces, etc.)
+    // Utiliser GROUP BY au lieu de ROW_NUMBER() pour éviter les problèmes de mémoire
     db.exec(`
     CREATE TEMP TABLE terrains_batir_deduplique AS
     SELECT 
@@ -1867,34 +1867,19 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         nom_commune,
         section_cadastrale,
         code_commune
-    FROM (
-        SELECT 
-            id_parcelle,
-            id_mutation,
-            valeur_fonciere,
-            surface_totale,
-            surface_reelle_bati,
-            date_mutation,
-            code_departement,
-            nom_commune,
-            section_cadastrale,
-            code_commune,
-            ROW_NUMBER() OVER (
-                PARTITION BY 
-                    id_parcelle,
-                    id_mutation,
-                    valeur_fonciere,
-                    surface_totale,
-                    surface_reelle_bati,
-                    date_mutation,
-                    code_commune,
-                    section_cadastrale
-                ORDER BY id
-            ) as rn
-        FROM terrains_batir_temp
-        WHERE id_parcelle IS NOT NULL
-    )
-    WHERE rn = 1
+    FROM terrains_batir_temp
+    WHERE id_parcelle IS NOT NULL
+    GROUP BY 
+        id_parcelle,
+        id_mutation,
+        valeur_fonciere,
+        surface_totale,
+        surface_reelle_bati,
+        date_mutation,
+        code_commune,
+        section_cadastrale,
+        nom_commune,
+        code_departement
     `);
     
     console.log('   → Agrégation des mutations (beaucoup plus rapide maintenant)...');

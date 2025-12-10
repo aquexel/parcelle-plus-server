@@ -1874,21 +1874,23 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
     db.exec(`DROP VIEW IF EXISTS mutations_aggregees`);
     db.exec(`DROP TABLE IF EXISTS mutations_aggregees`);
     
-    // Maintenant avec seulement ~4-6M lignes, l'agrégation est rapide
+    // Agréger UNIQUEMENT par id_mutation (qui est unique par transaction)
+    // Ne PAS grouper par date/valeur sinon on agrège des transactions différentes !
     db.exec(`
     CREATE TEMP TABLE mutations_aggregees AS
-    SELECT DISTINCT
+    SELECT 
         id_mutation,
         SUM(surface_totale) as surface_totale_aggregee,
         SUM(surface_reelle_bati) as surface_reelle_bati_aggregee,
         MAX(valeur_fonciere) as valeur_totale,
-        date_mutation,
-        code_departement,
-        MIN(nom_commune) as nom_commune,
-        MIN(section_cadastrale) as section_cadastrale,
-        code_commune
+        MAX(date_mutation) as date_mutation,
+        MAX(code_departement) as code_departement,
+        MAX(nom_commune) as nom_commune,
+        MAX(section_cadastrale) as section_cadastrale,
+        MAX(code_commune) as code_commune
     FROM terrains_batir_deduplique
-    GROUP BY id_mutation, code_commune, date_mutation, valeur_fonciere
+    WHERE id_mutation IS NOT NULL AND id_mutation != ''
+    GROUP BY id_mutation
     `);
     
     console.log('   → Création index sur mutations_aggregees...');

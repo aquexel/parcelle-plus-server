@@ -26,12 +26,29 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const https = require('https');
 const http = require('http');
 const { execSync } = require('child_process');
 const zlib = require('zlib');
 const csv = require('csv-parser');
+
+// ═══════════════════════════════════════════════════════════
+// 🔒 FONCTION DE HASH CRYPTOGRAPHIQUE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Crée un hash SHA256 d'une chaîne (collision quasi impossible)
+ * Utilise seulement les 16 premiers caractères pour économiser la mémoire
+ */
+function hashSHA256(str) {
+    return crypto.createHash('sha256').update(str).digest('hex').substring(0, 16);
+}
+
+// ═══════════════════════════════════════════════════════════
+// 📁 CONFIGURATION CHEMINS
+// ═══════════════════════════════════════════════════════════
 
 const DB_UNIFIE = path.join(__dirname, '..', 'database', 'terrains_batir_complet.db');
 const DB_PA = path.join(__dirname, '..', 'database', 'terrains_batir.db');
@@ -1101,16 +1118,17 @@ async function dedupliquerFichierDVF(filePath) {
                 const section = row.section || '';
                 const numero = row.numero_plan || row.no_plan || '';
                 
-                // Signature complète (pas de hash) pour éviter les collisions
+                // Signature complète + hash SHA256 pour économiser mémoire
                 const signature = `${idParcelle}|${idMutation}|${dateMutation}|${valeurFonciere}|${surfaceTerrain}|${surfaceBati}|${typeLocal}|${section}|${numero}`;
+                const hash = hashSHA256(signature);
                 
                 // Si la ligne a déjà été vue, la sauter
-                if (seenHashes.has(signature)) {
+                if (seenHashes.has(hash)) {
                     duplicatesSkipped++;
                     return;
                 }
                 
-                seenHashes.add(signature);
+                seenHashes.add(hash);
                 
                 // Écrire la ligne
                 const values = Object.keys(row).map(key => row[key] || '');

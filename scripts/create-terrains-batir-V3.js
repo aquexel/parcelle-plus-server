@@ -2910,8 +2910,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         let totalFillesMatches = 0;
         
-        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 300 communes à la fois
-        const SUPER_BATCH_SIZE = 300;
+        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 500 communes à la fois
+        const SUPER_BATCH_SIZE = 500;
         const totalBatches = Math.ceil(communesAvecFillesPA.length / SUPER_BATCH_SIZE);
         
         console.log(`   → Traitement en ${totalBatches} super-batches de ${SUPER_BATCH_SIZE} communes max...`);

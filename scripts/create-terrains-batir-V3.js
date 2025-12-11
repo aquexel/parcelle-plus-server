@@ -2909,43 +2909,59 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         db.pragma('cache_size = -64000'); // 64 MB temporairement
         
         let totalFillesMatches = 0;
-        for (let i = 0; i < communesAvecFillesPA.length; i++) {
-            const commune = communesAvecFillesPA[i].code_commune_dvf;
-            const result = insertFillesBatch.run(commune);
-            totalFillesMatches += result.changes;
+        
+        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 500 communes à la fois
+        const SUPER_BATCH_SIZE = 500;
+        const totalBatches = Math.ceil(communesAvecFillesPA.length / SUPER_BATCH_SIZE);
+        
+        console.log(`   → Traitement en ${totalBatches} super-batches de ${SUPER_BATCH_SIZE} communes max...`);
+        
+        for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+            const batchStart = batchIdx * SUPER_BATCH_SIZE;
+            const batchEnd = Math.min(batchStart + SUPER_BATCH_SIZE, communesAvecFillesPA.length);
+            const batchCommunes = communesAvecFillesPA.slice(batchStart, batchEnd);
             
-            // LOG: Vérifier si la transaction cible a été associée dans achats_lotisseurs_filles
-            if (commune === '40088' && result.changes > 0) {
-                const targetCheckFilles = db.prepare(`
-                    SELECT * FROM achats_lotisseurs_filles
-                    WHERE code_commune_dvf = ?
-                      AND date_mutation LIKE '2019-10-11%'
-                      AND valeur_totale > 400000 AND valeur_totale < 450000
-                `).all(commune);
-                if (targetCheckFilles.length > 0) {
-                    console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_filles (${targetCheckFilles.length} ligne(s)):`);
-                    targetCheckFilles.forEach((tx, idx) => {
-                        console.log(`   Transaction ${idx + 1}:`);
-                        console.log(`   → num_pa: ${tx.num_pa}`);
-                        console.log(`   → id_mutation: ${tx.id_mutation}`);
-                        console.log(`   → date_mutation: ${tx.date_mutation}`);
-                        console.log(`   → date_auth: ${tx.date_auth}`);
-                        console.log(`   → valeur_totale: ${tx.valeur_totale}`);
-                        console.log(`   → surface_totale_aggregee: ${tx.surface_totale_aggregee}`);
-                        console.log(`   → nb_parcelles: ${tx.nb_parcelles}`);
-                        console.log(`   → section: ${tx.section}`);
-                        console.log(`   → parcelle_fille_suffixe: ${tx.parcelle_fille_suffixe}`);
-                    });
+            console.log(`   → Super-batch ${batchIdx + 1}/${totalBatches} : communes ${batchStart + 1} à ${batchEnd}...`);
+            
+            for (let i = 0; i < batchCommunes.length; i++) {
+                const commune = batchCommunes[i].code_commune_dvf;
+                const result = insertFillesBatch.run(commune);
+                totalFillesMatches += result.changes;
+                
+                // LOG: Vérifier si la transaction cible a été associée dans achats_lotisseurs_filles
+                if (commune === '40088' && result.changes > 0) {
+                    const targetCheckFilles = db.prepare(`
+                        SELECT * FROM achats_lotisseurs_filles
+                        WHERE code_commune_dvf = ?
+                          AND date_mutation LIKE '2019-10-11%'
+                          AND valeur_totale > 400000 AND valeur_totale < 450000
+                    `).all(commune);
+                    if (targetCheckFilles.length > 0) {
+                        console.log(`\n🔍 [TRACE] Transaction cible associée dans achats_lotisseurs_filles (${targetCheckFilles.length} ligne(s)):`);
+                        targetCheckFilles.forEach((tx, idx) => {
+                            console.log(`   Transaction ${idx + 1}:`);
+                            console.log(`   → num_pa: ${tx.num_pa}`);
+                            console.log(`   → id_mutation: ${tx.id_mutation}`);
+                            console.log(`   → date_mutation: ${tx.date_mutation}`);
+                            console.log(`   → date_auth: ${tx.date_auth}`);
+                            console.log(`   → valeur_totale: ${tx.valeur_totale}`);
+                            console.log(`   → surface_totale_aggregee: ${tx.surface_totale_aggregee}`);
+                            console.log(`   → nb_parcelles: ${tx.nb_parcelles}`);
+                            console.log(`   → section: ${tx.section}`);
+                            console.log(`   → parcelle_fille_suffixe: ${tx.parcelle_fille_suffixe}`);
+                        });
+                    }
                 }
             }
             
-            // CHECKPOINT moins fréquent pour améliorer les performances
-            if ((i + 1) % 200 === 0) {
-                db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-            }
+            // CHECKPOINT et GC à la fin de chaque super-batch
+            db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
             
-            if ((i + 1) % 100 === 0 || i === communesAvecFillesPA.length - 1) {
-                console.log(`   → ${i + 1}/${communesAvecFillesPA.length} communes traitées (${totalFillesMatches} matches trouvés)`);
+            console.log(`   → Super-batch ${batchIdx + 1}/${totalBatches} terminé (${totalFillesMatches} matches trouvés au total)`);
+            
+            // Forcer le garbage collection si disponible
+            if (global.gc) {
+                global.gc();
             }
         }
         

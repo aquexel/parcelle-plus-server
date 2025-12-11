@@ -2117,7 +2117,7 @@ telechargerToutesDonnees()
         process.exit(1);
     }
     
-    const processPA = spawn('node', ['--max-old-space-size=4096', SCRIPT_PA], {
+    const processPA = spawn('node', ['--max-old-space-size=8192', '--expose-gc', SCRIPT_PA], {
         stdio: 'inherit',
         cwd: __dirname
     });

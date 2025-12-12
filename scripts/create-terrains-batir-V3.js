@@ -2866,10 +2866,12 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         console.log(`   → Traitement par batch de ${communesAvecFillesPA.length} communes avec PA filles...`);
         
-        // Traiter commune par commune
-        // OPTIMISATION : Créer index sur id_pa pour accélérer le filtre t.id_pa IS NULL
-        console.log('   → Création index pour optimiser la jointure...');
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_pa_null ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe) WHERE id_pa IS NULL;`);
+        // CHECKPOINT avant la boucle pour libérer la mémoire
+        console.log('   → Libération de la mémoire avant traitement...');
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        
+        // NOTE: Pas de création d'index ici pour éviter crash mémoire
+        // Les index existants sur terrains_batir_temp seront utilisés par SQLite
         
         const insertFillesBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_filles 
@@ -2905,13 +2907,13 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // OPTIMISATION : Sauvegarder la valeur originale du cache (utilisée pour les deux optimisations)
         const oldCacheSizeFilles = db.prepare('PRAGMA cache_size').get();
         
-        // Augmenter temporairement le cache pour accélérer les jointures
-        db.pragma('cache_size = -64000'); // 64 MB temporairement
+        // Augmenter temporairement le cache pour accélérer les jointures (réduit pour stabilité)
+        db.pragma('cache_size = -32000'); // 32 MB temporairement (réduit de 64 MB)
         
         let totalFillesMatches = 0;
         
-        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 500 communes à la fois
-        const SUPER_BATCH_SIZE = 500;
+        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 300 communes à la fois
+        const SUPER_BATCH_SIZE = 300;
         const totalBatches = Math.ceil(communesAvecFillesPA.length / SUPER_BATCH_SIZE);
         
         console.log(`   → Traitement en ${totalBatches} super-batches de ${SUPER_BATCH_SIZE} communes max...`);
@@ -2967,9 +2969,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // Restaurer le cache_size original
         db.pragma(`cache_size = ${oldCacheSizeFilles.cache_size}`);
-        
-        // Supprimer l'index temporaire pour libérer de l'espace
-        db.exec('DROP INDEX IF EXISTS idx_temp_pa_null;');
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
         

@@ -161,7 +161,7 @@ db.pragma('synchronous = NORMAL'); // Optimisation pour performance
 // Utiliser le chemin absolu pour éviter les problèmes de chemin relatif
 const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
 db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
-db.pragma('cache_size = -64000'); // 64 MB de cache
+db.pragma('cache_size = -32000'); // 32 MB de cache (optimisation mémoire Raspberry Pi)
 db.pragma('temp_store = MEMORY'); // Utiliser la RAM pour les tables temporaires (économie disque)
 
 // 🔥 CRITIQUE : Changer le répertoire temporaire SQLite
@@ -683,14 +683,14 @@ function attribuerTypeUsage(db) {
 // Fonction pour enrichir les coordonnées manquantes depuis les parcelles cadastrales
 function enrichirCoordonnees(db) {
     return new Promise((resolve, reject) => {
-        // Vérifier si la table parcelle existe
+        // Vérifier si la table parcelle existe dans parcelles_db
         const tableExists = db.prepare(`
-            SELECT name FROM sqlite_master 
+            SELECT name FROM parcelles_db.sqlite_master 
             WHERE type='table' AND name='parcelle'
         `).get();
         
         if (!tableExists) {
-            console.log('   ⚠️  Table parcelle non trouvée, enrichissement coordonnées ignoré\n');
+            console.log('   ⚠️  Table parcelle non trouvée dans parcelles_db, enrichissement coordonnées ignoré\n');
             resolve();
             return;
         }
@@ -2867,9 +2867,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   → Traitement par batch de ${communesAvecFillesPA.length} communes avec PA filles...`);
         
         // Traiter commune par commune
-        // OPTIMISATION : Créer index sur id_pa pour accélérer le filtre t.id_pa IS NULL
-        console.log('   → Création index pour optimiser la jointure...');
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_pa_null ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe) WHERE id_pa IS NULL;`);
+        // OPTIMISATION : Index filtré supprimé car trop lourd en mémoire sur Raspberry Pi
+        // La jointure par commune est suffisamment rapide sans index filtré
         
         const insertFillesBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_filles 
@@ -2910,8 +2909,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         let totalFillesMatches = 0;
         
-        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 500 communes à la fois
-        const SUPER_BATCH_SIZE = 500;
+        // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 300 communes à la fois
+        const SUPER_BATCH_SIZE = 300;
         const totalBatches = Math.ceil(communesAvecFillesPA.length / SUPER_BATCH_SIZE);
         
         console.log(`   → Traitement en ${totalBatches} super-batches de ${SUPER_BATCH_SIZE} communes max...`);
@@ -2967,9 +2966,6 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // Restaurer le cache_size original
         db.pragma(`cache_size = ${oldCacheSizeFilles.cache_size}`);
-        
-        // Supprimer l'index temporaire pour libérer de l'espace
-        db.exec('DROP INDEX IF EXISTS idx_temp_pa_null;');
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
         

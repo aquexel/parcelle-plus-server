@@ -695,42 +695,60 @@ function enrichirCoordonnees(db) {
             return;
         }
         
-        // OPTIMISATION MÉMOIRE : Ne charger que les parcelles nécessaires
-        // D'abord, récupérer la liste des id_parcelle qui ont besoin de coordonnées
-        console.log('   📋 Identification des parcelles à enrichir...');
-        const parcellesAEnrichir = db.prepare(`
-            SELECT DISTINCT id_parcelle
+        // OPTIMISATION MÉMOIRE EXTRÊME : Traiter par mini-batches
+        console.log('   📋 Comptage des parcelles à enrichir...');
+        const countToEnrich = db.prepare(`
+            SELECT COUNT(DISTINCT id_parcelle) as count
             FROM terrains_batir_temp
             WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
                 AND id_parcelle IS NOT NULL
-        `).all();
+        `).get().count;
         
-        console.log(`   → ${parcellesAEnrichir.length} parcelles distinctes à enrichir\n`);
+        console.log(`   → ${countToEnrich} parcelles distinctes à enrichir\n`);
         
-        // Créer un Set pour recherche rapide
-        const parcellesSet = new Set(parcellesAEnrichir.map(p => p.id_parcelle));
+        if (countToEnrich === 0) {
+            console.log('   ⚠️  Aucune parcelle à enrichir\n');
+            resolve();
+            return;
+        }
         
-        // Charger UNIQUEMENT les coordonnées des parcelles nécessaires via itérateur
-        console.log('   📂 Chargement des coordonnées depuis parcelles_db...');
-        const parcelleCoords = new Map();
-        let countWithGeom = 0;
-        let countTotal = 0;
+        // SUPER-BATCH : Traiter par paquets de 50 000 parcelles
+        const MINI_BATCH_SIZE = 50000;
+        let offset = 0;
+        let totalUpdated = 0;
         
-        const parcellesQuery = db.prepare(`
-            SELECT parcelle_id, geom_parcelle 
-            FROM parcelles_db.parcelle 
-            WHERE geom_parcelle IS NOT NULL
-                AND parcelle_id IS NOT NULL
-        `);
+        console.log('   🔄 Traitement par mini-batches de 50 000 parcelles...\n');
         
-        // Utiliser iterate() au lieu de all() pour éviter de saturer la mémoire
-        for (const row of parcellesQuery.iterate()) {
-            countTotal++;
+        while (offset < countToEnrich) {
+            console.log(`   📦 Mini-batch ${Math.floor(offset / MINI_BATCH_SIZE) + 1}/${Math.ceil(countToEnrich / MINI_BATCH_SIZE)} (parcelles ${offset + 1} à ${Math.min(offset + MINI_BATCH_SIZE, countToEnrich)})...`);
             
-            const parcelleId = row.parcelle_id;
+            // Charger UN SEUL batch de parcelles à enrichir
+            const parcellesAEnrichir = db.prepare(`
+                SELECT DISTINCT id_parcelle
+                FROM terrains_batir_temp
+                WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                    AND id_parcelle IS NOT NULL
+                LIMIT ? OFFSET ?
+            `).all(MINI_BATCH_SIZE, offset);
             
-            // Ne traiter que les parcelles qui ont besoin d'enrichissement
-            if (parcellesSet.has(parcelleId)) {
+            // Créer un Set pour recherche rapide
+            const parcellesSet = new Set(parcellesAEnrichir.map(p => p.id_parcelle));
+            
+            // Charger UNIQUEMENT les coordonnées de CE batch via itérateur
+            const parcelleCoords = new Map();
+            let countWithGeom = 0;
+            
+            const parcellesQuery = db.prepare(`
+                SELECT parcelle_id, geom_parcelle 
+                FROM parcelles_db.parcelle 
+                WHERE geom_parcelle IS NOT NULL
+                    AND parcelle_id IS NOT NULL
+                    AND parcelle_id IN (${Array(parcellesAEnrichir.length).fill('?').join(',')})
+            `);
+            
+            // Utiliser iterate() pour éviter de saturer la mémoire
+            for (const row of parcellesQuery.iterate(...parcellesAEnrichir.map(p => p.id_parcelle))) {
+                const parcelleId = row.parcelle_id;
                 const geom = row.geom_parcelle;
                 
                 if (geom) {
@@ -746,151 +764,205 @@ function enrichirCoordonnees(db) {
                 }
             }
             
-            // Log de progression tous les 100k parcelles
-            if (countTotal % 100000 === 0) {
-                console.log(`   → ${countTotal} parcelles parcourues, ${countWithGeom} coordonnées trouvées...`);
+            console.log(`      → ${countWithGeom} coordonnées extraites pour ce batch`);
+                
+            // Mise à jour des coordonnées
+            const updateStmt = db.prepare(`
+                UPDATE terrains_batir_temp
+                SET latitude = ?, longitude = ?
+                WHERE id_parcelle = ?
+                    AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+            `);
+            
+            let countUpdated = 0;
+            
+            // Mise à jour en transaction
+            db.transaction(() => {
+                for (const parcelle of parcellesAEnrichir) {
+                    const coords = parcelleCoords.get(parcelle.id_parcelle);
+                    if (coords) {
+                        updateStmt.run(coords.latitude, coords.longitude, parcelle.id_parcelle);
+                        countUpdated++;
+                    }
+                }
+            })();
+            
+            console.log(`      ✅ ${countUpdated} parcelles mises à jour\n`);
+            totalUpdated += countUpdated;
+            
+            // Nettoyage mémoire
+            parcellesAEnrichir.length = 0;
+            parcellesSet.clear();
+            parcelleCoords.clear();
+            
+            // Checkpoint WAL + GC forcé
+            db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').run();
+            if (global.gc) {
+                global.gc();
             }
+            
+            offset += MINI_BATCH_SIZE;
         }
         
-        console.log(`   ✅ ${countTotal} parcelles parcourues, ${countWithGeom} coordonnées extraites\n`);
+        console.log(`   ✅ Total : ${totalUpdated} parcelles enrichies\n`);
+        
+        // Charger les relations DFI BIDIRECTIONNELLES (une seule fois après enrichissement)
+        console.log('   📂 Chargement des relations DFI (bidirectionnelles)...');
+        const dfiMereVersFilles = new Map(); // parcelle_mere → [parcelles_filles]
+        const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
+        
+        try {
+            const lotissementsQuery = db.prepare(`
+                SELECT parcelles_meres, parcelles_filles
+                FROM dfi_lotissements
+                WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
+            `);
+            
+            // Utiliser iterate() pour éviter de saturer la mémoire
+            for (const lot of lotissementsQuery.iterate()) {
+                const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
+                const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
                 
-                console.log('   🔗 Enrichissement des coordonnées manquantes...');
-                
-                // Réutiliser parcellesAEnrichir déjà chargé
-                console.log(`   → ${parcellesAEnrichir.length} parcelles à traiter`);
-                
-                const updateStmt = db.prepare(`
-                    UPDATE terrains_batir_temp
-                    SET latitude = ?, longitude = ?
-                    WHERE id_parcelle = ?
-                        AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
-                `);
-                
-                let countUpdated = 0;
-                let countNotFound = 0;
-                
-                // Charger les relations DFI BIDIRECTIONNELLES
-                console.log('   📂 Chargement des relations DFI (bidirectionnelles)...');
-                const dfiMereVersFilles = new Map(); // parcelle_mere → [parcelles_filles]
-                const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
-                
-                try {
-                    const lotissementsQuery = db.prepare(`
-                        SELECT parcelles_meres, parcelles_filles
-                        FROM dfi_lotissements
-                        WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
-                    `);
-                    
-                    // Utiliser iterate() pour éviter de saturer la mémoire
-                    for (const lot of lotissementsQuery.iterate()) {
-                        const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
-                        const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
-                        
-                        meres.forEach(mere => {
-                            // Relation mère → filles
-                            if (!dfiMereVersFilles.has(mere)) {
-                                dfiMereVersFilles.set(mere, []);
-                            }
-                            filles.forEach(fille => {
-                                if (!dfiMereVersFilles.get(mere).includes(fille)) {
-                                    dfiMereVersFilles.get(mere).push(fille);
-                                }
-                                // Relation inverse fille → mère
-                                dfiFilleVersMere.set(fille, mere);
-                            });
-                        });
+                meres.forEach(mere => {
+                    // Relation mère → filles
+                    if (!dfiMereVersFilles.has(mere)) {
+                        dfiMereVersFilles.set(mere, []);
                     }
-                    console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
-                } catch (err) {
-                    console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
-                }
+                    filles.forEach(fille => {
+                        if (!dfiMereVersFilles.get(mere).includes(fille)) {
+                            dfiMereVersFilles.get(mere).push(fille);
+                        }
+                        // Relation inverse fille → mère
+                        dfiFilleVersMere.set(fille, mere);
+                    });
+                });
+            }
+            console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
+        } catch (err) {
+            console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
+        }
+        
+        // Enrichissement supplémentaire via relations DFI (parcelles mères/filles)
+        console.log('   🔗 Enrichissement via relations DFI (mères ↔ filles)...');
+        
+        const parcellesManquantes = db.prepare(`
+            SELECT DISTINCT id_parcelle
+            FROM terrains_batir_temp
+            WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                AND id_parcelle IS NOT NULL
+        `).all();
+        
+        console.log(`   → ${parcellesManquantes.length} parcelles encore sans coordonnées\n`);
+        
+        let countViaFilles = 0;
+        let countViaMere = 0;
+        
+        if (parcellesManquantes.length > 0 && (dfiMereVersFilles.size > 0 || dfiFilleVersMere.size > 0)) {
+            // Charger toutes les coordonnées déjà présentes dans la base
+            const coordsDisponibles = new Map();
+            const coordsQuery = db.prepare(`
+                SELECT id_parcelle, latitude, longitude
+                FROM terrains_batir_temp
+                WHERE latitude IS NOT NULL AND latitude != 0 
+                    AND longitude IS NOT NULL AND longitude != 0
+                    AND id_parcelle IS NOT NULL
+            `);
+            
+            for (const row of coordsQuery.iterate()) {
+                coordsDisponibles.set(row.id_parcelle, {
+                    latitude: row.latitude,
+                    longitude: row.longitude
+                });
+            }
+            
+            console.log(`   → ${coordsDisponibles.size} coordonnées disponibles dans la base\n`);
+            
+            const updateStmt = db.prepare(`
+                UPDATE terrains_batir_temp
+                SET latitude = ?, longitude = ?
+                WHERE id_parcelle = ?
+                    AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+            `);
+            
+            for (const parcelle of parcellesManquantes) {
+                const match = parcelle.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
+                if (!match) continue;
                 
-                let countViaFilles = 0;
-                let countViaMere = 0;
+                const section = match[1];
+                const numero = String(parseInt(match[2], 10));
+                const parcelleFormat = `${section}${numero}`;
+                const codeCommune = parcelle.id_parcelle.substring(0, 5);
+                let coords = null;
                 
-                for (const tx of parcellesAEnrichir) {
-                    let coords = parcelleCoords.get(tx.id_parcelle);
+                // STRATÉGIE 1 : Parcelle MÈRE → chercher via FILLES
+                const parcellesFilles = dfiMereVersFilles.get(parcelleFormat) || [];
+                if (parcellesFilles.length > 0) {
+                    const coordsFilles = [];
                     
-                    if (!coords) {
-                        // Extraire section et numéro de la parcelle (format: 400260000A0715 → A715)
-                        const match = tx.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
-                        if (match) {
-                            const section = match[1];
-                            const numero = String(parseInt(match[2], 10));
-                            const parcelleFormat = `${section}${numero}`;
-                            const codeCommune = tx.id_parcelle.substring(0, 5);
+                    for (const filleDFI of parcellesFilles) {
+                        const matchFille = filleDFI.match(/^([A-Z]+)(\d+)$/);
+                        if (matchFille) {
+                            const sectionFille = matchFille[1];
+                            const numeroFille = matchFille[2].padStart(4, '0');
+                            const parcelleFilleId = `${codeCommune}000${sectionFille}${numeroFille}`;
                             
-                            // STRATÉGIE 1 : Si c'est une parcelle MÈRE, chercher via ses FILLES
-                            const parcellesFilles = dfiMereVersFilles.get(parcelleFormat) || [];
-                            if (parcellesFilles.length > 0) {
-                                const coordsFilles = [];
-                                
-                                for (const filleDFI of parcellesFilles) {
-                                    const matchFille = filleDFI.match(/^([A-Z]+)(\d+)$/);
-                                    if (matchFille) {
-                                        const sectionFille = matchFille[1];
-                                        const numeroFille = matchFille[2].padStart(4, '0');
-                                        const parcelleFilleId = `${codeCommune}000${sectionFille}${numeroFille}`;
-                                        
-                                        const coordFille = parcelleCoords.get(parcelleFilleId);
-                                        if (coordFille && coordFille.latitude && coordFille.longitude) {
-                                            coordsFilles.push(coordFille);
-                                        }
-                                    }
-                                }
-                                
-                                // Calculer le centroïde moyen des parcelles filles
-                                if (coordsFilles.length > 0) {
-                                    const latMoyenne = coordsFilles.reduce((sum, c) => sum + c.latitude, 0) / coordsFilles.length;
-                                    const lonMoyenne = coordsFilles.reduce((sum, c) => sum + c.longitude, 0) / coordsFilles.length;
-                                    coords = {
-                                        latitude: latMoyenne,
-                                        longitude: lonMoyenne
-                                    };
-                                    countViaFilles++;
-                                }
-                            }
-                            
-                            // STRATÉGIE 2 : Si c'est une parcelle FILLE, chercher via sa MÈRE
-                            if (!coords) {
-                                const parcelleMere = dfiFilleVersMere.get(parcelleFormat);
-                                if (parcelleMere) {
-                                    const matchMere = parcelleMere.match(/^([A-Z]+)(\d+)$/);
-                                    if (matchMere) {
-                                        const sectionMere = matchMere[1];
-                                        const numeroMere = matchMere[2].padStart(4, '0');
-                                        const parcelleMereId = `${codeCommune}000${sectionMere}${numeroMere}`;
-                                        
-                                        const coordMere = parcelleCoords.get(parcelleMereId);
-                                        if (coordMere && coordMere.latitude && coordMere.longitude) {
-                                            coords = coordMere;
-                                            countViaMere++;
-                                        }
-                                    }
-                                }
+                            const coordFille = coordsDisponibles.get(parcelleFilleId);
+                            if (coordFille && coordFille.latitude && coordFille.longitude) {
+                                coordsFilles.push(coordFille);
                             }
                         }
                     }
                     
-                    if (coords && coords.latitude && coords.longitude) {
-                        updateStmt.run(coords.latitude, coords.longitude, tx.id_parcelle);
-                        countUpdated++;
-                    } else {
-                        countNotFound++;
-                    }
-                    
-                    if ((countUpdated + countNotFound) % 10000 === 0) {
-                        process.stdout.write(`   ${countUpdated + countNotFound}/${parcellesAEnrichir.length} vérifiées...\r`);
+                    if (coordsFilles.length > 0) {
+                        const latMoyenne = coordsFilles.reduce((sum, c) => sum + c.latitude, 0) / coordsFilles.length;
+                        const lonMoyenne = coordsFilles.reduce((sum, c) => sum + c.longitude, 0) / coordsFilles.length;
+                        coords = { latitude: latMoyenne, longitude: lonMoyenne };
+                        countViaFilles++;
                     }
                 }
                 
-                console.log(`\n   ✅ ${countUpdated} transactions enrichies avec coordonnées`);
-        console.log(`      - Directement depuis table parcelle: ${countUpdated - countViaFilles - countViaMere}`);
-                console.log(`      - Via parcelles filles (mère → filles): ${countViaFilles}`);
-                console.log(`      - Via parcelle mère (fille → mère): ${countViaMere}`);
-                console.log(`   ${countNotFound} parcelles non trouvées\n`);
+                // STRATÉGIE 2 : Parcelle FILLE → chercher via MÈRE
+                if (!coords) {
+                    const parcelleMere = dfiFilleVersMere.get(parcelleFormat);
+                    if (parcelleMere) {
+                        const matchMere = parcelleMere.match(/^([A-Z]+)(\d+)$/);
+                        if (matchMere) {
+                            const sectionMere = matchMere[1];
+                            const numeroMere = matchMere[2].padStart(4, '0');
+                            const parcelleMereId = `${codeCommune}000${sectionMere}${numeroMere}`;
+                            
+                            const coordMere = coordsDisponibles.get(parcelleMereId);
+                            if (coordMere && coordMere.latitude && coordMere.longitude) {
+                                coords = coordMere;
+                                countViaMere++;
+                            }
+                        }
+                    }
+                }
                 
-                resolve();
+                if (coords) {
+                    updateStmt.run(coords.latitude, coords.longitude, parcelle.id_parcelle);
+                }
+            }
+            
+            console.log(`   ✅ ${countViaFilles + countViaMere} parcelles enrichies via DFI`);
+            console.log(`      - Via parcelles filles (mère → filles): ${countViaFilles}`);
+            console.log(`      - Via parcelle mère (fille → mère): ${countViaMere}\n`);
+        }
+        
+        // Statistiques finales
+        const finalStats = db.prepare(`
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN latitude IS NOT NULL AND latitude != 0 THEN 1 ELSE 0 END) as with_coords,
+                SUM(CASE WHEN latitude IS NULL OR latitude = 0 THEN 1 ELSE 0 END) as without_coords
+            FROM terrains_batir_temp
+            WHERE id_parcelle IS NOT NULL
+        `).get();
+        
+        console.log(`   📊 BILAN GPS : ${finalStats.with_coords}/${finalStats.total} parcelles avec coordonnées (${Math.round(finalStats.with_coords * 100 / finalStats.total)}%)\n`);
+        
+        resolve();
     });
 }
 

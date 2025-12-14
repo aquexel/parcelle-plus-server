@@ -161,7 +161,7 @@ db.pragma('synchronous = NORMAL'); // Optimisation pour performance
 // Utiliser le chemin absolu pour éviter les problèmes de chemin relatif
 const parcellesDbPath = path.resolve(PARCELLES_DB_FILE).replace(/\\/g, '/');
 db.exec(`ATTACH DATABASE '${parcellesDbPath}' AS parcelles_db;`);
-db.pragma('cache_size = -64000'); // 64 MB de cache
+db.pragma('cache_size = -32000'); // 32 MB de cache (réduit pour Raspberry Pi)
 db.pragma('temp_store = MEMORY'); // Utiliser la RAM pour les tables temporaires (économie disque)
 
 // 🔥 CRITIQUE : Changer le répertoire temporaire SQLite
@@ -683,9 +683,9 @@ function attribuerTypeUsage(db) {
 // Fonction pour enrichir les coordonnées manquantes depuis les parcelles cadastrales
 function enrichirCoordonnees(db) {
     return new Promise((resolve, reject) => {
-        // Vérifier si la table parcelle existe
+        // Vérifier si la table parcelle existe dans la base ATTACHÉE
         const tableExists = db.prepare(`
-            SELECT name FROM sqlite_master 
+            SELECT name FROM parcelles_db.sqlite_master 
             WHERE type='table' AND name='parcelle'
         `).get();
         
@@ -695,22 +695,45 @@ function enrichirCoordonnees(db) {
             return;
         }
         
-        console.log('   📂 Chargement des parcelles avec coordonnées depuis la base de données...');
+        // OPTIMISATION MÉMOIRE : Ne charger que les parcelles nécessaires
+        // D'abord, récupérer la liste des id_parcelle qui ont besoin de coordonnées
+        console.log('   📋 Identification des parcelles à enrichir...');
+        const parcellesAEnrichir = db.prepare(`
+            SELECT DISTINCT id_parcelle
+            FROM terrains_batir_temp
+            WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                AND id_parcelle IS NOT NULL
+        `).all();
         
-        // Créer une map parcelle_id → {latitude, longitude} depuis la table
+        console.log(`   → ${parcellesAEnrichir.length} parcelles distinctes à enrichir\n`);
+        
+        // Créer un Set pour recherche rapide
+        const parcellesSet = new Set(parcellesAEnrichir.map(p => p.id_parcelle));
+        
+        // Charger UNIQUEMENT les coordonnées des parcelles nécessaires via itérateur
+        console.log('   📂 Chargement des coordonnées depuis parcelles_db...');
         const parcelleCoords = new Map();
-        const parcelles = db.prepare(`
+        let countWithGeom = 0;
+        let countTotal = 0;
+        
+        const parcellesQuery = db.prepare(`
             SELECT parcelle_id, geom_parcelle 
             FROM parcelles_db.parcelle 
             WHERE geom_parcelle IS NOT NULL
-        `).all();
+                AND parcelle_id IS NOT NULL
+        `);
         
-        let countWithGeom = 0;
-        for (const row of parcelles) {
-                const parcelleId = row.parcelle_id;
+        // Utiliser iterate() au lieu de all() pour éviter de saturer la mémoire
+        for (const row of parcellesQuery.iterate()) {
+            countTotal++;
+            
+            const parcelleId = row.parcelle_id;
+            
+            // Ne traiter que les parcelles qui ont besoin d'enrichissement
+            if (parcellesSet.has(parcelleId)) {
                 const geom = row.geom_parcelle;
                 
-                if (parcelleId && geom) {
+                if (geom) {
                     const centroid = extraireCentroideLambert(geom);
                     if (centroid) {
                         const wgs84 = lambert93ToWGS84(centroid.x, centroid.y);
@@ -721,21 +744,20 @@ function enrichirCoordonnees(db) {
                         countWithGeom++;
                     }
                 }
-                }
+            }
+            
+            // Log de progression tous les 100k parcelles
+            if (countTotal % 100000 === 0) {
+                console.log(`   → ${countTotal} parcelles parcourues, ${countWithGeom} coordonnées trouvées...`);
+            }
+        }
         
-        console.log(`   ✅ ${parcelles.length} parcelles chargées, ${countWithGeom} avec géométrie\n`);
+        console.log(`   ✅ ${countTotal} parcelles parcourues, ${countWithGeom} coordonnées extraites\n`);
                 
                 console.log('   🔗 Enrichissement des coordonnées manquantes...');
                 
-                // Récupérer les transactions sans coordonnées
-                const transactionsSansCoords = db.prepare(`
-                    SELECT DISTINCT id_parcelle
-                    FROM terrains_batir_temp
-                    WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
-                        AND id_parcelle IS NOT NULL
-                `).all();
-                
-                console.log(`   ${transactionsSansCoords.length} transactions sans coordonnées trouvées`);
+                // Réutiliser parcellesAEnrichir déjà chargé
+                console.log(`   → ${parcellesAEnrichir.length} parcelles à traiter`);
                 
                 const updateStmt = db.prepare(`
                     UPDATE terrains_batir_temp
@@ -753,13 +775,14 @@ function enrichirCoordonnees(db) {
                 const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
                 
                 try {
-                    const lotissements = db.prepare(`
+                    const lotissementsQuery = db.prepare(`
                         SELECT parcelles_meres, parcelles_filles
                         FROM dfi_lotissements
                         WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
-                    `).all();
+                    `);
                     
-                    lotissements.forEach(lot => {
+                    // Utiliser iterate() pour éviter de saturer la mémoire
+                    for (const lot of lotissementsQuery.iterate()) {
                         const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
                         const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
                         
@@ -776,7 +799,7 @@ function enrichirCoordonnees(db) {
                                 dfiFilleVersMere.set(fille, mere);
                             });
                         });
-                    });
+                    }
                     console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
                 } catch (err) {
                     console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
@@ -785,7 +808,7 @@ function enrichirCoordonnees(db) {
                 let countViaFilles = 0;
                 let countViaMere = 0;
                 
-                for (const tx of transactionsSansCoords) {
+                for (const tx of parcellesAEnrichir) {
                     let coords = parcelleCoords.get(tx.id_parcelle);
                     
                     if (!coords) {
@@ -857,7 +880,7 @@ function enrichirCoordonnees(db) {
                     }
                     
                     if ((countUpdated + countNotFound) % 10000 === 0) {
-                        process.stdout.write(`   ${countUpdated + countNotFound}/${transactionsSansCoords.length} vérifiées...\r`);
+                        process.stdout.write(`   ${countUpdated + countNotFound}/${parcellesAEnrichir.length} vérifiées...\r`);
                     }
                 }
                 
@@ -2868,8 +2891,9 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         // Traiter commune par commune
         // OPTIMISATION : Créer index sur id_pa pour accélérer le filtre t.id_pa IS NULL
-        console.log('   → Création index pour optimiser la jointure...');
-        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_pa_null ON terrains_batir_temp(code_commune, section_cadastrale, parcelle_suffixe) WHERE id_pa IS NULL;`);
+        // Index filtré supprimé : causait crash mémoire sur Raspberry Pi
+        // Les index standards existants suffisent
+        console.log('   → Utilisation des index existants pour la jointure...');
         
         const insertFillesBatch = db.prepare(`
             INSERT INTO achats_lotisseurs_filles 
@@ -2906,15 +2930,18 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         const oldCacheSizeFilles = db.prepare('PRAGMA cache_size').get();
         
         // Augmenter temporairement le cache pour accélérer les jointures
-        db.pragma('cache_size = -64000'); // 64 MB temporairement
+        db.pragma('cache_size = -32000'); // 32 MB temporairement (réduit pour Raspberry Pi)
         
         let totalFillesMatches = 0;
         
         // OPTIMISATION MÉMOIRE : Traiter par SUPER-BATCH de 500 communes à la fois
-        const SUPER_BATCH_SIZE = 500;
+        const SUPER_BATCH_SIZE = 300;
         const totalBatches = Math.ceil(communesAvecFillesPA.length / SUPER_BATCH_SIZE);
         
         console.log(`   → Traitement en ${totalBatches} super-batches de ${SUPER_BATCH_SIZE} communes max...`);
+        
+        // OPTIMISATION : Forcer checkpoint WAL avant la boucle pour libérer mémoire
+        db.pragma('wal_checkpoint(TRUNCATE)');
         
         for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
             const batchStart = batchIdx * SUPER_BATCH_SIZE;
@@ -2968,8 +2995,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         // Restaurer le cache_size original
         db.pragma(`cache_size = ${oldCacheSizeFilles.cache_size}`);
         
-        // Supprimer l'index temporaire pour libérer de l'espace
-        db.exec('DROP INDEX IF EXISTS idx_temp_pa_null;');
+        // Index filtré idx_temp_pa_null supprimé (voir ligne ~2872)
         
         console.log(`   → Jointure terminée : ${totalFillesMatches} associations PA-filles-DVF\n`);
         

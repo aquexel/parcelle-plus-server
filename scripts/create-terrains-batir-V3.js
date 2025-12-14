@@ -731,23 +731,36 @@ function enrichirCoordonnees(db) {
                 LIMIT ? OFFSET ?
             `).all(MINI_BATCH_SIZE, offset);
             
-            // Créer un Set pour recherche rapide
-            const parcellesSet = new Set(parcellesAEnrichir.map(p => p.id_parcelle));
+            // Créer une table temporaire pour le batch (évite "too many SQL variables")
+            db.prepare(`
+                CREATE TEMP TABLE IF NOT EXISTS temp_batch_parcelles (
+                    id_parcelle TEXT PRIMARY KEY
+                )
+            `).run();
             
-            // Charger UNIQUEMENT les coordonnées de CE batch via itérateur
+            db.prepare('DELETE FROM temp_batch_parcelles').run();
+            
+            const insertBatch = db.prepare('INSERT OR IGNORE INTO temp_batch_parcelles (id_parcelle) VALUES (?)');
+            const insertBatchTrans = db.transaction((parcelles) => {
+                for (const p of parcelles) {
+                    insertBatch.run(p.id_parcelle);
+                }
+            });
+            insertBatchTrans(parcellesAEnrichir);
+            
+            // Charger les coordonnées via jointure (pas de limite SQL variables)
             const parcelleCoords = new Map();
             let countWithGeom = 0;
             
             const parcellesQuery = db.prepare(`
-                SELECT parcelle_id, geom_parcelle 
-                FROM parcelles_db.parcelle 
-                WHERE geom_parcelle IS NOT NULL
-                    AND parcelle_id IS NOT NULL
-                    AND parcelle_id IN (${Array(parcellesAEnrichir.length).fill('?').join(',')})
+                SELECT p.parcelle_id, p.geom_parcelle 
+                FROM parcelles_db.parcelle p
+                INNER JOIN temp_batch_parcelles t ON p.parcelle_id = t.id_parcelle
+                WHERE p.geom_parcelle IS NOT NULL
             `);
             
             // Utiliser iterate() pour éviter de saturer la mémoire
-            for (const row of parcellesQuery.iterate(...parcellesAEnrichir.map(p => p.id_parcelle))) {
+            for (const row of parcellesQuery.iterate()) {
                 const parcelleId = row.parcelle_id;
                 const geom = row.geom_parcelle;
                 
@@ -792,8 +805,10 @@ function enrichirCoordonnees(db) {
             
             // Nettoyage mémoire
             parcellesAEnrichir.length = 0;
-            parcellesSet.clear();
             parcelleCoords.clear();
+            
+            // Nettoyer la table temporaire du batch
+            db.prepare('DELETE FROM temp_batch_parcelles').run();
             
             // Checkpoint WAL + GC forcé
             db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').run();

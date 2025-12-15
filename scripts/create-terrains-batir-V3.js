@@ -712,12 +712,12 @@ function enrichirCoordonnees(db) {
             return;
         }
         
-        // SUPER-BATCH : Traiter par paquets de 50 000 parcelles
-        const MINI_BATCH_SIZE = 50000;
+        // SUPER-BATCH : Traiter par paquets de 5 000 parcelles (réduit pour Raspberry Pi)
+        const MINI_BATCH_SIZE = 5000;
         let offset = 0;
         let totalUpdated = 0;
         
-        console.log('   🔄 Traitement par mini-batches de 50 000 parcelles...\n');
+        console.log('   🔄 Traitement par mini-batches de 5 000 parcelles...\n');
         
         while (offset < countToEnrich) {
             console.log(`   📦 Mini-batch ${Math.floor(offset / MINI_BATCH_SIZE) + 1}/${Math.ceil(countToEnrich / MINI_BATCH_SIZE)} (parcelles ${offset + 1} à ${Math.min(offset + MINI_BATCH_SIZE, countToEnrich)})...`);
@@ -780,7 +780,7 @@ function enrichirCoordonnees(db) {
             console.log(`      → ${countWithGeom} coordonnées extraites pour ce batch`);
                 
             // Mise à jour des coordonnées
-            console.log(`      ⏳ Mise à jour des coordonnées dans la base...`);
+            console.log(`      ⏳ Mise à jour des coordonnées dans la base (${parcelleCoords.size} parcelles)...`);
             const updateStmt = db.prepare(`
                 UPDATE terrains_batir_temp
                 SET latitude = ?, longitude = ?
@@ -789,17 +789,27 @@ function enrichirCoordonnees(db) {
             `);
             
             let countUpdated = 0;
+            let countProcessed = 0;
             
-            // Mise à jour en transaction
-            db.transaction(() => {
-                for (const parcelle of parcellesAEnrichir) {
-                    const coords = parcelleCoords.get(parcelle.id_parcelle);
-                    if (coords) {
-                        updateStmt.run(coords.latitude, coords.longitude, parcelle.id_parcelle);
+            // Mise à jour en PETITES transactions de 500 updates (plus rapide)
+            const MICRO_BATCH = 500;
+            const parcellesWithCoords = Array.from(parcelleCoords.entries());
+            
+            for (let i = 0; i < parcellesWithCoords.length; i += MICRO_BATCH) {
+                const microBatch = parcellesWithCoords.slice(i, i + MICRO_BATCH);
+                
+                db.transaction(() => {
+                    for (const [parcelleId, coords] of microBatch) {
+                        updateStmt.run(coords.latitude, coords.longitude, parcelleId);
                         countUpdated++;
                     }
+                })();
+                
+                countProcessed += microBatch.length;
+                if (countProcessed % 2000 === 0) {
+                    console.log(`         → ${countProcessed}/${parcelleCoords.size} traitées...`);
                 }
-            })();
+            }
             
             console.log(`      ✅ ${countUpdated} parcelles mises à jour`);
             totalUpdated += countUpdated;

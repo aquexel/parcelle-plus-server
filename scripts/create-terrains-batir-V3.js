@@ -780,6 +780,7 @@ function enrichirCoordonnees(db) {
             console.log(`      → ${countWithGeom} coordonnées extraites pour ce batch`);
                 
             // Mise à jour des coordonnées
+            console.log(`      ⏳ Mise à jour des coordonnées dans la base...`);
             const updateStmt = db.prepare(`
                 UPDATE terrains_batir_temp
                 SET latitude = ?, longitude = ?
@@ -800,7 +801,7 @@ function enrichirCoordonnees(db) {
                 }
             })();
             
-            console.log(`      ✅ ${countUpdated} parcelles mises à jour\n`);
+            console.log(`      ✅ ${countUpdated} parcelles mises à jour`);
             totalUpdated += countUpdated;
             
             // Nettoyage mémoire
@@ -821,149 +822,9 @@ function enrichirCoordonnees(db) {
         
         console.log(`   ✅ Total : ${totalUpdated} parcelles enrichies\n`);
         
-        // Charger les relations DFI BIDIRECTIONNELLES (une seule fois après enrichissement)
-        console.log('   📂 Chargement des relations DFI (bidirectionnelles)...');
-        const dfiMereVersFilles = new Map(); // parcelle_mere → [parcelles_filles]
-        const dfiFilleVersMere = new Map(); // parcelle_fille → parcelle_mere
-        
-        try {
-            const lotissementsQuery = db.prepare(`
-                SELECT parcelles_meres, parcelles_filles
-                FROM dfi_lotissements
-                WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
-            `);
-            
-            // Utiliser iterate() pour éviter de saturer la mémoire
-            for (const lot of lotissementsQuery.iterate()) {
-                const meres = (lot.parcelles_meres || '').split(/[\s,;]+/).filter(p => p.length >= 4);
-                const filles = (lot.parcelles_filles || '').split(/[\s,;]+/).filter(p => p.length >= 4);
-                
-                meres.forEach(mere => {
-                    // Relation mère → filles
-                    if (!dfiMereVersFilles.has(mere)) {
-                        dfiMereVersFilles.set(mere, []);
-                    }
-                    filles.forEach(fille => {
-                        if (!dfiMereVersFilles.get(mere).includes(fille)) {
-                            dfiMereVersFilles.get(mere).push(fille);
-                        }
-                        // Relation inverse fille → mère
-                        dfiFilleVersMere.set(fille, mere);
-                    });
-                });
-            }
-            console.log(`   ✅ ${dfiMereVersFilles.size} parcelles mères, ${dfiFilleVersMere.size} parcelles filles\n`);
-        } catch (err) {
-            console.log(`   ⚠️  Erreur chargement DFI: ${err.message}\n`);
-        }
-        
-        // Enrichissement supplémentaire via relations DFI (parcelles mères/filles)
-        console.log('   🔗 Enrichissement via relations DFI (mères ↔ filles)...');
-        
-        const parcellesManquantes = db.prepare(`
-            SELECT DISTINCT id_parcelle
-            FROM terrains_batir_temp
-            WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
-                AND id_parcelle IS NOT NULL
-        `).all();
-        
-        console.log(`   → ${parcellesManquantes.length} parcelles encore sans coordonnées\n`);
-        
-        let countViaFilles = 0;
-        let countViaMere = 0;
-        
-        if (parcellesManquantes.length > 0 && (dfiMereVersFilles.size > 0 || dfiFilleVersMere.size > 0)) {
-            // Charger toutes les coordonnées déjà présentes dans la base
-            const coordsDisponibles = new Map();
-            const coordsQuery = db.prepare(`
-                SELECT id_parcelle, latitude, longitude
-                FROM terrains_batir_temp
-                WHERE latitude IS NOT NULL AND latitude != 0 
-                    AND longitude IS NOT NULL AND longitude != 0
-                    AND id_parcelle IS NOT NULL
-            `);
-            
-            for (const row of coordsQuery.iterate()) {
-                coordsDisponibles.set(row.id_parcelle, {
-                    latitude: row.latitude,
-                    longitude: row.longitude
-                });
-            }
-            
-            console.log(`   → ${coordsDisponibles.size} coordonnées disponibles dans la base\n`);
-            
-            const updateStmt = db.prepare(`
-                UPDATE terrains_batir_temp
-                SET latitude = ?, longitude = ?
-                WHERE id_parcelle = ?
-                    AND (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
-            `);
-            
-            for (const parcelle of parcellesManquantes) {
-                const match = parcelle.id_parcelle.match(/\d{5}000([A-Z]+)(\d+)/);
-                if (!match) continue;
-                
-                const section = match[1];
-                const numero = String(parseInt(match[2], 10));
-                const parcelleFormat = `${section}${numero}`;
-                const codeCommune = parcelle.id_parcelle.substring(0, 5);
-                let coords = null;
-                
-                // STRATÉGIE 1 : Parcelle MÈRE → chercher via FILLES
-                const parcellesFilles = dfiMereVersFilles.get(parcelleFormat) || [];
-                if (parcellesFilles.length > 0) {
-                    const coordsFilles = [];
-                    
-                    for (const filleDFI of parcellesFilles) {
-                        const matchFille = filleDFI.match(/^([A-Z]+)(\d+)$/);
-                        if (matchFille) {
-                            const sectionFille = matchFille[1];
-                            const numeroFille = matchFille[2].padStart(4, '0');
-                            const parcelleFilleId = `${codeCommune}000${sectionFille}${numeroFille}`;
-                            
-                            const coordFille = coordsDisponibles.get(parcelleFilleId);
-                            if (coordFille && coordFille.latitude && coordFille.longitude) {
-                                coordsFilles.push(coordFille);
-                            }
-                        }
-                    }
-                    
-                    if (coordsFilles.length > 0) {
-                        const latMoyenne = coordsFilles.reduce((sum, c) => sum + c.latitude, 0) / coordsFilles.length;
-                        const lonMoyenne = coordsFilles.reduce((sum, c) => sum + c.longitude, 0) / coordsFilles.length;
-                        coords = { latitude: latMoyenne, longitude: lonMoyenne };
-                        countViaFilles++;
-                    }
-                }
-                
-                // STRATÉGIE 2 : Parcelle FILLE → chercher via MÈRE
-                if (!coords) {
-                    const parcelleMere = dfiFilleVersMere.get(parcelleFormat);
-                    if (parcelleMere) {
-                        const matchMere = parcelleMere.match(/^([A-Z]+)(\d+)$/);
-                        if (matchMere) {
-                            const sectionMere = matchMere[1];
-                            const numeroMere = matchMere[2].padStart(4, '0');
-                            const parcelleMereId = `${codeCommune}000${sectionMere}${numeroMere}`;
-                            
-                            const coordMere = coordsDisponibles.get(parcelleMereId);
-                            if (coordMere && coordMere.latitude && coordMere.longitude) {
-                                coords = coordMere;
-                                countViaMere++;
-                            }
-                        }
-                    }
-                }
-                
-                if (coords) {
-                    updateStmt.run(coords.latitude, coords.longitude, parcelle.id_parcelle);
-                }
-            }
-            
-            console.log(`   ✅ ${countViaFilles + countViaMere} parcelles enrichies via DFI`);
-            console.log(`      - Via parcelles filles (mère → filles): ${countViaFilles}`);
-            console.log(`      - Via parcelle mère (fille → mère): ${countViaMere}\n`);
-        }
+        // DÉSACTIVÉ TEMPORAIREMENT : Enrichissement DFI trop lent (30+ minutes par batch)
+        // TODO: Réactiver avec optimisation si nécessaire
+        console.log('   ⚠️  Enrichissement via DFI (mères ↔ filles) DÉSACTIVÉ pour accélérer le traitement\n');
         
         // Statistiques finales
         const finalStats = db.prepare(`

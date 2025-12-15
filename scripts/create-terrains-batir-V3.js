@@ -695,8 +695,26 @@ function enrichirCoordonnees(db) {
             return;
         }
         
-        // OPTIMISATION MÉMOIRE EXTRÊME : Traiter par mini-batches
-        console.log('   📋 Comptage des parcelles à enrichir...');
+        // Vérifier si les coordonnées GPS sont pré-calculées dans la table parcelle
+        const hasGPSColumns = db.prepare(`
+            SELECT COUNT(*) as count 
+            FROM parcelles_db.pragma_table_info('parcelle') 
+            WHERE name IN ('latitude', 'longitude')
+        `).get().count === 2;
+        
+        const countGPSReady = hasGPSColumns ? db.prepare(`
+            SELECT COUNT(*) as count 
+            FROM parcelles_db.parcelle 
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        `).get().count : 0;
+        
+        console.log('   📋 Vérification des coordonnées GPS...');
+        console.log(`   → GPS pré-calculées disponibles : ${hasGPSColumns ? 'OUI' : 'NON'}`);
+        if (hasGPSColumns) {
+            console.log(`   → Parcelles avec GPS : ${countGPSReady.toLocaleString()}\n`);
+        }
+        
+        // Compter les parcelles à enrichir
         const countToEnrich = db.prepare(`
             SELECT COUNT(DISTINCT id_parcelle) as count
             FROM terrains_batir_temp
@@ -704,13 +722,69 @@ function enrichirCoordonnees(db) {
                 AND id_parcelle IS NOT NULL
         `).get().count;
         
-        console.log(`   → ${countToEnrich} parcelles distinctes à enrichir\n`);
+        console.log(`   → ${countToEnrich.toLocaleString()} parcelles à enrichir\n`);
         
         if (countToEnrich === 0) {
             console.log('   ⚠️  Aucune parcelle à enrichir\n');
             resolve();
             return;
         }
+        
+        // STRATÉGIE OPTIMISÉE : Si GPS pré-calculées → Jointure SQL pure (RAPIDE)
+        if (hasGPSColumns && countGPSReady > 1000000) {
+            console.log('   🚀 Enrichissement OPTIMISÉ via jointure SQL directe...\n');
+            
+            const startTime = Date.now();
+            
+            const updated = db.prepare(`
+                UPDATE terrains_batir_temp
+                SET 
+                    latitude = (
+                        SELECT p.latitude 
+                        FROM parcelles_db.parcelle p 
+                        WHERE p.parcelle_id = terrains_batir_temp.id_parcelle 
+                          AND p.latitude IS NOT NULL
+                        LIMIT 1
+                    ),
+                    longitude = (
+                        SELECT p.longitude 
+                        FROM parcelles_db.parcelle p 
+                        WHERE p.parcelle_id = terrains_batir_temp.id_parcelle 
+                          AND p.longitude IS NOT NULL
+                        LIMIT 1
+                    )
+                WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0)
+                  AND id_parcelle IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM parcelles_db.parcelle p2 
+                      WHERE p2.parcelle_id = terrains_batir_temp.id_parcelle 
+                        AND p2.latitude IS NOT NULL 
+                        AND p2.longitude IS NOT NULL
+                  )
+            `).run();
+            
+            const elapsed = Math.round((Date.now() - startTime) / 1000);
+            
+            console.log(`   ✅ ${updated.changes.toLocaleString()} parcelles enrichies en ${elapsed}s\n`);
+            
+            // Statistiques finales
+            const finalStats = db.prepare(`
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN latitude IS NOT NULL AND latitude != 0 THEN 1 ELSE 0 END) as with_coords
+                FROM terrains_batir_temp
+                WHERE id_parcelle IS NOT NULL
+            `).get();
+            
+            console.log(`   📊 BILAN GPS : ${finalStats.with_coords.toLocaleString()}/${finalStats.total.toLocaleString()} parcelles avec coordonnées (${Math.round(finalStats.with_coords * 100 / finalStats.total)}%)\n`);
+            
+            resolve();
+            return;
+        }
+        
+        // STRATÉGIE CLASSIQUE : Extraction + conversion JavaScript (LENT mais fonctionne sans pré-calcul)
+        console.log('   ⚠️  GPS non pré-calculées → Utilisation méthode classique (lent)\n');
+        console.log('   💡 Conseil : Exécutez d\'abord "node scripts/preparer-coordonnees-parcelles.js" pour accélérer\n');
         
         // SUPER-BATCH : Traiter par paquets de 5 000 parcelles (réduit pour Raspberry Pi)
         const MINI_BATCH_SIZE = 5000;

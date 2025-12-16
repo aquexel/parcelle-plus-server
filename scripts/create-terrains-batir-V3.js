@@ -731,11 +731,21 @@ function enrichirCoordonnees(db) {
         }
         
         // STRATÉGIE OPTIMISÉE : Si GPS pré-calculées → Jointure SQL pure (RAPIDE)
-        if (hasGPSColumns && countGPSReady > 1000000) {
+        if (hasGPSColumns && countGPSReady > 100000) {
             console.log('   🚀 Enrichissement OPTIMISÉ via jointure SQL directe...\n');
+            console.log('   📊 Mode : Utilisation des colonnes latitude/longitude WGS84 pré-calculées\n');
             
             const startTime = Date.now();
             
+            // Index temporaire pour accélérer la jointure
+            try {
+                db.exec('CREATE INDEX IF NOT EXISTS idx_parcelle_gps ON parcelles_db.parcelle(parcelle_id) WHERE latitude IS NOT NULL AND longitude IS NOT NULL');
+                console.log('   🔍 Index GPS créé pour optimiser la jointure...\n');
+            } catch (err) {
+                // Index existe déjà ou erreur, on continue
+            }
+            
+            // Mise à jour en une seule requête SQL (ultra-rapide)
             const updated = db.prepare(`
                 UPDATE terrains_batir_temp
                 SET 
@@ -765,7 +775,7 @@ function enrichirCoordonnees(db) {
             
             const elapsed = Math.round((Date.now() - startTime) / 1000);
             
-            console.log(`   ✅ ${updated.changes.toLocaleString()} parcelles enrichies en ${elapsed}s\n`);
+            console.log(`   ✅ ${updated.changes.toLocaleString()} parcelles enrichies en ${elapsed}s (${Math.round(updated.changes / elapsed)}/s)\n`);
             
             // Statistiques finales
             const finalStats = db.prepare(`
@@ -776,15 +786,21 @@ function enrichirCoordonnees(db) {
                 WHERE id_parcelle IS NOT NULL
             `).get();
             
-            console.log(`   📊 BILAN GPS : ${finalStats.with_coords.toLocaleString()}/${finalStats.total.toLocaleString()} parcelles avec coordonnées (${Math.round(finalStats.with_coords * 100 / finalStats.total)}%)\n`);
+            const coveragePercent = Math.round(finalStats.with_coords * 100 / finalStats.total);
+            console.log(`   📊 BILAN GPS : ${finalStats.with_coords.toLocaleString()}/${finalStats.total.toLocaleString()} parcelles avec coordonnées (${coveragePercent}%)\n`);
+            
+            if (coveragePercent < 80) {
+                console.log(`   ⚠️  Couverture GPS faible (${coveragePercent}%) - Vérifiez que toutes les parcelles ont été converties\n`);
+            }
             
             resolve();
             return;
         }
         
         // STRATÉGIE CLASSIQUE : Extraction + conversion JavaScript (LENT mais fonctionne sans pré-calcul)
-        console.log('   ⚠️  GPS non pré-calculées → Méthode classique DÉSACTIVÉE (trop lent sur Raspberry Pi)\n');
-        console.log('   💡 SOLUTION : Exécutez d\'abord "node scripts/preparer-coordonnees-parcelles.js"\n');
+        console.log('   ⚠️  GPS non pré-calculées dans parcelles.db\n');
+        console.log(`   📊 Parcelles avec GPS : ${countGPSReady.toLocaleString()} (seuil min: 100,000)\n`);
+        console.log('   💡 SOLUTION : Exécutez d\'abord votre script de conversion WGS84\n');
         console.log('   💡 Puis relancez ce script pour enrichir en 1-2 minutes via jointure SQL\n');
         console.log('   ⏭️  Enrichissement GPS ignoré pour cette exécution\n');
         

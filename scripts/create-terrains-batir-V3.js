@@ -3447,9 +3447,4 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         db.close();
         process.exit(1);
     });
-});
-}).catch(err => {
-    console.error('❌ Erreur:', err);
-    process.exit(1);
-});
 } // Fin de demarrerCreationBase()

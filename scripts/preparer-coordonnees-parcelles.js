@@ -202,24 +202,28 @@ while (true) {
         microBatch.length = 0;
     }
     
+    // Sauvegarder la taille du batch avant de libérer la mémoire
+    const batchSize = parcelles.length;
+    
+    totalProcessed += batchSize;
+    totalSuccess += batchSuccess;
+    
+    console.log(`      ✅ ${batchSuccess}/${batchSize} coordonnées extraites`);
+    
     // Libérer la mémoire du batch
     parcelles.length = 0;
     
-    totalProcessed += parcelles.length;
-    totalSuccess += batchSuccess;
-    
-    console.log(`      ✅ ${batchSuccess}/${parcelles.length} coordonnées extraites`);
-    
     // Progression globale
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    const rate = elapsed > 0 ? Math.round(totalProcessed / elapsed) : 0;
+    const rate = elapsed > 0 ? Math.round(totalSuccess / elapsed) : 0;
     
     // Compter combien il reste vraiment (recompte après chaque batch pour être précis)
     const currentRemaining = db.prepare('SELECT COUNT(*) as count FROM parcelle WHERE geom_parcelle IS NOT NULL AND (latitude IS NULL OR longitude IS NULL)').get().count;
-    const percent = Math.round(((countDone + totalSuccess) * 100) / countTotal);
+    const totalDone = countTotal - currentRemaining;
+    const percent = Math.round((totalDone * 100) / countTotal);
     const remaining = rate > 0 ? Math.round(currentRemaining / rate / 60) : 'N/A';
     
-    console.log(`      📊 Progression : ${percent}% (${rate}/s, ~${remaining}min restantes, ${currentRemaining.toLocaleString()} restantes)\n`);
+    console.log(`      📊 Progression : ${percent}% (${rate} parcelles/s, ~${remaining}min restantes, ${currentRemaining.toLocaleString()} restantes)\n`);
     
     // Checkpoint WAL tous les 10 batches (50,000 parcelles) pour éviter que le WAL devienne trop gros
     if (batchNum % 10 === 0) {

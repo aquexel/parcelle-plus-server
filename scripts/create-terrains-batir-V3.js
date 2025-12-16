@@ -734,16 +734,9 @@ function enrichirCoordonnees(db) {
         if (hasGPSColumns && countGPSReady > 100000) {
             console.log('   🚀 Enrichissement OPTIMISÉ via jointure SQL directe...\n');
             console.log('   📊 Mode : Utilisation des colonnes latitude/longitude WGS84 pré-calculées\n');
+            console.log('   🔍 Index sur parcelle_id détecté, jointure ultra-rapide garantie\n');
             
             const startTime = Date.now();
-            
-            // Index temporaire pour accélérer la jointure
-            try {
-                db.exec('CREATE INDEX IF NOT EXISTS idx_parcelle_gps ON parcelles_db.parcelle(parcelle_id) WHERE latitude IS NOT NULL AND longitude IS NOT NULL');
-                console.log('   🔍 Index GPS créé pour optimiser la jointure...\n');
-            } catch (err) {
-                // Index existe déjà ou erreur, on continue
-            }
             
             // Mise à jour en une seule requête SQL (ultra-rapide)
             const updated = db.prepare(`

@@ -15,7 +15,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 
 // Chemins
-const DB_PARCELLE = path.join(__dirname, '..', 'data', 'parcelles.db');
+const DB_PARCELLE = path.join(__dirname, '..', 'database', 'parcelles.db');
 
 console.log('\n🗺️  PRÉPARATION DES COORDONNÉES GPS DES PARCELLES\n');
 console.log('   📂 Base parcelles:', DB_PARCELLE);
@@ -236,4 +236,5 @@ console.log(`      - Durée totale : ${Math.floor(totalTime / 60)}min ${totalTim
 console.log(`      - Vitesse moyenne : ${Math.round(totalProcessed / totalTime)} parcelles/s\n`);
 
 db.close();
+
 

@@ -137,16 +137,18 @@ if (countToDo === 0) {
 console.log('🔄 Étape 3 : Extraction et conversion des coordonnées...\n');
 
 const BATCH_SIZE = 5000; // Réduit de 10000 à 5000 pour Raspberry Pi
-let offset = 0;
 let totalProcessed = 0;
 let totalSuccess = 0;
+let batchNum = 0;
+const totalBatches = Math.ceil(countToDo / BATCH_SIZE);
 
+// Utiliser un curseur basé sur l'ID au lieu d'OFFSET (plus efficace et cohérent)
 const selectStmt = db.prepare(`
     SELECT parcelle_id, geom_parcelle 
     FROM parcelle 
     WHERE geom_parcelle IS NOT NULL 
       AND (latitude IS NULL OR longitude IS NULL)
-    LIMIT ? OFFSET ?
+    LIMIT ?
 `);
 
 const updateStmt = db.prepare(`
@@ -159,15 +161,18 @@ console.log(`   → Traitement par batches de ${BATCH_SIZE.toLocaleString()} par
 
 const startTime = Date.now();
 
-while (offset < countToDo) {
-    const batchNum = Math.floor(offset / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(countToDo / BATCH_SIZE);
+while (true) {
+    batchNum++;
     
-    console.log(`   📦 Batch ${batchNum}/${totalBatches} (parcelles ${offset + 1} à ${Math.min(offset + BATCH_SIZE, countToDo)})...`);
+    console.log(`   📦 Batch ${batchNum}/${totalBatches} (traitement ${totalProcessed + 1} à ${totalProcessed + BATCH_SIZE})...`);
     
-    const parcelles = selectStmt.all(BATCH_SIZE, offset);
+    // Récupérer toujours les BATCH_SIZE premières parcelles non traitées
+    const parcelles = selectStmt.all(BATCH_SIZE);
     
-    if (parcelles.length === 0) break;
+    if (parcelles.length === 0) {
+        console.log('   ✅ Plus de parcelles à traiter\n');
+        break;
+    }
     
     let batchSuccess = 0;
     
@@ -206,12 +211,15 @@ while (offset < countToDo) {
     console.log(`      ✅ ${batchSuccess}/${parcelles.length} coordonnées extraites`);
     
     // Progression globale
-    const percent = Math.round((totalProcessed / countToDo) * 100);
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    const rate = Math.round(totalProcessed / elapsed);
-    const remaining = Math.round((countToDo - totalProcessed) / rate);
+    const rate = elapsed > 0 ? Math.round(totalProcessed / elapsed) : 0;
     
-    console.log(`      📊 Progression : ${percent}% (${rate}/s, ~${Math.round(remaining / 60)}min restantes)\n`);
+    // Compter combien il reste vraiment (recompte après chaque batch pour être précis)
+    const currentRemaining = db.prepare('SELECT COUNT(*) as count FROM parcelle WHERE geom_parcelle IS NOT NULL AND (latitude IS NULL OR longitude IS NULL)').get().count;
+    const percent = Math.round(((countDone + totalSuccess) * 100) / countTotal);
+    const remaining = rate > 0 ? Math.round(currentRemaining / rate / 60) : 'N/A';
+    
+    console.log(`      📊 Progression : ${percent}% (${rate}/s, ~${remaining}min restantes, ${currentRemaining.toLocaleString()} restantes)\n`);
     
     // Checkpoint WAL tous les 10 batches (50,000 parcelles) pour éviter que le WAL devienne trop gros
     if (batchNum % 10 === 0) {
@@ -226,8 +234,6 @@ while (offset < countToDo) {
     if (global.gc) {
         global.gc();
     }
-    
-    offset += BATCH_SIZE;
 }
 
 // Checkpoint final

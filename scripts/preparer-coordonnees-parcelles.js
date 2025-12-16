@@ -24,6 +24,9 @@ console.log('   📂 Base parcelles:', DB_PARCELLE);
 const db = new Database(DB_PARCELLE);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
+db.pragma('cache_size = -32000'); // 32 MB de cache (optimisé pour Raspberry Pi 4GB)
+db.pragma('temp_store = MEMORY');
+db.pragma('mmap_size = 30000000000'); // 30GB mmap pour lecture rapide
 
 // Fonction d'extraction centroïde Lambert93 depuis WKT
 function extraireCentroideLambert(geomWKT) {
@@ -133,7 +136,7 @@ if (countToDo === 0) {
 // Étape 3 : Traitement par batches
 console.log('🔄 Étape 3 : Extraction et conversion des coordonnées...\n');
 
-const BATCH_SIZE = 10000;
+const BATCH_SIZE = 5000; // Réduit de 10000 à 5000 pour Raspberry Pi
 let offset = 0;
 let totalProcessed = 0;
 let totalSuccess = 0;
@@ -168,8 +171,8 @@ while (offset < countToDo) {
     
     let batchSuccess = 0;
     
-    // Traiter en micro-transactions de 1000
-    const MICRO_BATCH = 1000;
+    // Traiter en micro-transactions de 500 (optimisé pour Raspberry Pi)
+    const MICRO_BATCH = 500;
     for (let i = 0; i < parcelles.length; i += MICRO_BATCH) {
         const microBatch = parcelles.slice(i, i + MICRO_BATCH);
         
@@ -189,7 +192,13 @@ while (offset < countToDo) {
                 }
             }
         })();
+        
+        // Libérer la mémoire du micro-batch
+        microBatch.length = 0;
     }
+    
+    // Libérer la mémoire du batch
+    parcelles.length = 0;
     
     totalProcessed += parcelles.length;
     totalSuccess += batchSuccess;
@@ -204,13 +213,16 @@ while (offset < countToDo) {
     
     console.log(`      📊 Progression : ${percent}% (${rate}/s, ~${Math.round(remaining / 60)}min restantes)\n`);
     
-    // Checkpoint WAL tous les 10 batches
+    // Checkpoint WAL tous les 10 batches (50,000 parcelles) pour éviter que le WAL devienne trop gros
     if (batchNum % 10 === 0) {
-        console.log('      🔄 Checkpoint WAL...');
-        db.exec('PRAGMA wal_checkpoint(PASSIVE)');
+        const checkpointStart = Date.now();
+        console.log('      🔄 Checkpoint WAL TRUNCATE...');
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        const checkpointDuration = Math.round((Date.now() - checkpointStart) / 1000);
+        console.log(`      ✅ Checkpoint terminé en ${checkpointDuration}s\n`);
     }
     
-    // GC forcé
+    // GC forcé tous les batches pour libérer la mémoire
     if (global.gc) {
         global.gc();
     }

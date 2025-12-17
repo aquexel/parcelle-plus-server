@@ -3441,10 +3441,14 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             db.close();
             process.exit(1);
         });
-        });
     }).catch(err => {
         console.error('❌ Erreur lors du chargement des données:', err);
         db.close();
         process.exit(1);
     });
+}).catch(err => {
+    console.error('❌ Erreur lors de l\'ÉTAPE 0:', err);
+    process.exit(1);
+});
+
 } // Fin de demarrerCreationBase()

@@ -2209,7 +2209,9 @@ function fusionnerBases() {
             latitude REAL,
             longitude REAL,
             nom_commune TEXT,
-            type_terrain TEXT
+            type_terrain TEXT,
+            id_pa TEXT,
+            avec_construction INTEGER DEFAULT 0
         );
         
         CREATE INDEX idx_coords ON terrains_batir(latitude, longitude);
@@ -2307,7 +2309,7 @@ function fusionnerBases() {
     dbUnifie.exec(`
         INSERT INTO terrains_batir (
             valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-            date_mutation, latitude, longitude, nom_commune, type_terrain
+            date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa, avec_construction
         )
         SELECT 
             valeur_fonciere, 
@@ -2318,7 +2320,9 @@ function fusionnerBases() {
             latitude, 
             longitude, 
             nom_commune,
-            type_terrain
+            type_terrain,
+            id_pa,
+            avec_construction
         FROM db_pa.terrains_batir;
     `);
     
@@ -2345,7 +2349,7 @@ function fusionnerBases() {
     dbUnifie.exec(`
         INSERT INTO terrains_batir (
             valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-            date_mutation, latitude, longitude, nom_commune, type_terrain
+            date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa, avec_construction
         )
         SELECT 
             valeur_fonciere, 
@@ -2356,7 +2360,9 @@ function fusionnerBases() {
             latitude, 
             longitude, 
             nom_commune,
-            type_terrain
+            type_terrain,
+            NULL as id_pa,  -- Les terrains PC n'ont pas de PA
+            0 as avec_construction  -- Les terrains PC sont filtrés sans bâti
         FROM db_pc.terrains_pc_sans_pa;
     `);
     

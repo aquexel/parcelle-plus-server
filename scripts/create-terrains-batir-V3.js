@@ -196,7 +196,8 @@ db.exec(`
         section_cadastrale TEXT,
         est_terrain_viabilise INTEGER DEFAULT 0,
         id_pa TEXT,
-        parcelle_suffixe TEXT
+        parcelle_suffixe TEXT,
+        avec_construction INTEGER DEFAULT 0
     );
     
     -- ⚡ OPTIMISATION : Index créés APRÈS la copie des données (pas sur table vide)
@@ -784,6 +785,22 @@ function enrichirCoordonnees(db) {
             
             if (coveragePercent < 80) {
                 console.log(`   ⚠️  Couverture GPS faible (${coveragePercent}%) - Vérifiez que toutes les parcelles ont été converties\n`);
+            }
+            
+            // ÉTAPE SUPPLÉMENTAIRE : Enrichir via parcelles FILLES (DFI)
+            console.log('   🔄 Enrichissement GPS via parcelles FILLES (DFI)...');
+            const countStillMissing = db.prepare(`SELECT COUNT(DISTINCT id_parcelle) as count FROM terrains_batir_temp WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL`).get().count;
+            console.log(`   → ${countStillMissing.toLocaleString()} parcelles mères sans GPS`);
+            if (countStillMissing > 0) {
+                console.log('   🔍 Recherche des parcelles filles via DFI...\n');
+                db.exec(`DROP TABLE IF EXISTS temp_gps_filles; CREATE TEMP TABLE temp_gps_filles (parcelle_mere TEXT, parcelle_fille_id TEXT, latitude REAL, longitude REAL);`);
+                try {
+                    const resultFilles = db.prepare(`INSERT INTO temp_gps_filles (parcelle_mere, parcelle_fille_id, latitude, longitude) SELECT dfi.parcelles_meres, p.parcelle_id, p.latitude, p.longitude FROM dfi_indexed dfi CROSS JOIN json_each('["' || REPLACE(dfi.parcelles_filles, ';', '","') || '"]') AS fille INNER JOIN parcelles_db.parcelle p ON p.parcelle_id = dfi.code_commune || '000' || dfi.section || fille.value AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL WHERE dfi.parcelles_meres IN (SELECT DISTINCT id_parcelle FROM terrains_batir_temp WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL)`).run();
+                    console.log(`   ✅ ${resultFilles.changes} parcelles filles avec GPS trouvées`);
+                    const applyGPS = db.prepare(`UPDATE terrains_batir_temp SET latitude = (SELECT AVG(latitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle), longitude = (SELECT AVG(longitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle) WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL AND EXISTS (SELECT 1 FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle)`).run();
+                    console.log(`   ✅ ${applyGPS.changes} parcelles mères enrichies via parcelles filles\n`);
+                } catch (error) { console.log(`   ⚠️  Erreur : ${error.message}\n`); }
+                db.exec(`DROP TABLE IF EXISTS temp_gps_filles;`);
             }
             
             resolve();
@@ -3335,6 +3352,17 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         console.log(`   - ${nbAchatsMeres + nbAchatsFilles} achats lotisseurs (non-viabilisés)`);
         console.log(`   - ${nbLotsVendus} lots vendus (viabilisés)\n`);
         
+        // ÉTAPE 4.6 : Identifier les achats lotisseurs avec construction existante
+        console.log('🏠 ÉTAPE 4.6 : Identification des achats lotisseurs avec construction...');
+        const nbAvecConstruction = db.prepare(`
+            UPDATE terrains_batir_temp
+            SET avec_construction = 1
+            WHERE est_terrain_viabilise = 0
+              AND surface_reelle_bati > 0
+        `).run().changes;
+        
+        console.log(`   ✅ ${nbAvecConstruction} achats lotisseurs avec construction existante identifiés\n`);
+        
         // FIN ÉTAPE 4 - Passer à l'enrichissement GPS
         console.log('📊 ÉTAPE 6 : Enrichissement des coordonnées depuis les parcelles cadastrales...');
         enrichirCoordonnees(db).then(() => {
@@ -3357,7 +3385,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 longitude REAL,
                 nom_commune TEXT,
                 type_terrain TEXT,
-                id_pa TEXT
+                id_pa TEXT,
+                avec_construction INTEGER DEFAULT 0
             );
             
             CREATE INDEX IF NOT EXISTS idx_coords ON terrains_batir(latitude, longitude);
@@ -3374,7 +3403,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         db.exec(`
             INSERT INTO terrains_batir (
                 valeur_fonciere, surface_totale, surface_reelle_bati, prix_m2,
-                date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa
+                date_mutation, latitude, longitude, nom_commune, type_terrain, id_pa, avec_construction
             )
             SELECT 
                 MAX(valeur_fonciere) as valeur_fonciere,  -- Valeur UNIQUE (même pour toutes les parcelles)
@@ -3390,7 +3419,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     WHEN est_terrain_viabilise = 1 THEN 'VIABILISE'
                     ELSE NULL
                 END as type_terrain,
-                id_pa
+                id_pa,
+                MAX(avec_construction) as avec_construction  -- 1 si au moins une parcelle avait une construction
             FROM terrains_batir_temp
             WHERE id_pa IS NOT NULL
               -- Exclure les transactions avec surface bati (terrains déjà construits)

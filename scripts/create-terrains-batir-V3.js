@@ -795,9 +795,59 @@ function enrichirCoordonnees(db) {
                 console.log('   🔍 Recherche des parcelles filles via DFI...\n');
                 db.exec(`DROP TABLE IF EXISTS temp_gps_filles; CREATE TEMP TABLE temp_gps_filles (parcelle_mere TEXT, parcelle_fille_id TEXT, latitude REAL, longitude REAL);`);
                 try {
-                    const resultFilles = db.prepare(`INSERT INTO temp_gps_filles (parcelle_mere, parcelle_fille_id, latitude, longitude) SELECT dfi.parcelles_meres, p.parcelle_id, p.latitude, p.longitude FROM dfi_indexed dfi CROSS JOIN json_each('["' || REPLACE(dfi.parcelles_filles, ';', '","') || '"]') AS fille INNER JOIN parcelles_db.parcelle p ON p.parcelle_id = dfi.code_commune || '000' || dfi.section || fille.value AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL WHERE dfi.parcelles_meres IN (SELECT DISTINCT id_parcelle FROM terrains_batir_temp WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL)`).run();
-                    console.log(`   ✅ ${resultFilles.changes} parcelles filles avec GPS trouvées`);
-                    const applyGPS = db.prepare(`UPDATE terrains_batir_temp SET latitude = (SELECT AVG(latitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle), longitude = (SELECT AVG(longitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle) WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL AND EXISTS (SELECT 1 FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle)`).run();
+                    // Récupérer les parcelles mères sans GPS
+                    const parcellesSansGPS = db.prepare(`SELECT DISTINCT id_parcelle FROM terrains_batir_temp WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL`).all();
+                    
+                    // Récupérer les DFI correspondants
+                    const getDFI = db.prepare(`SELECT code_departement, code_commune, parcelles_meres, parcelles_filles FROM dfi_indexed WHERE parcelles_meres = ?`);
+                    const getGPS = db.prepare(`SELECT latitude, longitude FROM parcelles_db.parcelle WHERE parcelle_id = ? AND latitude IS NOT NULL AND longitude IS NOT NULL`);
+                    const insertGPS = db.prepare(`INSERT INTO temp_gps_filles (parcelle_mere, parcelle_fille_id, latitude, longitude) VALUES (?, ?, ?, ?)`);
+                    
+                    let totalFilles = 0;
+                    for (const row of parcellesSansGPS) {
+                        const parcelleMere = row.id_parcelle;
+                        const dfiList = getDFI.all(parcelleMere);
+                        
+                        for (const dfi of dfiList) {
+                            if (!dfi.parcelles_filles) continue;
+                            
+                            // Parser les parcelles filles (format: "BK546;BK547")
+                            const filles = dfi.parcelles_filles.split(';').map(f => f.trim()).filter(f => f);
+                            
+                            for (const fille of filles) {
+                                // Extraire section et numéro (ex: "BK546" -> section="BK", numero="546")
+                                const match = fille.match(/^([A-Z]+)(\d+)$/);
+                                if (!match) continue;
+                                
+                                const section = match[1];
+                                const numero = match[2].padStart(4, '0');
+                                
+                                // Construire parcelle_id complète (ex: "40088000BK0546")
+                                // code_departement = "400" (3 chiffres), code_commune = "088" (3 chiffres)
+                                // Format final: dept(2) + commune(3) + "000" + section + numero
+                                const dept2 = dfi.code_departement.substring(0, 2); // "400" -> "40"
+                                const parcelleFilleId = `${dept2}${dfi.code_commune}000${section}${numero}`;
+                                
+                                // Récupérer GPS de la parcelle fille
+                                const gps = getGPS.get(parcelleFilleId);
+                                if (gps) {
+                                    insertGPS.run(parcelleMere, parcelleFilleId, gps.latitude, gps.longitude);
+                                    totalFilles++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    console.log(`   ✅ ${totalFilles} parcelles filles avec GPS trouvées`);
+                    
+                    const applyGPS = db.prepare(`
+                        UPDATE terrains_batir_temp 
+                        SET latitude = (SELECT AVG(latitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle),
+                            longitude = (SELECT AVG(longitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle)
+                        WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) 
+                          AND id_parcelle IS NOT NULL 
+                          AND EXISTS (SELECT 1 FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle)
+                    `).run();
                     console.log(`   ✅ ${applyGPS.changes} parcelles mères enrichies via parcelles filles\n`);
                 } catch (error) { console.log(`   ⚠️  Erreur : ${error.message}\n`); }
                 db.exec(`DROP TABLE IF EXISTS temp_gps_filles;`);

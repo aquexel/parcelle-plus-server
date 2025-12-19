@@ -2859,7 +2859,7 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
         
         console.log('   📂 Chargement relations DFI...');
         const dfiData = db.prepare(`
-            SELECT code_commune, parcelles_meres, parcelles_filles
+            SELECT code_departement, code_commune, parcelles_meres, parcelles_filles
             FROM dfi_indexed
             WHERE parcelles_meres IS NOT NULL AND parcelles_filles IS NOT NULL
         `).all();
@@ -2877,6 +2877,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 
                 const codeCommuneDVF = String(pa.comm).padStart(5, '0');
                 const codeCommuneDFI = codeCommuneDVF.substring(codeCommuneDVF.length - 3);
+                // Code département sur 3 chiffres pour DFI (ex: "40" -> "400")
+                const codeDeptDFI = pa.depCode ? (pa.depCode + '0') : null;
                 
                 // Pour chaque parcelle du PA
                 for (const parcelle of pa.parcelles || []) {
@@ -2892,6 +2894,8 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                     // Chercher dans DFI (utiliser aussi la version sans padding pour la recherche DFI)
                     const parcelleNormaliseeDFI = section + numeroClean; // Version sans padding pour DFI
                     for (const dfi of dfiData) {
+                        // Filtrer par département ET commune pour éviter les collisions
+                        if (codeDeptDFI && dfi.code_departement !== codeDeptDFI) continue;
                         if (dfi.code_commune !== codeCommuneDFI) continue;
                         
                         const meres = (dfi.parcelles_meres || '').split(/[;,\s]+/).map(p => p.trim()).filter(p => p);

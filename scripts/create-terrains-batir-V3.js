@@ -798,11 +798,11 @@ function enrichirCoordonnees(db) {
                     // Récupérer les parcelles mères sans GPS
                     const parcellesSansGPS = db.prepare(`SELECT DISTINCT id_parcelle FROM terrains_batir_temp WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) AND id_parcelle IS NOT NULL`).all();
                     
-                    // Récupérer les DFI correspondants (avec filtre par commune)
+                    // Récupérer les DFI correspondants (avec filtre par département ET commune)
                     const getDFI = db.prepare(`
                         SELECT code_departement, code_commune, parcelles_meres, parcelles_filles 
                         FROM dfi_indexed 
-                        WHERE parcelles_meres = ? AND code_commune = ?
+                        WHERE parcelles_meres = ? AND code_departement = ? AND code_commune = ?
                     `);
                     const getGPS = db.prepare(`SELECT latitude, longitude FROM parcelles_db.parcelle WHERE parcelle_id = ? AND latitude IS NOT NULL AND longitude IS NOT NULL`);
                     const insertGPS = db.prepare(`INSERT INTO temp_gps_filles (parcelle_mere, parcelle_fille_id, latitude, longitude) VALUES (?, ?, ?, ?)`);
@@ -811,7 +811,7 @@ function enrichirCoordonnees(db) {
                     for (const row of parcellesSansGPS) {
                         const parcelleMere = row.id_parcelle;
                         
-                        // Extraire le format court et le code commune depuis id_parcelle
+                        // Extraire le format court, département et commune depuis id_parcelle
                         // Format: dept(2) + commune(3) + "000" + section(lettres) + numero(4 chiffres)
                         // Ex: "40088000AM0168" -> dept="40", commune="088", section="AM", numero="0168"
                         const matchMere = parcelleMere.match(/^(\d{2})(\d{3})000([A-Z]+)(\d+)/);
@@ -821,8 +821,11 @@ function enrichirCoordonnees(db) {
                         const numeroMere = parseInt(numeroStr, 10); // Enlever les zéros de tête
                         const parcelleMereCourte = `${sectionMere}${numeroMere}`; // Ex: "AM168"
                         
-                        // Chercher dans DFI avec le format court ET le code commune
-                        const dfiList = getDFI.all(parcelleMereCourte, commune);
+                        // code_departement dans DFI est sur 3 chiffres (ex: "400" pour Landes)
+                        const deptDFI = dept + '0'; // "40" -> "400"
+                        
+                        // Chercher dans DFI avec le format court ET département ET commune
+                        const dfiList = getDFI.all(parcelleMereCourte, deptDFI, commune);
                         
                         for (const dfi of dfiList) {
                             if (!dfi.parcelles_filles) continue;

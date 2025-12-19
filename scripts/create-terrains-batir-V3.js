@@ -806,7 +806,18 @@ function enrichirCoordonnees(db) {
                     let totalFilles = 0;
                     for (const row of parcellesSansGPS) {
                         const parcelleMere = row.id_parcelle;
-                        const dfiList = getDFI.all(parcelleMere);
+                        
+                        // Extraire le format court depuis id_parcelle (ex: "40088000AM0168" -> "AM168")
+                        // Format: dept(2) + commune(3) + "000" + section(lettres) + numero(4 chiffres)
+                        const matchMere = parcelleMere.match(/\d{5}000([A-Z]+)(\d+)/);
+                        if (!matchMere) continue;
+                        
+                        const sectionMere = matchMere[1];
+                        const numeroMere = parseInt(matchMere[2], 10); // Enlever les zéros de tête
+                        const parcelleMereCourte = `${sectionMere}${numeroMere}`; // Ex: "AM168"
+                        
+                        // Chercher dans DFI avec le format court
+                        const dfiList = getDFI.all(parcelleMereCourte);
                         
                         for (const dfi of dfiList) {
                             if (!dfi.parcelles_filles) continue;

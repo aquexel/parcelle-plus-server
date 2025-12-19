@@ -808,54 +808,53 @@ function enrichirCoordonnees(db) {
                     const insertGPS = db.prepare(`INSERT INTO temp_gps_filles (parcelle_mere, parcelle_fille_id, latitude, longitude) VALUES (?, ?, ?, ?)`);
                     
                     let totalFilles = 0;
-                    for (const row of parcellesSansGPS) {
-                        const parcelleMere = row.id_parcelle;
-                        
-                        // Extraire le format court, département et commune depuis id_parcelle
-                        // Format: dept(2) + commune(3) + "000" + section(lettres) + numero(4 chiffres)
-                        // Ex: "40088000AM0168" -> dept="40", commune="088", section="AM", numero="0168"
-                        const matchMere = parcelleMere.match(/^(\d{2})(\d{3})000([A-Z]+)(\d+)/);
-                        if (!matchMere) continue;
-                        
-                        const [, dept, commune, sectionMere, numeroStr] = matchMere;
-                        const numeroMere = parseInt(numeroStr, 10); // Enlever les zéros de tête
-                        const parcelleMereCourte = `${sectionMere}${numeroMere}`; // Ex: "AM168"
-                        
-                        // code_departement dans DFI est sur 3 chiffres (ex: "400" pour Landes)
-                        const deptDFI = dept + '0'; // "40" -> "400"
-                        
-                        // Chercher dans DFI avec le format court ET département ET commune
-                        const dfiList = getDFI.all(parcelleMereCourte, deptDFI, commune);
-                        
-                        for (const dfi of dfiList) {
-                            if (!dfi.parcelles_filles) continue;
+                    
+                    // OPTIMISATION : Transaction globale pour tous les INSERT
+                    const insertTransaction = db.transaction((parcelles) => {
+                        let count = 0;
+                        for (const row of parcelles) {
+                            const parcelleMere = row.id_parcelle;
                             
-                            // Parser les parcelles filles (format: "BK546;BK547")
-                            const filles = dfi.parcelles_filles.split(';').map(f => f.trim()).filter(f => f);
+                            // Extraire le format court, département et commune depuis id_parcelle
+                            const matchMere = parcelleMere.match(/^(\d{2})(\d{3})000([A-Z]+)(\d+)/);
+                            if (!matchMere) continue;
                             
-                            for (const fille of filles) {
-                                // Extraire section et numéro (ex: "BK546" -> section="BK", numero="546")
-                                const match = fille.match(/^([A-Z]+)(\d+)$/);
-                                if (!match) continue;
+                            const [, dept, commune, sectionMere, numeroStr] = matchMere;
+                            const numeroMere = parseInt(numeroStr, 10);
+                            const parcelleMereCourte = `${sectionMere}${numeroMere}`;
+                            const deptDFI = dept + '0';
+                            
+                            // Chercher dans DFI
+                            const dfiList = getDFI.all(parcelleMereCourte, deptDFI, commune);
+                            
+                            for (const dfi of dfiList) {
+                                if (!dfi.parcelles_filles) continue;
                                 
-                                const section = match[1];
-                                const numero = match[2].padStart(4, '0');
+                                const filles = dfi.parcelles_filles.split(';').map(f => f.trim()).filter(f => f);
                                 
-                                // Construire parcelle_id complète (ex: "40088000BK0546")
-                                // code_departement = "400" (3 chiffres), code_commune = "088" (3 chiffres)
-                                // Format final: dept(2) + commune(3) + "000" + section + numero
-                                const dept2 = dfi.code_departement.substring(0, 2); // "400" -> "40"
-                                const parcelleFilleId = `${dept2}${dfi.code_commune}000${section}${numero}`;
-                                
-                                // Récupérer GPS de la parcelle fille
-                                const gps = getGPS.get(parcelleFilleId);
-                                if (gps) {
-                                    insertGPS.run(parcelleMere, parcelleFilleId, gps.latitude, gps.longitude);
-                                    totalFilles++;
+                                for (const fille of filles) {
+                                    const match = fille.match(/^([A-Z]+)(\d+)$/);
+                                    if (!match) continue;
+                                    
+                                    const section = match[1];
+                                    const numero = match[2].padStart(4, '0');
+                                    const dept2 = dfi.code_departement.substring(0, 2);
+                                    const parcelleFilleId = `${dept2}${dfi.code_commune}000${section}${numero}`;
+                                    
+                                    // Récupérer GPS
+                                    const gps = getGPS.get(parcelleFilleId);
+                                    if (gps) {
+                                        insertGPS.run(parcelleMere, parcelleFilleId, gps.latitude, gps.longitude);
+                                        count++;
+                                    }
                                 }
                             }
                         }
-                    }
+                        return count;
+                    });
+                    
+                    // Exécuter la transaction
+                    totalFilles = insertTransaction(parcellesSansGPS);
                     
                     console.log(`   ✅ ${totalFilles} parcelles filles avec GPS trouvées`);
                     

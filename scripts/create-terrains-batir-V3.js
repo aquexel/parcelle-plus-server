@@ -858,15 +858,31 @@ function enrichirCoordonnees(db) {
                     
                     console.log(`   ✅ ${totalFilles} parcelles filles avec GPS trouvées`);
                     
+                    // OPTIMISATION : Pré-calculer les moyennes GPS par parcelle mère
+                    console.log('   🔄 Calcul des moyennes GPS par parcelle mère...');
+                    db.exec(`
+                        CREATE TEMP TABLE temp_gps_moyennes AS
+                        SELECT 
+                            parcelle_mere,
+                            AVG(latitude) as lat_moy,
+                            AVG(longitude) as lon_moy,
+                            COUNT(*) as nb_filles
+                        FROM temp_gps_filles
+                        GROUP BY parcelle_mere
+                    `);
+                    
+                    // UPDATE optimisé avec JOIN (pas de sous-requêtes corrélées)
                     const applyGPS = db.prepare(`
                         UPDATE terrains_batir_temp 
-                        SET latitude = (SELECT AVG(latitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle),
-                            longitude = (SELECT AVG(longitude) FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle)
+                        SET latitude = (SELECT lat_moy FROM temp_gps_moyennes WHERE parcelle_mere = terrains_batir_temp.id_parcelle),
+                            longitude = (SELECT lon_moy FROM temp_gps_moyennes WHERE parcelle_mere = terrains_batir_temp.id_parcelle)
                         WHERE (latitude IS NULL OR latitude = 0 OR longitude IS NULL OR longitude = 0) 
                           AND id_parcelle IS NOT NULL 
-                          AND EXISTS (SELECT 1 FROM temp_gps_filles WHERE parcelle_mere = terrains_batir_temp.id_parcelle)
+                          AND EXISTS (SELECT 1 FROM temp_gps_moyennes WHERE parcelle_mere = terrains_batir_temp.id_parcelle)
                     `).run();
                     console.log(`   ✅ ${applyGPS.changes} parcelles mères enrichies via parcelles filles\n`);
+                    
+                    db.exec(`DROP TABLE IF EXISTS temp_gps_moyennes;`);
                 } catch (error) { console.log(`   ⚠️  Erreur : ${error.message}\n`); }
                 db.exec(`DROP TABLE IF EXISTS temp_gps_filles;`);
             }

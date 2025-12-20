@@ -130,14 +130,18 @@ module.exports = (req, res) => {
         }
         
         // Filtres optionnels de surface
-        if (minSurface !== null && minSurface > 0) {
-            query += ` AND surface_totale >= ?`;
-            params.push(minSurface * 0.7); // Tolérance -30%
-        }
-        
-        if (maxSurface !== null && maxSurface > 0) {
-            query += ` AND surface_totale <= ?`;
-            params.push(maxSurface * 1.3); // Tolérance +30%
+        // EXCEPTION : Ne PAS filtrer par surface pour les terrains NON_VIABILISE
+        // Car ce sont souvent de grandes parcelles (plusieurs hectares) qui ne correspondent pas à la surface du terrain final
+        if (typeTerrain !== 'NON_VIABILISE') {
+            if (minSurface !== null && minSurface > 0) {
+                query += ` AND surface_totale >= ?`;
+                params.push(minSurface * 0.7); // Tolérance -30%
+            }
+            
+            if (maxSurface !== null && maxSurface > 0) {
+                query += ` AND surface_totale <= ?`;
+                params.push(maxSurface * 1.3); // Tolérance +30%
+            }
         }
         
         query += ` 

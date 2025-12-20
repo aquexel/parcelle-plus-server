@@ -31,12 +31,16 @@
  *                   DESTINATION_PRINCIPALE='1' (logements)
  *                   TYPE_PRINCIP_LOGTS_CREES IN ('1','2') (individuel)
  *                   NB_LGT_COL_CREES=0 (pas de collectif)
- * 6. FILTRE FINAL : Ne garder que les terrains viabilisés avec PC habitation INDIVIDUELLE
- *    - Supprime : sans PC nouvelle construction habitation individuelle
- *    - Supprime : bâti existant (surface_reelle_bati > 0)
- *    - Conserve : TOUS les achats lotisseurs (on ne sait pas l'usage ni le bâti avant)
+ * 6. FILTRE FINAL : Logique différenciée selon le type de terrain
+ *    POUR LES ACHATS LOTISSEURS (NON_VIABILISE) :
+ *    - Conserve : TOUS les achats lotisseurs (parcelles mères du PA)
+ *    - Conserve : MÊME avec bâti existant (peut être démoli/transformé)
+ *    - Important : on garde l'info dans la colonne avec_construction
+ *    POUR LES LOTS VIABILISÉS (VIABILISE) :
+ *    - Supprime : lots avec bâti existant (surface_reelle_bati > 0)
+ *    - Conserve : uniquement terrains nus prêts à bâtir
  * 
- * Base finale : UNIQUEMENT habitation individuelle NOUVELLE construction (sans bâti existant)
+ * Base finale : Achats lotisseurs complets + Lots viabilisés sans bâti
  * Couverture estimée : 70-75% des PA avec parcelles filles
  */
 
@@ -3484,6 +3488,48 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
             CREATE INDEX IF NOT EXISTS idx_pa ON terrains_batir(id_pa);
         `);
         
+        // ÉTAPE PRÉALABLE : Propager id_pa ET est_terrain_viabilise à TOUTES les parcelles d'une mutation 
+        // si au moins une est un achat lotisseur (parcelle mère du PA)
+        // IMPORTANT : Ne PAS propager aux parcelles filles (même avec construction) car ce sont des lots vendus
+        console.log('   📝 Propagation id_pa aux parcelles de la même mutation (achats lotisseurs)...');
+        const nbAvantPropagation = db.prepare(`
+            SELECT COUNT(*) as count FROM terrains_batir_temp WHERE id_pa IS NOT NULL
+        `).get();
+        
+        db.exec(`
+            UPDATE terrains_batir_temp
+            SET 
+                id_pa = (
+                    SELECT MAX(t2.id_pa)
+                    FROM terrains_batir_temp t2
+                    WHERE t2.id_mutation = terrains_batir_temp.id_mutation
+                      AND t2.id_pa IS NOT NULL
+                      AND t2.est_terrain_viabilise = 0  -- Uniquement pour les achats lotisseurs
+                ),
+                est_terrain_viabilise = 0  -- Marquer aussi comme achat lotisseur
+            WHERE id_pa IS NULL
+              AND EXISTS (
+                SELECT 1 FROM terrains_batir_temp t3
+                WHERE t3.id_mutation = terrains_batir_temp.id_mutation
+                  AND t3.id_pa IS NOT NULL
+                  AND t3.est_terrain_viabilise = 0
+              )
+              -- CRITIQUE : Ne PAS propager aux parcelles qui sont des parcelles FILLES dans le DFI
+              -- (même si elles ont été exclues comme lots vendus à cause d'une construction)
+              AND NOT EXISTS (
+                SELECT 1 FROM parcelle_pa_map p
+                WHERE p.code_commune = terrains_batir_temp.code_commune
+                  AND p.section = terrains_batir_temp.section_cadastrale
+                  AND p.parcelle_suffixe = terrains_batir_temp.parcelle_suffixe
+              );
+        `);
+        
+        const nbApresPropagation = db.prepare(`
+            SELECT COUNT(*) as count FROM terrains_batir_temp WHERE id_pa IS NOT NULL
+        `).get();
+        const nbPropagees = nbApresPropagation.count - nbAvantPropagation.count;
+        console.log(`   ✅ ${nbPropagees} parcelle(s) supplémentaire(s) associées aux achats lotisseurs (même mutation, hors parcelles filles)\n`);
+        
         // Copier les données en AGRÉGEANT par mutation
         // FILTRE 1 : Ne garder QUE les transactions rattachées à un PA
         // FILTRE 2 : Exclure les transactions NON géolocalisées ⚠️
@@ -3511,8 +3557,11 @@ chargerTousLesCSV(db, insertDvfTemp).then((totalInserted) => {
                 MAX(avec_construction) as avec_construction  -- 1 si au moins une parcelle avait une construction
             FROM terrains_batir_temp
             WHERE id_pa IS NOT NULL
-              -- Exclure les transactions avec surface bati (terrains déjà construits)
-              AND (surface_reelle_bati IS NULL OR surface_reelle_bati = 0)
+              -- CORRECTION : Conserver TOUS les achats lotisseurs (NON_VIABILISE) même avec construction
+              -- Exclure uniquement les LOTS VIABILISÉS avec bâti existant
+              AND (est_terrain_viabilise = 0 
+                   OR surface_reelle_bati IS NULL 
+                   OR surface_reelle_bati = 0)
             GROUP BY id_mutation, est_terrain_viabilise, id_pa;
         `);
         

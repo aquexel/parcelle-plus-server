@@ -111,7 +111,8 @@ module.exports = (req, res) => {
                 latitude,
                 longitude,
                 nom_commune,
-                type_terrain
+                type_terrain,
+                avec_construction
             FROM terrains_batir
             WHERE latitude BETWEEN ? AND ?
               AND longitude BETWEEN ? AND ?
@@ -121,6 +122,12 @@ module.exports = (req, res) => {
         `;
         
         const params = [minLat, maxLat, minLon, maxLon, typeTerrain];
+        
+        // FILTRE CRITIQUE : Pour les terrains NON_VIABILISE, ne prendre QUE ceux sans construction
+        // Rationale : Pour estimer un terrain nu, on compare avec d'autres terrains nus
+        if (typeTerrain === 'NON_VIABILISE') {
+            query += ` AND (avec_construction = 0 OR avec_construction IS NULL)`;
+        }
         
         // Filtres optionnels de surface
         if (minSurface !== null && minSurface > 0) {
@@ -161,6 +168,7 @@ module.exports = (req, res) => {
                     longitude: row.longitude,
                     nom_commune: row.nom_commune,
                     type_terrain: row.type_terrain,
+                    avec_construction: row.avec_construction || 0, // Ajouter pour traçabilité
                     est_terrain_viabilise: row.type_terrain === 'VIABILISE', // Ajouter pour compatibilité
                     est_bien_a_renover: row.type_terrain === 'RENOVATION',
                     distance_meters: Math.round(distance)

@@ -327,6 +327,23 @@ class UserService {
         });
     }
 
+    async getUserByIdWithPassword(id) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT * FROM users WHERE id = ? AND is_active = 1
+            `;
+
+            this.db.get(query, [id], (err, row) => {
+                if (err) {
+                    console.error('❌ Erreur récupération utilisateur avec mot de passe:', err);
+                    reject(err);
+                } else {
+                    resolve(row);
+                }
+            });
+        });
+    }
+
     async getUserByUsername(username) {
         return new Promise((resolve, reject) => {
             const query = `
@@ -392,7 +409,7 @@ class UserService {
         return new Promise(async (resolve, reject) => {
             try {
                 // 1. Vérifier que l'utilisateur existe et récupérer son mot de passe hashé
-                const user = await this.getUserByUsernameWithPassword(userId);
+                const user = await this.getUserByIdWithPassword(userId);
                 
                 if (!user) {
                     return reject(new Error('Utilisateur introuvable'));

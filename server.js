@@ -93,7 +93,11 @@ wss.on('connection', (ws, req) => {
     ws.on('message', async (data) => {
         try {
             const message = JSON.parse(data);
-            console.log(`📨 Message reçu de ${clientId}:`, message);
+            
+            // Ne pas logger les pings pour éviter de polluer les logs
+            if (message.type !== 'ping') {
+                console.log(`📨 Message reçu de ${clientId}:`, message);
+            }
             
             switch (message.type) {
                 case 'ping':

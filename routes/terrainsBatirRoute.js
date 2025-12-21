@@ -130,6 +130,12 @@ module.exports = (req, res) => {
             query += ` AND (avec_construction = 0 OR avec_construction IS NULL)`;
         }
         
+        // FILTRE CRITIQUE : Pour les terrains VIABILISE, ne prendre QUE ceux reliés à un PA
+        // Rationale : Seuls les lots issus d'un PA sont pertinents pour l'estimation
+        if (typeTerrain === 'VIABILISE') {
+            query += ` AND id_pa IS NOT NULL`;
+        }
+        
         // Filtres optionnels de surface
         // EXCEPTION : Ne PAS filtrer par surface pour les terrains NON_VIABILISE
         // Car ce sont souvent de grandes parcelles (plusieurs hectares) qui ne correspondent pas à la surface du terrain final

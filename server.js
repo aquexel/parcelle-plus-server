@@ -1045,6 +1045,55 @@ app.put('/api/users/profile/:id', async (req, res) => {
     }
 });
 
+// Modification de l'email utilisateur
+app.post('/api/users/:userId/update-email', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { newEmail, password } = req.body;
+        
+        console.log(`📧 Demande de modification d'email pour utilisateur ${userId}`);
+        
+        // Validation des paramètres
+        if (!newEmail || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email et mot de passe requis'
+            });
+        }
+        
+        // Appeler le service pour mettre à jour l'email
+        const result = await userService.updateUserEmail(userId, newEmail, password);
+        
+        res.json({
+            success: true,
+            message: 'Email modifié avec succès',
+            data: {
+                userId: result.userId,
+                newEmail: result.newEmail
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur modification email:', error.message);
+        
+        // Codes d'erreur spécifiques
+        if (error.message === 'Utilisateur introuvable') {
+            return res.status(404).json({ success: false, message: error.message });
+        } else if (error.message === 'Mot de passe incorrect') {
+            return res.status(401).json({ success: false, message: error.message });
+        } else if (error.message.includes('déjà utilisé')) {
+            return res.status(409).json({ success: false, message: error.message });
+        } else if (error.message.includes('Format')) {
+            return res.status(400).json({ success: false, message: error.message });
+        } else {
+            return res.status(500).json({ 
+                success: false, 
+                message: `Erreur serveur: ${error.message}` 
+            });
+        }
+    }
+});
+
 // Recherche d'utilisateurs
 app.get('/api/users/search', async (req, res) => {
     try {

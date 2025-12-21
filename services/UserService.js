@@ -388,6 +388,65 @@ class UserService {
         });
     }
 
+    async updateUserEmail(userId, newEmail, currentPassword) {
+        return new Promise(async (resolve, reject) => {
+            try {
+                // 1. Vérifier que l'utilisateur existe et récupérer son mot de passe hashé
+                const user = await this.getUserByUsernameWithPassword(userId);
+                
+                if (!user) {
+                    return reject(new Error('Utilisateur introuvable'));
+                }
+
+                // 2. Vérifier le mot de passe actuel
+                const passwordValid = await bcrypt.compare(currentPassword, user.password_hash);
+                if (!passwordValid) {
+                    return reject(new Error('Mot de passe incorrect'));
+                }
+
+                // 3. Vérifier que le nouvel email n'est pas déjà utilisé
+                const existingUser = await this.getUserByEmail(newEmail);
+                if (existingUser && existingUser.id !== userId) {
+                    return reject(new Error('Cet email est déjà utilisé par un autre compte'));
+                }
+
+                // 4. Vérifier le format de l'email
+                if (!this.isValidEmail(newEmail)) {
+                    return reject(new Error('Format d\'email invalide'));
+                }
+
+                // 5. Mettre à jour l'email
+                const now = new Date().toISOString();
+                const query = `
+                    UPDATE users 
+                    SET email = ?, updated_at = ? 
+                    WHERE id = ?
+                `;
+
+                this.db.run(query, [newEmail, now, userId], function(err) {
+                    if (err) {
+                        console.error('❌ Erreur mise à jour email:', err);
+                        reject(err);
+                    } else if (this.changes === 0) {
+                        console.log(`⚠️ Aucune mise à jour pour l'utilisateur: ${userId}`);
+                        reject(new Error('Échec de la mise à jour de l\'email'));
+                    } else {
+                        console.log(`✅ Email mis à jour pour l'utilisateur ${userId}: ${user.email} → ${newEmail}`);
+                        resolve({
+                            success: true,
+                            userId: userId,
+                            newEmail: newEmail
+                        });
+                    }
+                });
+
+            } catch (error) {
+                console.error('❌ Erreur updateUserEmail:', error);
+                reject(error);
+            }
+        });
+    }
+
     async searchUsers(searchTerm, userType = null, limit = 20) {
         return new Promise((resolve, reject) => {
             let query = `

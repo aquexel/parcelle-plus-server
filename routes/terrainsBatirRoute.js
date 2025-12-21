@@ -112,7 +112,8 @@ module.exports = (req, res) => {
                 longitude,
                 nom_commune,
                 type_terrain,
-                avec_construction
+                avec_construction,
+                id_pa
             FROM terrains_batir
             WHERE latitude BETWEEN ? AND ?
               AND longitude BETWEEN ? AND ?
@@ -173,6 +174,7 @@ module.exports = (req, res) => {
                     nom_commune: row.nom_commune,
                     type_terrain: row.type_terrain,
                     avec_construction: row.avec_construction || 0, // Ajouter pour traçabilité
+                    id_pa: row.id_pa || null, // Numéro de Permis d'Aménager
                     est_terrain_viabilise: row.type_terrain === 'VIABILISE', // Ajouter pour compatibilité
                     est_bien_a_renover: row.type_terrain === 'RENOVATION',
                     distance_meters: Math.round(distance)

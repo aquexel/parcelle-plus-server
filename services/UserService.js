@@ -1,574 +1,439 @@
-const sqlite3 = require('sqlite3').verbose();
-const { v4: uuidv4 } = require('uuid');
-const bcrypt = require('bcrypt');
+const Database = require('better-sqlite3');
 const path = require('path');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 
 class UserService {
     constructor() {
-        this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_business.db');
-        this.db = new sqlite3.Database(this.dbPath);
+        const dbDir = path.join(__dirname, '..', 'database');
+        this.dbPath = path.join(dbDir, 'parcelle_chat.db');
+        this.db = new Database(this.dbPath);
+        
+        // Créer les tables si elles n'existent pas
         this.initializeDatabase();
     }
-
+    
     initializeDatabase() {
-        const createUsersTable = `
+        // Table des utilisateurs
+        this.db.exec(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE,
+                email TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 full_name TEXT,
                 phone TEXT,
-                user_type TEXT DEFAULT 'user',
+                user_type TEXT DEFAULT 'buyer',
                 device_id TEXT,
-                avatar_url TEXT,
                 is_active INTEGER DEFAULT 1,
                 is_verified INTEGER DEFAULT 0,
-                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+                email_verification_token TEXT,
+                email_verification_expires INTEGER,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        `;
-
-        // Table pour les sessions utilisateur
-        const createSessionsTable = `
+        `);
+        
+        // Table des sessions
+        this.db.exec(`
             CREATE TABLE IF NOT EXISTS user_sessions (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 token TEXT UNIQUE NOT NULL,
-                expires_at DATETIME NOT NULL,
-                device_info TEXT,
+                expires_at INTEGER NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (id)
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-        `;
-
-        this.db.run(createUsersTable, (err) => {
-            if (err) {
-                console.error('❌ Erreur création table users:', err);
-            } else {
-                console.log('✅ Table users initialisée');
-            }
-        });
-
-        this.db.run(createSessionsTable, (err) => {
-            if (err) {
-                console.error('❌ Erreur création table sessions:', err);
-            } else {
-                console.log('✅ Table sessions initialisée');
-            }
-        });
+        `);
+        
+        // Index pour améliorer les performances
+        this.db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(token);
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+            CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+        `);
     }
-
-    // ========== AUTHENTIFICATION ==========
-
+    
     async registerUser(userData) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                // Validation des données
-                if (!userData.username || userData.username.length < 3) {
-                    return reject(new Error('Nom d\'utilisateur requis (min 3 caractères)'));
-                }
-                
-                if (!userData.password || userData.password.length < 6) {
-                    return reject(new Error('Mot de passe requis (min 6 caractères)'));
-                }
-
-                if (!userData.email || !this.isValidEmail(userData.email)) {
-                    return reject(new Error('Email valide requis'));
-                }
-
-                // Vérifier si l'utilisateur existe déjà
-                const existingUser = await this.getUserByUsername(userData.username);
-                if (existingUser) {
-                    return reject(new Error('Nom d\'utilisateur déjà utilisé'));
-                }
-
-                const existingEmail = await this.getUserByEmail(userData.email);
-                if (existingEmail) {
-                    return reject(new Error('Email déjà utilisé'));
-                }
-
-                // Hasher le mot de passe
-                const passwordHash = await bcrypt.hash(userData.password, 10);
-                
-                const id = uuidv4();
-                const now = new Date().toISOString();
-                
-                const query = `
-                    INSERT INTO users (
-                        id, username, email, password_hash, full_name, phone, 
-                        user_type, device_id, is_active, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `;
-
-                const params = [
-                    id,
-                    userData.username,
-                    userData.email,
-                    passwordHash,
-                    userData.fullName || '',
-                    userData.phone || '',
-                    userData.userType || 'user',
-                    userData.deviceId || '',
-                    1,
-                    now,
-                    now
-                ];
-
-                this.db.run(query, params, function(err) {
-                    if (err) {
-                        console.error('❌ Erreur création utilisateur:', err);
-                        reject(err);
-                    } else {
-                        const newUser = {
-                            id,
-                            username: userData.username,
-                            email: userData.email,
-                            fullName: userData.fullName || '',
-                            phone: userData.phone || '',
-                            userType: userData.userType || 'buyer',
-                            isActive: true,
-                            createdAt: now,
-                            updatedAt: now
-                        };
-                        
-                        console.log(`✅ Utilisateur inscrit: ${id} (${userData.username})`);
-                        resolve(newUser);
-                    }
-                });
-            } catch (error) {
-                reject(error);
-            }
-        });
+        const { username, email, password, fullName, phone, userType } = userData;
+        
+        // Vérifier si l'utilisateur existe déjà
+        const existingUser = this.db.prepare('SELECT id FROM users WHERE username = ? OR email = ?').get(username, email);
+        if (existingUser) {
+            throw new Error('Un utilisateur avec ce nom d\'utilisateur ou cet email existe déjà');
+        }
+        
+        // Hasher le mot de passe
+        const passwordHash = await bcrypt.hash(password, 10);
+        
+        // Générer un token de vérification d'email
+        const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+        const emailVerificationExpires = Date.now() + (24 * 60 * 60 * 1000); // 24 heures
+        
+        // Créer l'utilisateur
+        const userId = uuidv4();
+        const insertUser = this.db.prepare(`
+            INSERT INTO users (id, username, email, password_hash, full_name, phone, user_type, is_verified, email_verification_token, email_verification_expires)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+        `);
+        
+        insertUser.run(
+            userId,
+            username,
+            email,
+            passwordHash,
+            fullName || null,
+            phone || null,
+            userType || 'buyer',
+            emailVerificationToken,
+            emailVerificationExpires
+        );
+        
+        // Retourner les données de l'utilisateur (sans le mot de passe)
+        const user = this.db.prepare('SELECT id, username, email, full_name, phone, user_type, is_verified FROM users WHERE id = ?').get(userId);
+        
+        return {
+            ...user,
+            emailVerificationToken // Retourner le token pour l'envoyer par email
+        };
     }
-
+    
+    async verifyEmail(token) {
+        const user = this.db.prepare(`
+            SELECT id, email_verification_expires, is_verified 
+            FROM users 
+            WHERE email_verification_token = ?
+        `).get(token);
+        
+        if (!user) {
+            throw new Error('Token de vérification invalide');
+        }
+        
+        if (user.is_verified === 1) {
+            throw new Error('Email déjà vérifié');
+        }
+        
+        if (user.email_verification_expires < Date.now()) {
+            throw new Error('Token de vérification expiré');
+        }
+        
+        // Marquer l'email comme vérifié
+        this.db.prepare(`
+            UPDATE users 
+            SET is_verified = 1, 
+                email_verification_token = NULL, 
+                email_verification_expires = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(user.id);
+        
+        return this.db.prepare('SELECT id, username, email, full_name, phone, user_type, is_verified FROM users WHERE id = ?').get(user.id);
+    }
+    
+    async resendVerificationEmail(email) {
+        const user = this.db.prepare('SELECT id, username, email, is_verified FROM users WHERE email = ?').get(email);
+        
+        if (!user) {
+            throw new Error('Aucun utilisateur trouvé avec cet email');
+        }
+        
+        if (user.is_verified === 1) {
+            throw new Error('Email déjà vérifié');
+        }
+        
+        // Générer un nouveau token
+        const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+        const emailVerificationExpires = Date.now() + (24 * 60 * 60 * 1000); // 24 heures
+        
+        this.db.prepare(`
+            UPDATE users 
+            SET email_verification_token = ?, 
+                email_verification_expires = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(emailVerificationToken, emailVerificationExpires, user.id);
+        
+        return {
+            emailVerificationToken,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email
+            }
+        };
+    }
+    
     async loginUser(username, password) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                // Récupérer l'utilisateur
-                const user = await this.getUserByUsernameWithPassword(username);
-                if (!user) {
-                    return reject(new Error('Nom d\'utilisateur ou mot de passe incorrect'));
-                }
-
-                // Vérifier le mot de passe
-                const passwordValid = await bcrypt.compare(password, user.password_hash);
-                if (!passwordValid) {
-                    return reject(new Error('Nom d\'utilisateur ou mot de passe incorrect'));
-                }
-
-                if (!user.is_active) {
-                    return reject(new Error('Compte désactivé'));
-                }
-
-                // Mettre à jour last_seen
-                await this.updateLastSeen(user.id);
-
-                // Créer une session
-                const session = await this.createSession(user.id);
-
-                const userResponse = {
-                    id: user.id,
-                    username: user.username,
-                    email: user.email,
-                    fullName: user.full_name,
-                    phone: user.phone,
-                    userType: user.user_type,
-                    avatarUrl: user.avatar_url,
-                    isVerified: user.is_verified === 1,
-                    token: session.token,
-                    expiresAt: session.expires_at
-                };
-
-                console.log(`✅ Utilisateur connecté: ${user.id} (${user.username})`);
-                resolve(userResponse);
-
-            } catch (error) {
-                reject(error);
+        const user = this.db.prepare('SELECT * FROM users WHERE username = ? OR email = ?').get(username, username);
+        
+        if (!user) {
+            throw new Error('Nom d\'utilisateur ou mot de passe incorrect');
+        }
+        
+        // Vérifier le mot de passe
+        const passwordMatch = await bcrypt.compare(password, user.password_hash);
+        if (!passwordMatch) {
+            throw new Error('Nom d\'utilisateur ou mot de passe incorrect');
+        }
+        
+        // Vérifier si le compte est actif
+        if (user.is_active === 0) {
+            throw new Error('Compte désactivé');
+        }
+        
+        // Vérifier si l'email est vérifié (optionnel - vous pouvez rendre cela obligatoire)
+        // if (user.is_verified === 0) {
+        //     throw new Error('Veuillez vérifier votre email avant de vous connecter');
+        // }
+        
+        // Créer une session
+        const sessionId = uuidv4();
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiresAt = Date.now() + (7 * 24 * 60 * 60 * 1000); // 7 jours
+        
+        this.db.prepare(`
+            INSERT INTO user_sessions (id, user_id, token, expires_at)
+            VALUES (?, ?, ?, ?)
+        `).run(sessionId, user.id, token, expiresAt);
+        
+        // Retourner les données de l'utilisateur avec le token
+        return {
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                fullName: user.full_name,
+                phone: user.phone,
+                userType: user.user_type,
+                isVerified: user.is_verified === 1,
+                token: token,
+                expiresAt: expiresAt
             }
-        });
+        };
     }
-
-    async createSession(userId, deviceInfo = '') {
-        return new Promise((resolve, reject) => {
-            const sessionId = uuidv4();
-            const token = uuidv4() + '_' + Date.now();
-            const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 jours
-            const now = new Date().toISOString();
-
-            const query = `
-                INSERT INTO user_sessions (id, user_id, token, expires_at, device_info, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `;
-
-            this.db.run(query, [sessionId, userId, token, expiresAt.toISOString(), deviceInfo, now], function(err) {
-                if (err) {
-                    console.error('❌ Erreur création session:', err);
-                    reject(err);
-                } else {
-                    resolve({
-                        id: sessionId,
-                        token: token,
-                        expires_at: expiresAt.toISOString()
-                    });
-                }
-            });
-        });
-    }
-
-    async validateSession(token) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT s.*, u.id as user_id, u.username, u.email, u.full_name, 
-                       u.user_type, u.is_active
-                FROM user_sessions s
-                JOIN users u ON s.user_id = u.id
-                WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1
-            `;
-
-            this.db.get(query, [token], (err, row) => {
-                if (err) {
-                    console.error('❌ Erreur validation session:', err);
-                    reject(err);
-                } else if (row) {
-                    resolve({
-                        sessionId: row.id,
-                        user: {
-                            id: row.user_id,
-                            username: row.username,
-                            email: row.email,
-                            fullName: row.full_name,
-                            userType: row.user_type
-                        }
-                    });
-                } else {
-                    resolve(null);
-                }
-            });
-        });
-    }
-
+    
     async logoutUser(token) {
-        return new Promise((resolve, reject) => {
-            const query = `DELETE FROM user_sessions WHERE token = ?`;
-            
-            this.db.run(query, [token], function(err) {
-                if (err) {
-                    console.error('❌ Erreur déconnexion:', err);
-                    reject(err);
-                } else {
-                    console.log(`✅ Session supprimée: ${token.substring(0, 8)}...`);
-                    resolve(this.changes > 0);
-                }
-            });
-        });
+        const result = this.db.prepare('DELETE FROM user_sessions WHERE token = ?').run(token);
+        return result.changes > 0;
     }
-
-    // ========== GESTION UTILISATEURS ==========
-
-    async getUserByUsernameWithPassword(username) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT * FROM users WHERE username = ? OR email = ?
-            `;
-
-            this.db.get(query, [username, username], (err, row) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateur:', err);
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-    }
-
-    async getUserByEmail(email) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT id, username, email, full_name, user_type, created_at
-                FROM users WHERE email = ?
-            `;
-
-            this.db.get(query, [email], (err, row) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateur par email:', err);
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-    }
-
-    async getUserById(id) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT 
-                    id, username, email, full_name, phone, user_type, 
-                    avatar_url, is_verified, last_seen, created_at, updated_at
-                FROM users 
-                WHERE id = ? AND is_active = 1
-            `;
-
-            this.db.get(query, [id], (err, row) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateur:', err);
-                    reject(err);
-                } else if (row) {
-                    console.log(`✅ Utilisateur récupéré: ${id}`);
-                    resolve(row);
-                } else {
-                    console.log(`⚠️ Utilisateur non trouvé: ${id}`);
-                    resolve(null);
-                }
-            });
-        });
-    }
-
-    async getUserByIdWithPassword(id) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT * FROM users WHERE id = ? AND is_active = 1
-            `;
-
-            this.db.get(query, [id], (err, row) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateur avec mot de passe:', err);
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-    }
-
-    async getUserByUsername(username) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT 
-                    id, username, email, full_name, phone, user_type, 
-                    avatar_url, is_verified, last_seen, created_at, updated_at
-                FROM users 
-                WHERE username = ? AND is_active = 1
-            `;
-
-            this.db.get(query, [username], (err, row) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateur par nom:', err);
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-    }
-
-    async updateUserProfile(userId, profileData) {
-        return new Promise((resolve, reject) => {
-            const updates = [];
-            const params = [];
-
-            if (profileData.fullName !== undefined) {
-                updates.push('full_name = ?');
-                params.push(profileData.fullName);
+    
+    async validateSession(token) {
+        const session = this.db.prepare(`
+            SELECT s.*, u.id, u.username, u.email, u.full_name, u.phone, u.user_type, u.is_verified
+            FROM user_sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token = ? AND s.expires_at > ?
+        `).get(token, Date.now());
+        
+        if (!session) {
+            return null;
+        }
+        
+        return {
+            user: {
+                id: session.id,
+                username: session.username,
+                email: session.email,
+                fullName: session.full_name,
+                phone: session.phone,
+                userType: session.user_type,
+                isVerified: session.is_verified === 1
             }
-            if (profileData.phone !== undefined) {
-                updates.push('phone = ?');
-                params.push(profileData.phone);
-            }
-            if (profileData.avatarUrl !== undefined) {
-                updates.push('avatar_url = ?');
-                params.push(profileData.avatarUrl);
-            }
-
-            if (updates.length === 0) {
-                return resolve(false);
-            }
-
-            updates.push('updated_at = ?');
-            params.push(new Date().toISOString());
-            params.push(userId);
-
-            const query = `UPDATE users SET ${updates.join(', ')} WHERE id = ?`;
-
-            this.db.run(query, params, function(err) {
-                if (err) {
-                    console.error('❌ Erreur mise à jour profil:', err);
-                    reject(err);
-                } else {
-                    console.log(`✅ Profil mis à jour: ${userId}`);
-                    resolve(this.changes > 0);
-                }
-            });
-        });
+        };
     }
-
-    async updateUserEmail(userId, newEmail, currentPassword) {
-        return new Promise(async (resolve, reject) => {
-            try {
-                // 1. Vérifier que l'utilisateur existe et récupérer son mot de passe hashé
-                const user = await this.getUserByIdWithPassword(userId);
-                
-                if (!user) {
-                    return reject(new Error('Utilisateur introuvable'));
-                }
-
-                // 2. Vérifier le mot de passe actuel
-                const passwordValid = await bcrypt.compare(currentPassword, user.password_hash);
-                if (!passwordValid) {
-                    return reject(new Error('Mot de passe incorrect'));
-                }
-
-                // 3. Vérifier que le nouvel email n'est pas déjà utilisé
-                const existingUser = await this.getUserByEmail(newEmail);
-                if (existingUser && existingUser.id !== userId) {
-                    return reject(new Error('Cet email est déjà utilisé par un autre compte'));
-                }
-
-                // 4. Vérifier le format de l'email
-                if (!this.isValidEmail(newEmail)) {
-                    return reject(new Error('Format d\'email invalide'));
-                }
-
-                // 5. Mettre à jour l'email
-                const now = new Date().toISOString();
-                const query = `
-                    UPDATE users 
-                    SET email = ?, updated_at = ? 
-                    WHERE id = ?
-                `;
-
-                this.db.run(query, [newEmail, now, userId], function(err) {
-                    if (err) {
-                        console.error('❌ Erreur mise à jour email:', err);
-                        reject(err);
-                    } else if (this.changes === 0) {
-                        console.log(`⚠️ Aucune mise à jour pour l'utilisateur: ${userId}`);
-                        reject(new Error('Échec de la mise à jour de l\'email'));
-                    } else {
-                        console.log(`✅ Email mis à jour pour l'utilisateur ${userId}: ${user.email} → ${newEmail}`);
-                        resolve({
-                            success: true,
-                            userId: userId,
-                            newEmail: newEmail
-                        });
-                    }
-                });
-
-            } catch (error) {
-                console.error('❌ Erreur updateUserEmail:', error);
-                reject(error);
-            }
-        });
+    
+    async getUserById(userId) {
+        const user = this.db.prepare('SELECT id, username, email, full_name, phone, user_type, is_verified FROM users WHERE id = ?').get(userId);
+        return user;
     }
-
-    async searchUsers(searchTerm, userType = null, limit = 20) {
-        return new Promise((resolve, reject) => {
-            let query = `
-                SELECT id, username, full_name, user_type, avatar_url, last_seen
-                FROM users 
-                WHERE is_active = 1 AND (username LIKE ? OR full_name LIKE ?)
-            `;
-            let params = [`%${searchTerm}%`, `%${searchTerm}%`];
-
-            if (userType) {
-                query += ` AND user_type = ?`;
-                params.push(userType);
-            }
-
-            query += ` ORDER BY last_seen DESC LIMIT ?`;
-            params.push(limit);
-
-            this.db.all(query, params, (err, rows) => {
-                if (err) {
-                    console.error('❌ Erreur recherche utilisateurs:', err);
-                    reject(err);
-                } else {
-                    resolve(rows);
-                }
-            });
-        });
+    
+    async updateUserProfile(userId, updateData) {
+        const fields = [];
+        const values = [];
+        
+        if (updateData.fullName !== undefined) {
+            fields.push('full_name = ?');
+            values.push(updateData.fullName);
+        }
+        if (updateData.phone !== undefined) {
+            fields.push('phone = ?');
+            values.push(updateData.phone);
+        }
+        if (updateData.userType !== undefined) {
+            fields.push('user_type = ?');
+            values.push(updateData.userType);
+        }
+        
+        if (fields.length === 0) {
+            return false;
+        }
+        
+        fields.push('updated_at = CURRENT_TIMESTAMP');
+        values.push(userId);
+        
+        const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
+        const result = this.db.prepare(sql).run(...values);
+        
+        return result.changes > 0;
     }
-
-    async updateLastSeen(id) {
-        return new Promise((resolve, reject) => {
-            const now = new Date().toISOString();
-            const query = `
-                UPDATE users 
-                SET last_seen = ?, updated_at = ? 
-                WHERE id = ?
-            `;
-
-            this.db.run(query, [now, now, id], function(err) {
-                if (err) {
-                    console.error('❌ Erreur mise à jour last_seen:', err);
-                    reject(err);
-                } else {
-                    resolve(this.changes > 0);
-                }
-            });
-        });
+    
+    async updateUserEmail(userId, newEmail, password) {
+        const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+        
+        if (!user) {
+            throw new Error('Utilisateur non trouvé');
+        }
+        
+        // Vérifier le mot de passe
+        const passwordMatch = await bcrypt.compare(password, user.password_hash);
+        if (!passwordMatch) {
+            throw new Error('Mot de passe incorrect');
+        }
+        
+        // Vérifier si l'email existe déjà
+        const existingUser = this.db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(newEmail, userId);
+        if (existingUser) {
+            throw new Error('Cet email est déjà utilisé');
+        }
+        
+        // Générer un nouveau token de vérification
+        const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+        const emailVerificationExpires = Date.now() + (24 * 60 * 60 * 1000);
+        
+        // Mettre à jour l'email et réinitialiser la vérification
+        this.db.prepare(`
+            UPDATE users 
+            SET email = ?, 
+                is_verified = 0,
+                email_verification_token = ?,
+                email_verification_expires = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(newEmail, emailVerificationToken, emailVerificationExpires, userId);
+        
+        return {
+            emailVerificationToken,
+            user: this.getUserById(userId)
+        };
     }
-
+    
+    async searchUsers(query, userType, limit = 50) {
+        let sql = 'SELECT id, username, email, full_name, phone, user_type FROM users WHERE 1=1';
+        const params = [];
+        
+        if (query) {
+            sql += ' AND (username LIKE ? OR email LIKE ? OR full_name LIKE ?)';
+            const searchTerm = `%${query}%`;
+            params.push(searchTerm, searchTerm, searchTerm);
+        }
+        
+        if (userType) {
+            sql += ' AND user_type = ?';
+            params.push(userType);
+        }
+        
+        sql += ' LIMIT ?';
+        params.push(limit);
+        
+        return this.db.prepare(sql).all(...params);
+    }
+    
     async getAllUsers(limit = 100) {
-        return new Promise((resolve, reject) => {
-            const query = `
-                SELECT 
-                    id, username, email, full_name, user_type, last_seen, created_at
-                FROM users 
-                WHERE is_active = 1
-                ORDER BY created_at DESC 
-                LIMIT ?
-            `;
-
-            this.db.all(query, [limit], (err, rows) => {
-                if (err) {
-                    console.error('❌ Erreur récupération utilisateurs:', err);
-                    reject(err);
-                } else {
-                    console.log(`✅ ${rows.length} utilisateurs récupérés`);
-                    resolve(rows);
-                }
-            });
-        });
+        return this.db.prepare('SELECT id, username, email, full_name, phone, user_type, is_verified FROM users LIMIT ?').all(limit);
     }
-
-    // ========== UTILITAIRES ==========
-
-    isValidEmail(email) {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        return emailRegex.test(email);
-    }
-
-    // ========== NETTOYAGE ==========
-
+    
     async cleanExpiredSessions() {
-        return new Promise((resolve, reject) => {
-            const query = `DELETE FROM user_sessions WHERE expires_at < datetime('now')`;
-            
-            this.db.run(query, function(err) {
-                if (err) {
-                    console.error('❌ Erreur nettoyage sessions:', err);
-                    reject(err);
-                } else {
-                    console.log(`✅ ${this.changes} sessions expirées supprimées`);
-                    resolve(this.changes);
-                }
-            });
-        });
+        const result = this.db.prepare('DELETE FROM user_sessions WHERE expires_at < ?').run(Date.now());
+        return result.changes;
     }
-
-    close() {
-        this.db.close((err) => {
-            if (err) {
-                console.error('❌ Erreur fermeture base de données:', err);
-            } else {
-                console.log('✅ Base de données fermée');
+    
+    async requestPasswordReset(email) {
+        const user = this.db.prepare('SELECT id, username, email FROM users WHERE email = ?').get(email);
+        
+        if (!user) {
+            // Ne pas révéler si l'email existe ou non pour des raisons de sécurité
+            return {
+                success: true,
+                message: 'Si cet email existe, un lien de réinitialisation a été envoyé.'
+            };
+        }
+        
+        // Générer un token de réinitialisation
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const resetExpires = Date.now() + (60 * 60 * 1000); // 1 heure
+        
+        // Ajouter les colonnes si elles n'existent pas
+        try {
+            this.db.exec(`
+                ALTER TABLE users ADD COLUMN password_reset_token TEXT;
+                ALTER TABLE users ADD COLUMN password_reset_expires INTEGER;
+            `);
+        } catch (e) {
+            // Les colonnes existent déjà, ignorer l'erreur
+        }
+        
+        // Sauvegarder le token
+        this.db.prepare(`
+            UPDATE users 
+            SET password_reset_token = ?, 
+                password_reset_expires = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(resetToken, resetExpires, user.id);
+        
+        return {
+            success: true,
+            resetToken,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email
             }
-        });
+        };
+    }
+    
+    async resetPassword(token, newPassword) {
+        const user = this.db.prepare(`
+            SELECT id, password_reset_expires 
+            FROM users 
+            WHERE password_reset_token = ?
+        `).get(token);
+        
+        if (!user) {
+            throw new Error('Token de réinitialisation invalide');
+        }
+        
+        if (user.password_reset_expires < Date.now()) {
+            throw new Error('Token de réinitialisation expiré');
+        }
+        
+        // Hasher le nouveau mot de passe
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+        
+        // Mettre à jour le mot de passe et supprimer le token
+        this.db.prepare(`
+            UPDATE users 
+            SET password_hash = ?,
+                password_reset_token = NULL,
+                password_reset_expires = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(passwordHash, user.id);
+        
+        return this.db.prepare('SELECT id, username, email FROM users WHERE id = ?').get(user.id);
+    }
+    
+    async deleteUser(userId) {
+        const result = this.db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+        return result.changes > 0;
+    }
+    
+    close() {
+        this.db.close();
     }
 }
 
-module.exports = UserService; 
+module.exports = UserService;
+

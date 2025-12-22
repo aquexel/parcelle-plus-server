@@ -729,14 +729,48 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
     
     const stats = fs.statSync(csvFile);
     const fileSizeMB = (stats.size / 1024 / 1024).toFixed(1);
+    const fileSizeGB = (stats.size / 1024 / 1024 / 1024).toFixed(2);
     
-    console.log(`📂 Chargement ${path.basename(csvFile)} (${fileSizeMB} MB)...`);
+    console.log(`📂 Chargement ${path.basename(csvFile)} (${fileSizeGB} GB / ${fileSizeMB} MB)...`);
     
-    // Détecter le séparateur CSV (virgule ou point-virgule)
-    const firstLine = fs.readFileSync(csvFile, 'utf8').split('\n')[0];
-    const separator = firstLine.includes(';') ? ';' : ',';
-    if (separator === ';') {
-        console.log(`   🔍 Séparateur détecté: point-virgule (;)`);
+    // Détecter le séparateur CSV en lisant seulement la première ligne avec un stream
+    let separator = ',';
+    try {
+        const firstLineStream = fs.createReadStream(csvFile, { encoding: 'utf8', highWaterMark: 1024 * 1024 }); // 1MB buffer
+        let firstLine = '';
+        let separatorDetected = false;
+        
+        await new Promise((resolve, reject) => {
+            firstLineStream.on('data', (chunk) => {
+                if (!separatorDetected) {
+                    firstLine += chunk;
+                    const newlineIndex = firstLine.indexOf('\n');
+                    if (newlineIndex !== -1) {
+                        firstLine = firstLine.substring(0, newlineIndex);
+                        separator = firstLine.includes(';') ? ';' : ',';
+                        separatorDetected = true;
+                        firstLineStream.destroy(); // Arrêter la lecture
+                        resolve();
+                    }
+                }
+            });
+            
+            firstLineStream.on('end', () => {
+                if (!separatorDetected) {
+                    separator = firstLine.includes(';') ? ';' : ',';
+                    resolve();
+                }
+            });
+            
+            firstLineStream.on('error', reject);
+        });
+        
+        if (separator === ';') {
+            console.log(`   🔍 Séparateur détecté: point-virgule (;)`);
+        }
+    } catch (error) {
+        console.log(`   ⚠️  Impossible de détecter le séparateur, utilisation par défaut: virgule (,)`);
+        separator = ',';
     }
     
     let batch = [];
@@ -763,7 +797,20 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
         let firstRow = true;
         let columnNames = [];
         
-        fs.createReadStream(csvFile)
+        // Utiliser un stream avec un buffer adapté pour les gros fichiers
+        // Pour les fichiers > 2GB, on utilise un buffer plus petit pour éviter les problèmes de mémoire
+        const fileSize = stats.size;
+        const highWaterMark = fileSize > 2 * 1024 * 1024 * 1024 
+            ? 16 * 1024 * 1024  // 16MB pour fichiers > 2GB
+            : 64 * 1024 * 1024; // 64MB pour fichiers plus petits
+        
+        const readStream = fs.createReadStream(csvFile, { 
+            encoding: 'utf8',
+            highWaterMark: highWaterMark,
+            autoClose: true
+        });
+        
+        readStream
             .pipe(csv({ separator: separator }))
             .on('data', (row) => {
                 // Afficher les colonnes de la première ligne pour debug
@@ -810,8 +857,15 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
             })
             .on('error', (err) => {
                 console.error(`   ❌ Erreur lors de la lecture du CSV: ${err.message}`);
+                readStream.destroy();
                 reject(err);
             });
+        
+        // Gérer les erreurs du stream de lecture
+        readStream.on('error', (err) => {
+            console.error(`   ❌ Erreur lors de l'ouverture du fichier: ${err.message}`);
+            reject(err);
+        });
     });
 }
 

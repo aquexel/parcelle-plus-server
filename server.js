@@ -12,6 +12,7 @@ const MessageService = require('./services/MessageService');
 const UserService = require('./services/UserService');
 const OfferService = require('./services/OfferService');
 const PriceAlertService = require('./services/PriceAlertService');
+const EmailService = require('./services/EmailService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -34,6 +35,7 @@ const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
 const pushNotificationService = new (require('./services/PushNotificationService'))();
+const emailService = new EmailService();
 
 // Créer le serveur HTTP
 const server = http.createServer(app);
@@ -914,15 +916,177 @@ app.post('/api/auth/register', async (req, res) => {
         
         const newUser = await userService.registerUser(userData);
         
+        // Envoyer l'email de confirmation (BLOQUANT - l'inscription échoue si l'email ne peut pas être envoyé)
+        try {
+            const emailSent = await emailService.sendVerificationEmail(
+                newUser.email,
+                newUser.username,
+                newUser.emailVerificationToken
+            );
+            
+            if (!emailSent) {
+                // Supprimer l'utilisateur créé si l'email n'a pas pu être envoyé
+                await userService.deleteUser(newUser.id);
+                throw new Error('Impossible d\'envoyer l\'email de confirmation. Veuillez vérifier la configuration SMTP.');
+            }
+            
+            console.log(`✅ Email de confirmation envoyé à ${newUser.email}`);
+        } catch (emailError) {
+            console.error(`❌ Erreur envoi email de confirmation: ${emailError.message}`);
+            // Supprimer l'utilisateur créé si l'email échoue
+            try {
+                await userService.deleteUser(newUser.id);
+            } catch (deleteError) {
+                console.error(`⚠️ Erreur lors de la suppression de l'utilisateur: ${deleteError.message}`);
+            }
+            throw new Error(`Erreur lors de l'envoi de l'email de confirmation: ${emailError.message}`);
+        }
+        
+        // Retourner les données sans le token
+        const { emailVerificationToken, ...userWithoutToken } = newUser;
+        
         res.status(201).json({
-            message: 'Utilisateur créé avec succès',
-            user: newUser
+            message: 'Utilisateur créé avec succès. Un email de confirmation a été envoyé.',
+            user: userWithoutToken,
+            emailSent: true
         });
         
     } catch (error) {
         console.error('❌ Erreur inscription:', error.message);
         res.status(400).json({ 
             error: error.message || 'Erreur lors de l\'inscription'
+        });
+    }
+});
+
+// Vérification de l'email
+app.get('/api/auth/verify-email', async (req, res) => {
+    try {
+        const { token } = req.query;
+        
+        if (!token) {
+            return res.status(400).json({ error: 'Token de vérification requis' });
+        }
+        
+        const verifiedUser = await userService.verifyEmail(token);
+        
+        res.status(200).json({
+            message: 'Email vérifié avec succès',
+            user: verifiedUser
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur vérification email:', error.message);
+        res.status(400).json({ 
+            error: error.message || 'Erreur lors de la vérification de l\'email'
+        });
+    }
+});
+
+// Renvoyer l'email de confirmation
+app.post('/api/auth/resend-verification', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'Email requis' });
+        }
+        
+        const result = await userService.resendVerificationEmail(email);
+        
+        // Envoyer l'email (BLOQUANT)
+        const emailSent = await emailService.sendVerificationEmail(
+            result.user.email,
+            result.user.username,
+            result.emailVerificationToken
+        );
+        
+        if (!emailSent) {
+            throw new Error('Impossible d\'envoyer l\'email de confirmation. Veuillez vérifier la configuration SMTP.');
+        }
+        
+        console.log(`✅ Email de confirmation renvoyé à ${result.user.email}`);
+        
+        res.status(200).json({
+            message: 'Email de confirmation renvoyé',
+            emailSent: true
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur renvoi email:', error.message);
+        res.status(400).json({ 
+            error: error.message || 'Erreur lors du renvoi de l\'email'
+        });
+    }
+});
+
+// Demander une réinitialisation de mot de passe
+app.post('/api/auth/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'Email requis' });
+        }
+        
+        const result = await userService.requestPasswordReset(email);
+        
+        // Si l'utilisateur existe, envoyer l'email (BLOQUANT)
+        if (result.resetToken) {
+            const emailSent = await emailService.sendPasswordResetEmail(
+                result.user.email,
+                result.user.username,
+                result.resetToken
+            );
+            
+            if (!emailSent) {
+                throw new Error('Impossible d\'envoyer l\'email de réinitialisation. Veuillez vérifier la configuration SMTP.');
+            }
+            
+            console.log(`✅ Email de réinitialisation envoyé à ${result.user.email}`);
+        }
+        
+        // Toujours retourner le même message pour des raisons de sécurité
+        res.status(200).json({
+            message: 'Si cet email existe, un lien de réinitialisation a été envoyé.'
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur demande réinitialisation:', error.message);
+        res.status(400).json({ 
+            error: error.message || 'Erreur lors de la demande de réinitialisation'
+        });
+    }
+});
+
+// Réinitialiser le mot de passe avec un token
+app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+        
+        if (!token || !newPassword) {
+            return res.status(400).json({ error: 'Token et nouveau mot de passe requis' });
+        }
+        
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 6 caractères' });
+        }
+        
+        const user = await userService.resetPassword(token, newPassword);
+        
+        res.status(200).json({
+            message: 'Mot de passe réinitialisé avec succès',
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur réinitialisation mot de passe:', error.message);
+        res.status(400).json({ 
+            error: error.message || 'Erreur lors de la réinitialisation du mot de passe'
         });
     }
 });

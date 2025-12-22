@@ -610,7 +610,7 @@ async function loadParcellesFromDB() {
     let offset = 0;
     let count = 0;
 
-    const insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?, ?, ?)`);
+    const insertStmt = db.prepare(`INSERT OR REPLACE INTO temp_bdnb_parcelle VALUES (?, ?, ?, ?)`);
     const insertBatch = db.transaction((items) => {
         for (const item of items) {
             insertStmt.run(...item);
@@ -618,14 +618,14 @@ async function loadParcellesFromDB() {
     });
 
     // Vérifier quelles colonnes existent dans la table source
-    let hasGeom = false;
     let hasCoords = false;
     try {
         const columns = parcellesDb.prepare(`PRAGMA table_info(${tableName})`).all();
-        hasGeom = columns.some(col => col.name === 'geom_parcelle' || col.name === 'geom');
         hasCoords = columns.some(col => (col.name === 'longitude' || col.name === 'latitude'));
         if (hasCoords) {
             console.log(`   ✅ Colonnes longitude/latitude détectées dans la table source`);
+        } else {
+            console.log(`   ⚠️ Colonnes longitude/latitude non trouvées dans la table source`);
         }
     } catch (e) {
         console.warn('   ⚠️ Impossible de vérifier les colonnes, utilisation par défaut');
@@ -634,28 +634,20 @@ async function loadParcellesFromDB() {
     while (offset < totalParcelles) {
         let rows;
         if (hasCoords) {
-            // Si la table a longitude et latitude, les charger
-            if (hasGeom) {
-                rows = parcellesDb.prepare(`SELECT parcelle_id, surface_geom_parcelle, geom_parcelle, longitude, latitude FROM ${tableName} LIMIT ? OFFSET ?`).all(BATCH_SIZE, offset);
-            } else {
-                rows = parcellesDb.prepare(`SELECT parcelle_id, surface_geom_parcelle, longitude, latitude FROM ${tableName} LIMIT ? OFFSET ?`).all(BATCH_SIZE, offset);
-            }
-        } else if (hasGeom) {
-            // Si la table a une colonne geom_parcelle mais pas de coordonnées GPS
-            rows = parcellesDb.prepare(`SELECT parcelle_id, surface_geom_parcelle, geom_parcelle FROM ${tableName} LIMIT ? OFFSET ?`).all(BATCH_SIZE, offset);
+            // Si la table a longitude et latitude, les charger avec toutes les colonnes disponibles
+            rows = parcellesDb.prepare(`SELECT parcelle_id, s_geom_parcelle, longitude, latitude FROM ${tableName} LIMIT ? OFFSET ?`).all(BATCH_SIZE, offset);
         } else {
-            // Sinon, utiliser seulement parcelle_id et surface_geom_parcelle
-            rows = parcellesDb.prepare(`SELECT parcelle_id, surface_geom_parcelle FROM ${tableName} LIMIT ? OFFSET ?`).all(BATCH_SIZE, offset);
+            // Sinon, utiliser seulement parcelle_id et s_geom_parcelle
+            rows = parcellesDb.prepare(`SELECT parcelle_id, s_geom_parcelle FROM ${tableName} LIMIT ? OFFSET ?`).all(BATCH_SIZE, offset);
         }
         
         if (rows.length === 0) break;
 
         const batch = rows.map(row => [
             row.parcelle_id,
-            row.surface_geom_parcelle || null,
-            row.geom_parcelle || null,
-            row.longitude || null,
-            row.latitude || null
+            row.s_geom_parcelle || null,
+            hasCoords ? (row.longitude || null) : null,
+            hasCoords ? (row.latitude || null) : null
         ]);
         
         insertBatch(batch);
@@ -1147,7 +1139,7 @@ async function mergeDVFWithBDNB() {
         SET surface_terrain = COALESCE(
             d.surface_terrain,
             (
-                SELECT parc.surface_geom_parcelle 
+                SELECT parc.s_geom_parcelle 
                 FROM temp_bdnb_parcelle parc 
                 WHERE parc.parcelle_id = d.id_parcelle
             )
@@ -1533,8 +1525,7 @@ async function createCompleteDatabase() {
         DROP TABLE IF EXISTS temp_bdnb_parcelle;
         CREATE TABLE temp_bdnb_parcelle (
             parcelle_id TEXT PRIMARY KEY,
-            surface_geom_parcelle REAL,
-            geom_parcelle TEXT,
+            s_geom_parcelle REAL,
             longitude REAL,
             latitude REAL
         )

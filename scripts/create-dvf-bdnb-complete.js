@@ -1530,7 +1530,8 @@ async function createCompleteDatabase() {
     `);
     
     db.exec(`
-        CREATE TABLE IF NOT EXISTS temp_bdnb_parcelle (
+        DROP TABLE IF EXISTS temp_bdnb_parcelle;
+        CREATE TABLE temp_bdnb_parcelle (
             parcelle_id TEXT PRIMARY KEY,
             surface_geom_parcelle REAL,
             geom_parcelle TEXT,

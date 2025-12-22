@@ -732,25 +732,48 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
     
     console.log(`📂 Chargement ${path.basename(csvFile)} (${fileSizeMB} MB)...`);
     
+    // Détecter le séparateur CSV (virgule ou point-virgule)
+    const firstLine = fs.readFileSync(csvFile, 'utf8').split('\n')[0];
+    const separator = firstLine.includes(';') ? ';' : ',';
+    if (separator === ';') {
+        console.log(`   🔍 Séparateur détecté: point-virgule (;)`);
+    }
+    
     let batch = [];
     let totalRows = 0;
     let lastProgressUpdate = Date.now();
     
     return new Promise((resolve, reject) => {
         const insertStmt = db.prepare(insertSQL);
+        let insertErrorCount = 0;
         const insertMany = db.transaction((rows) => {
             for (const row of rows) {
                 try {
                     insertStmt.run(row);
                 } catch (error) {
-                    // Ignorer les erreurs de contrainte
+                    insertErrorCount++;
+                    // Afficher les premières erreurs pour debug
+                    if (insertErrorCount <= 5) {
+                        console.log(`   ⚠️  Erreur insertion (${insertErrorCount}): ${error.message}`);
+                    }
                 }
             }
         });
         
+        let firstRow = true;
+        let columnNames = [];
+        
         fs.createReadStream(csvFile)
-            .pipe(csv())
+            .pipe(csv({ separator: separator }))
             .on('data', (row) => {
+                // Afficher les colonnes de la première ligne pour debug
+                if (firstRow) {
+                    columnNames = Object.keys(row);
+                    console.log(`   🔍 Colonnes détectées (${columnNames.length}): ${columnNames.slice(0, 10).join(', ')}${columnNames.length > 10 ? '...' : ''}`);
+                    console.log(`   🔍 Première ligne échantillon: ${JSON.stringify(Object.fromEntries(Object.entries(row).slice(0, 5)))}`);
+                    firstRow = false;
+                }
+                
                 const processedRow = processRowFunc(row);
                 if (processedRow) {
                     batch.push(processedRow);
@@ -767,6 +790,9 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
                             lastProgressUpdate = now;
                         }
                     }
+                } else if (totalRows === 0 && batch.length < 10) {
+                    // Afficher les premières lignes ignorées pour debug
+                    console.log(`   ⚠️ Ligne ignorée (exemple): ${JSON.stringify(Object.fromEntries(Object.entries(row).slice(0, 5)))}`);
                 }
             })
             .on('end', () => {
@@ -774,10 +800,18 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
                     insertMany(batch);
                     totalRows += batch.length;
                 }
-                process.stdout.write(`\r   ✅ ${totalRows.toLocaleString()} lignes chargées\n`);
+                if (totalRows === 0) {
+                    console.log(`   ⚠️  Aucune ligne chargée - Vérifiez les noms de colonnes dans le CSV`);
+                    console.log(`   ⚠️  Colonnes attendues pour ce fichier: ${columnNames.length > 0 ? columnNames.join(', ') : 'non détectées'}`);
+                } else {
+                    process.stdout.write(`\r   ✅ ${totalRows.toLocaleString()} lignes chargées\n`);
+                }
                 resolve(totalRows);
             })
-            .on('error', reject);
+            .on('error', (err) => {
+                console.error(`   ❌ Erreur lors de la lecture du CSV: ${err.message}`);
+                reject(err);
+            });
     });
 }
 

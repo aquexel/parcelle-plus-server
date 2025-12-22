@@ -91,10 +91,12 @@ module.exports = (req, res) => {
         
         // Vérifier que la base de données existe
         if (!fs.existsSync(DB_PATH)) {
-            return res.status(503).json({
-                success: false,
-                error: 'Base de données DVF non disponible',
-                message: `Le fichier ${DB_PATH} n'existe pas. Veuillez exécuter le script de création de la base de données.`
+            console.log('[DVF][WARN] Base de données non trouvée, retour données vides');
+            return res.status(200).json({
+                success: true,
+                transactions: [],
+                total: 0,
+                message: 'Base de données DVF non disponible (retour vide)'
             });
         }
         

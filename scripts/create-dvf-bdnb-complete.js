@@ -9,10 +9,26 @@ const { exec } = require('child_process');
 const os = require('os');
 const execPromise = promisify(exec);
 
-// Configuration parallélisme
+// Activer le garbage collector si disponible (lancer avec --expose-gc)
+if (global.gc) {
+    console.log('🧹 Garbage collector activé');
+} else {
+    console.log('⚠️  Garbage collector non disponible - Lancez avec: node --expose-gc');
+}
+
+// Fonction utilitaire pour forcer le GC et faire une pause
+function forceGCAndPause() {
+    if (global.gc) {
+        global.gc();
+    }
+    // Petite pause pour permettre au système de libérer la mémoire
+    return new Promise(resolve => setTimeout(resolve, 100));
+}
+
+// Configuration parallélisme - RÉDUIT pour économiser la mémoire
 const NUM_CPUS = os.cpus().length;
-const MAX_PARALLEL_DVF = Math.min(NUM_CPUS, 4); // Max 4 fichiers DVF en parallèle
-const MAX_PARALLEL_BDNB = Math.min(NUM_CPUS, 4); // Max 4 fichiers BDNB en parallèle (optimal pour 4 processeurs)
+const MAX_PARALLEL_DVF = 1; // 1 seul fichier DVF à la fois (séquentiel comme create-terrains-batir-V3)
+const MAX_PARALLEL_BDNB = 1; // 1 seul fichier BDNB à la fois pour éviter surcharge mémoire
 
 console.log(`🖥️  Processeur : ${NUM_CPUS} cœurs disponibles`);
 
@@ -69,8 +85,17 @@ console.log('📊 Création de la base de données...');
 const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
-db.pragma('cache_size = -256000'); // 256 MB cache
-db.pragma('temp_store = MEMORY');
+db.pragma('cache_size = -32000'); // 32 MB cache (réduit pour Raspberry Pi - comme create-terrains-batir-V3)
+db.pragma('temp_store = MEMORY'); // Utiliser la RAM pour les tables temporaires (économie disque)
+
+// 🔥 CRITIQUE : Changer le répertoire temporaire SQLite
+// Par défaut, SQLite utilise /tmp qui peut être limité
+// Solution : Utiliser le répertoire de la base
+const tempDir = path.join(path.dirname(DB_FILE), 'sqlite_temp');
+if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+}
+db.pragma(`temp_store_directory = '${tempDir.replace(/\\/g, '/')}'`);
 
 // Les tables seront créées dans createCompleteDatabase()
 
@@ -236,7 +261,7 @@ async function processDVFFile(filePath, year, department) {
             }
             
             fs.createReadStream(actualFilePath)
-                .pipe(csv({ separator: separator }))
+                .pipe(csv({ separator: separator, skipLinesWithError: true })) // Ignorer les lignes avec erreurs
                 .on('data', (row) => {
                 lineCount++;
                 
@@ -332,10 +357,18 @@ async function processDVFFile(filePath, year, department) {
                     date_etablissement_dpe: null
                 });
                 
-                // Insérer par batch de 500 (réduit pour éviter les erreurs mémoire)
-                if (transactions.length >= 500) {
+                // Insérer par batch de 200 (ultra réduit pour économiser mémoire)
+                if (transactions.length >= 200) {
                     insertDVFBatch(transactions);
                     transactions.length = 0;
+                    
+                    // Forcer GC tous les 10000 lignes pour libérer la mémoire
+                    if (lineCount % 10000 === 0 && global.gc) {
+                        global.gc();
+                        // Afficher mémoire
+                        const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                        process.stdout.write(`\r   📊 ${lineCount.toLocaleString()} lignes traitées (Mem: ${memMB} MB)...`);
+                    }
                     
                     // Afficher la progression toutes les 50000 lignes
                     if (lineCount % 50000 === 0) {
@@ -536,6 +569,17 @@ async function loadBDNBData() {
                 console.log(`📂 Chargement ${task.file}...`);
                 const filePath = path.join(BDNB_DIR, task.file);
                 const rowCount = await loadCSV(filePath, task.table, task.insertSQL, task.process);
+                
+                // Forcer GC et pause après chaque fichier pour libérer la mémoire
+                await forceGCAndPause();
+                
+                // Checkpoint WAL après chaque fichier
+                try {
+                    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+                } catch (e) {
+                    // Ignorer
+                }
+                
                 if (rowCount > 0) {
                     console.log(`   ✅ ${task.name} chargé: ${rowCount.toLocaleString()} lignes`);
                 } else {
@@ -556,6 +600,17 @@ async function loadBDNBData() {
         // Afficher la progression globale
         showProgress(processedBdnb, bdnbTasks.length, `(${processedBdnb}/${bdnbTasks.length} fichiers BDNB)`);
         console.log('');
+        
+        // Pause et GC entre chaque batch de fichiers pour libérer la mémoire
+        if (i + MAX_PARALLEL_BDNB < bdnbTasks.length) {
+            await forceGCAndPause();
+            // Checkpoint WAL régulier
+            try {
+                db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+            } catch (e) {
+                // Ignorer
+            }
+        }
     }
 }
 
@@ -606,7 +661,7 @@ async function loadParcellesFromDB() {
     const totalParcelles = countStmt.get()['count'];
     console.log(`   📦 ${totalParcelles.toLocaleString()} parcelles à charger`);
 
-    const BATCH_SIZE = 10000;
+    const BATCH_SIZE = 5000; // Réduit (comme create-terrains-batir-V3)
     let offset = 0;
     let count = 0;
 
@@ -653,13 +708,29 @@ async function loadParcellesFromDB() {
         insertBatch(batch);
         count += rows.length;
         offset += BATCH_SIZE;
-
-        process.stdout.write(`\r   📊 ${count.toLocaleString()} parcelles chargées...`);
+        
+        // Forcer GC tous les 50000 parcelles pour libérer la mémoire
+        if (count % 50000 === 0 && global.gc) {
+            global.gc();
+            const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+            process.stdout.write(`\r   📊 ${count.toLocaleString()} parcelles chargées (Mem: ${memMB} MB)...`);
+        } else {
+            process.stdout.write(`\r   📊 ${count.toLocaleString()} parcelles chargées...`);
+        }
     }
     
     process.stdout.write('\r' + ' '.repeat(100) + '\r');
-    console.log(`   ✅ ${count.toLocaleString()} parcelles chargées depuis parcelles.db`);
+    const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    console.log(`   ✅ ${count.toLocaleString()} parcelles chargées depuis parcelles.db (Mem: ${memMB} MB)`);
     parcellesDb.close();
+    
+    // Checkpoint WAL après chargement parcelles
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
+    
     console.log('\n✅ Données parcelles chargées depuis la base\n');
 }
 
@@ -721,7 +792,7 @@ async function OLD_loadBDNBData() {
 }
 
 // Fonction pour charger un CSV
-async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize = 20000) { // Plus gros batches = moins d'overhead
+async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize = 5000) { // Batch réduit (comme create-terrains-batir-V3)
     if (!fs.existsSync(csvFile)) {
         console.log(`⚠️  Fichier manquant : ${csvFile}`);
         return 0;
@@ -736,7 +807,7 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
     // Détecter le séparateur CSV en lisant seulement la première ligne avec un stream
     let separator = ',';
     try {
-        const firstLineStream = fs.createReadStream(csvFile, { encoding: 'utf8', highWaterMark: 1024 * 1024 }); // 1MB buffer
+        const firstLineStream = fs.createReadStream(csvFile, { encoding: 'utf8', highWaterMark: 512 * 1024 }); // 512KB buffer (réduit)
         let firstLine = '';
         let separatorDetected = false;
         
@@ -797,12 +868,12 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
         let firstRow = true;
         let columnNames = [];
         
-        // Utiliser un stream avec un buffer adapté pour les gros fichiers
-        // Pour les fichiers > 2GB, on utilise un buffer plus petit pour éviter les problèmes de mémoire
+        // Utiliser un stream avec un buffer très réduit pour économiser la mémoire
+        // Pour les fichiers > 2GB, on utilise un buffer minimal (comme create-terrains-batir-V3)
         const fileSize = stats.size;
         const highWaterMark = fileSize > 2 * 1024 * 1024 * 1024 
-            ? 16 * 1024 * 1024  // 16MB pour fichiers > 2GB
-            : 64 * 1024 * 1024; // 64MB pour fichiers plus petits
+            ? 1 * 1024 * 1024   // 1MB pour fichiers > 2GB (ultra réduit)
+            : 2 * 1024 * 1024;  // 2MB pour fichiers plus petits (réduit)
         
         const readStream = fs.createReadStream(csvFile, { 
             encoding: 'utf8',
@@ -810,8 +881,10 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
             autoClose: true
         });
         
-        readStream
-            .pipe(csv({ separator: separator }))
+        const csvStream = csv({ separator: separator, skipLinesWithError: true }); // Ignorer les lignes avec erreurs
+        let isPaused = false;
+        
+        csvStream
             .on('data', (row) => {
                 // Afficher les colonnes de la première ligne pour debug
                 if (firstRow) {
@@ -826,14 +899,35 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
                     batch.push(processedRow);
                     
                     if (batch.length >= batchSize) {
+                        // Pause le stream pendant l'insertion pour éviter accumulation mémoire
+                        if (!isPaused) {
+                            csvStream.pause();
+                            isPaused = true;
+                        }
+                        
                         insertMany(batch);
                         totalRows += batch.length;
                         batch = [];
                         
-                        // Afficher la progression toutes les secondes
+                        // Forcer GC tous les 50000 lignes pour libérer la mémoire
+                        if (totalRows % 50000 === 0 && global.gc) {
+                            global.gc();
+                            // Afficher l'utilisation mémoire
+                            const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                            process.stdout.write(`\r   📊 ${totalRows.toLocaleString()} lignes chargées (Mem: ${memMB} MB)...`);
+                        }
+                        
+                        // Reprendre le stream après insertion
+                        if (isPaused) {
+                            csvStream.resume();
+                            isPaused = false;
+                        }
+                        
+                        // Afficher la progression toutes les secondes avec mémoire
                         const now = Date.now();
                         if (now - lastProgressUpdate > 1000) {
-                            process.stdout.write(`\r   📊 ${totalRows.toLocaleString()} lignes chargées...`);
+                            const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                            process.stdout.write(`\r   📊 ${totalRows.toLocaleString()} lignes chargées (Mem: ${memMB} MB)...`);
                             lastProgressUpdate = now;
                         }
                     }
@@ -851,7 +945,14 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
                     console.log(`   ⚠️  Aucune ligne chargée - Vérifiez les noms de colonnes dans le CSV`);
                     console.log(`   ⚠️  Colonnes attendues pour ce fichier: ${columnNames.length > 0 ? columnNames.join(', ') : 'non détectées'}`);
                 } else {
-                    process.stdout.write(`\r   ✅ ${totalRows.toLocaleString()} lignes chargées\n`);
+                    const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+                    process.stdout.write(`\r   ✅ ${totalRows.toLocaleString()} lignes chargées (Mem: ${memMB} MB)\n`);
+                }
+                // Checkpoint WAL pour libérer l'espace
+                try {
+                    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+                } catch (e) {
+                    // Ignorer les erreurs de checkpoint
                 }
                 resolve(totalRows);
             })
@@ -860,6 +961,9 @@ async function loadCSV(csvFile, tableName, insertSQL, processRowFunc, batchSize 
                 readStream.destroy();
                 reject(err);
             });
+        
+        // Connecter le stream de lecture au stream CSV
+        readStream.pipe(csvStream);
         
         // Gérer les erreurs du stream de lecture
         readStream.on('error', (err) => {
@@ -907,8 +1011,16 @@ async function mergeDVFWithBDNB() {
     
     const startTime = Date.now();
     
+    // Optimisation : Checkpoint WAL avant les jointures massives
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
+    
     // Étape 1: Mettre à jour via id_parcelle (jointure précise)
     console.log('   📍 Jointure via id_parcelle...');
+    const memBefore = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET batiment_groupe_id = (
@@ -920,6 +1032,15 @@ async function mergeDVFWithBDNB() {
         WHERE d.id_parcelle IS NOT NULL 
           AND d.id_parcelle != ''
     `);
+    const memAfter = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    console.log(`      (Mem: ${memBefore} → ${memAfter} MB)`);
+    
+    // Checkpoint après jointure
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
     
     // Étape 1.5: Mettre à jour les coordonnées GPS via batiment_groupe_id (seulement si manquantes)
     console.log('   🌍 Mise à jour des coordonnées GPS manquantes via BDNB...');
@@ -946,6 +1067,13 @@ async function mergeDVFWithBDNB() {
           AND d.longitude IS NULL 
           AND d.latitude IS NULL
     `);
+    
+    // Checkpoint après mise à jour GPS
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
     
     // Mise à jour des coordonnées GPS manquantes depuis temp_bdnb_parcelle
     console.log('   🌍 Mise à jour des coordonnées GPS manquantes depuis parcelles.db...');
@@ -976,165 +1104,130 @@ async function mergeDVFWithBDNB() {
     const gpsUpdated = updateGPSFromParcelles.run();
     console.log(`   ✅ ${gpsUpdated.changes} coordonnées GPS mises à jour depuis parcelles.db`);
     
+    // Checkpoint après mise à jour GPS parcelles
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
+    
     // Étape 2: Mettre à jour les données DPE via batiment_groupe_id
-    // Note: Un bâtiment peut avoir plusieurs DPE (un par logement)
-    // On utilise une jointure intelligente par surface + chronologie des ventes
-    console.log('   🔋 Mise à jour des données DPE (jointure intelligente + chronologie)...');
+    // VERSION SIMPLIFIÉE (comme create-dvf-bdnb-national-FINAL.js) pour éviter les 0%
+    // Pas de filtre sur surface habitable ni chronologie complexe - juste prendre le DPE le plus récent
+    console.log('   🔋 Mise à jour des données DPE (version simplifiée)...');
+    const memBeforeDPE = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    console.log(`      (Mem avant: ${memBeforeDPE} MB)`);
     
     try {
+        // D'abord, mettre à jour classe_dpe (version simplifiée)
+        console.log('   🔄 Jointure classe_dpe (simplifiée)...');
+        db.exec(`
+            UPDATE dvf_bdnb_complete AS d 
+            SET classe_dpe = (
+                SELECT dpe.classe_dpe 
+                FROM temp_bdnb_dpe dpe
+                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                  AND dpe.classe_dpe IS NOT NULL
+                ORDER BY dpe.date_etablissement_dpe DESC
+                LIMIT 1
+            )
+            WHERE d.batiment_groupe_id IS NOT NULL
+        `);
+        
+        // Ensuite, mettre à jour tous les autres champs DPE en une seule requête
+        console.log('   🔄 Enrichissement des autres champs DPE...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
             SET 
-                classe_dpe = (
-                    SELECT dpe.classe_dpe 
+                orientation_principale = (
+                    SELECT dpe.orientation_principale 
                     FROM temp_bdnb_dpe dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                      AND (
-                          -- DPE avant la vente : toujours valide
-                          dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                          OR
-                          -- DPE après la vente : seulement si dans les 6 mois
-                          (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                           AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                      )
-                    ORDER BY 
-                      CASE 
-                        -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                        WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                        THEN -julianday(dpe.date_etablissement_dpe)
-                        -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                        ELSE julianday(dpe.date_etablissement_dpe)
-                      END,
-                      ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
+                      AND dpe.orientation_principale IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
                     LIMIT 1
                 ),
-            orientation_principale = (
-                SELECT dpe.orientation_principale 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
-            ),
-            pourcentage_vitrage = (
-                SELECT dpe.pourcentage_vitrage 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
-            ),
-            presence_piscine = (
-                SELECT dpe.presence_piscine 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
-            ),
-            presence_garage = (
-                SELECT dpe.presence_garage 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
-            ),
-            presence_veranda = (
-                SELECT dpe.presence_veranda 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
-            )
-        WHERE d.batiment_groupe_id IS NOT NULL
-    `);
+                pourcentage_vitrage = (
+                    SELECT dpe.pourcentage_vitrage 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.pourcentage_vitrage IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                presence_piscine = (
+                    SELECT dpe.presence_piscine 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_piscine IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                presence_garage = (
+                    SELECT dpe.presence_garage 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_garage IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                presence_veranda = (
+                    SELECT dpe.presence_veranda 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_veranda IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                type_dpe = (
+                    SELECT dpe.type_dpe 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.type_dpe IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                dpe_officiel = (
+                    SELECT dpe.dpe_officiel 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.dpe_officiel IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                surface_habitable_logement = (
+                    SELECT dpe.surface_habitable_logement 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.surface_habitable_logement IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                ),
+                date_etablissement_dpe = (
+                    SELECT dpe.date_etablissement_dpe 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.date_etablissement_dpe IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                )
+            WHERE d.batiment_groupe_id IS NOT NULL
+        `);
+        
+        const memAfterDPE = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+        console.log(`      (Mem après: ${memAfterDPE} MB)`);
+        console.log('   ✅ Enrichissement DPE complet');
+        
+        // Checkpoint après mise à jour DPE
+        try {
+            db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        } catch (e) {
+            // Ignorer
+        }
     
     } catch (error) {
         console.log(`   ⚠️ Erreur lors de la mise à jour DPE : ${error.message}`);
-        console.log(`   🔄 Tentative de mise à jour simplifiée...`);
+        console.log(`   🔄 Tentative de mise à jour simplifiée (fallback)...`);
         
         // Fallback : mise à jour simplifiée sans chronologie
         db.exec(`
@@ -1143,8 +1236,8 @@ async function mergeDVFWithBDNB() {
                 SELECT dpe.classe_dpe 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                ORDER BY ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
+                  AND dpe.classe_dpe IS NOT NULL
+                ORDER BY dpe.date_etablissement_dpe DESC
                 LIMIT 1
             )
             WHERE d.batiment_groupe_id IS NOT NULL
@@ -1164,10 +1257,19 @@ async function mergeDVFWithBDNB() {
         WHERE d.batiment_groupe_id IS NULL
     `);
     
-    // Étape 4: Enrichissement des surfaces bâti manquantes (APRÈS conversion GPS)
-    console.log('   🏠 Mise à jour des surfaces bâti manquantes...');
+    // Checkpoint après fallback
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
     
-    // Essayer d'abord avec les données DPE (chronologie respectée)
+    // Étape 4: Enrichissement des surfaces bâti manquantes (APRÈS conversion GPS)
+    // VERSION SIMPLIFIÉE (comme create-dvf-bdnb-national-FINAL.js) - pas de chronologie
+    console.log('   🏠 Mise à jour des surfaces bâti manquantes (version simplifiée)...');
+    
+    // Essayer d'abord avec les données DPE (version simplifiée sans chronologie)
+    console.log('   🔄 Enrichissement via DPE (sans chronologie pour performance)...');
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET surface_reelle_bati = COALESCE(
@@ -1176,26 +1278,20 @@ async function mergeDVFWithBDNB() {
                 SELECT dpe.surface_habitable_logement 
                 FROM temp_bdnb_dpe dpe 
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND (
-                      -- DPE établi avant la transaction (bâtiment existait)
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE établi après mais dans les 6 mois (bâtiment récent)
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY dpe.date_etablissement_dpe DESC
+                  AND dpe.surface_habitable_logement IS NOT NULL
                 LIMIT 1
             )
         )
         WHERE d.batiment_groupe_id IS NOT NULL 
           AND d.surface_reelle_bati IS NULL
-          AND (
-              d.type_local IS NOT NULL 
-              OR d.nombre_pieces_principales IS NOT NULL
-              OR d.nature_culture IS NULL  -- Si pas de culture, c'est probablement du bâti
-          )
     `);
+    
+    // Checkpoint après enrichissement surfaces
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
     
     // Fallback : essayer avec les données bâtiment BDNB (surface géométrique)
     console.log('   🔄 Fallback : essai avec surface géométrique BDNB...');
@@ -1220,8 +1316,15 @@ async function mergeDVFWithBDNB() {
           )
     `);
     
-    // Étape 5: Enrichissement des surfaces terrain pour les terrains nus
-    console.log('   🌾 Enrichissement des surfaces terrain pour les terrains nus...');
+    // Checkpoint après fallback surfaces
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
+    
+    // Étape 5: Enrichissement des surfaces terrain pour les maisons et appartements
+    console.log('   🌾 Enrichissement des surfaces terrain pour les maisons et appartements...');
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET surface_terrain = COALESCE(
@@ -1232,23 +1335,65 @@ async function mergeDVFWithBDNB() {
                 WHERE parc.parcelle_id = d.id_parcelle
             )
         )
-        WHERE d.batiment_groupe_id IS NULL 
+        WHERE d.type_local IN ('Maison', 'Appartement')
           AND d.surface_terrain IS NULL
           AND d.id_parcelle IS NOT NULL
     `);
     
-    // Étape 6: Suppression des transactions non enrichissables
-    console.log('   🗑️ Suppression des transactions non enrichissables...');
+    // Checkpoint après enrichissement terrains
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
+    
+    // Étape 6: Suppression des transactions non enrichissables et des terrains nus
+    console.log('   🗑️ Suppression des transactions non enrichissables et des terrains nus...');
     
     // Supprimer TOUTES les transactions sans GPS (non enrichissables)
-    const deleteStmt = db.prepare(`
+    const deleteNoGPS = db.prepare(`
         DELETE FROM dvf_bdnb_complete 
         WHERE longitude IS NULL 
           AND latitude IS NULL
     `);
+    const deletedNoGPS = deleteNoGPS.run().changes;
+    console.log(`   🗑️ ${deletedNoGPS} transactions supprimées (sans GPS)`);
     
-    const deletedCount = deleteStmt.run().changes;
-    console.log(`   🗑️ ${deletedCount} transactions supprimées (non enrichissables)`);
+    // Supprimer UNIQUEMENT les terrains nus (sans construction dans la même mutation)
+    // On garde : toutes les maisons/appartements + les terrains vendus avec une construction
+    console.log('   🏞️ Suppression des terrains nus (garde maisons/appartements + terrains vendus avec construction)...');
+    
+    // Étape 1: Identifier les mutations qui contiennent au moins une maison ou un appartement
+    db.exec(`
+        CREATE TEMP TABLE IF NOT EXISTS mutations_avec_construction AS
+        SELECT DISTINCT id_mutation
+        FROM dvf_bdnb_complete
+        WHERE type_local IN ('Maison', 'Appartement')
+    `);
+    
+    // Étape 2: Supprimer uniquement les terrains qui ne sont PAS dans une mutation avec construction
+    // On garde :
+    // - Toutes les maisons et appartements (type_local IN ('Maison', 'Appartement'))
+    // - Les terrains vendus avec une construction (id_mutation IN mutations_avec_construction)
+    const deleteTerrains = db.prepare(`
+        DELETE FROM dvf_bdnb_complete 
+        WHERE (type_local IS NULL OR type_local = '' OR type_local NOT IN ('Maison', 'Appartement'))
+          AND id_mutation NOT IN (SELECT id_mutation FROM mutations_avec_construction)
+    `);
+    const deletedTerrains = deleteTerrains.run().changes;
+    console.log(`   🗑️ ${deletedTerrains} transactions de terrains nus supprimées`);
+    
+    // Nettoyer la table temporaire
+    db.exec(`DROP TABLE IF EXISTS mutations_avec_construction`);
+    
+    const deletedCount = deletedNoGPS + deletedTerrains;
+    
+    // Checkpoint après suppression
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
     
     // Statistiques finales
     const stats = db.prepare(`
@@ -1264,9 +1409,12 @@ async function mergeDVFWithBDNB() {
     console.log(`      Avec surface bâti: ${stats.with_surface_bati} (${(stats.with_surface_bati/stats.total_transactions*100).toFixed(1)}%)`);
     console.log(`      Avec GPS: ${stats.with_gps} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
     
-    // Étape 7: Mettre à jour les données DPE pour le fallback
-    // Note: Même logique que l'étape 2 - jointure intelligente par surface
-    console.log('   🔋 Mise à jour des données DPE (fallback avec jointure intelligente)...');
+    // Étape 7: Mettre à jour les données DPE pour les transactions qui n'ont pas encore de DPE
+    // VERSION SIMPLIFIÉE (comme create-dvf-bdnb-national-FINAL.js)
+    console.log('   🔋 Mise à jour des données DPE manquantes (fallback simplifié)...');
+    const memBeforeFallback = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    
+    // Mettre à jour seulement les transactions qui n'ont pas encore de classe_dpe
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET 
@@ -1274,149 +1422,77 @@ async function mergeDVFWithBDNB() {
                 SELECT dpe.classe_dpe 
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
+                  AND dpe.classe_dpe IS NOT NULL
+                ORDER BY dpe.date_etablissement_dpe DESC
                 LIMIT 1
             ),
-            orientation_principale = (
-                SELECT dpe.orientation_principale 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
+            orientation_principale = COALESCE(
+                d.orientation_principale,
+                (
+                    SELECT dpe.orientation_principale 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.orientation_principale IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                )
             ),
-            pourcentage_vitrage = (
-                SELECT dpe.pourcentage_vitrage 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
+            pourcentage_vitrage = COALESCE(
+                d.pourcentage_vitrage,
+                (
+                    SELECT dpe.pourcentage_vitrage 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.pourcentage_vitrage IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                )
             ),
-            presence_piscine = (
-                SELECT dpe.presence_piscine 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
+            presence_piscine = COALESCE(
+                d.presence_piscine,
+                (
+                    SELECT dpe.presence_piscine 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_piscine IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                )
             ),
-            presence_garage = (
-                SELECT dpe.presence_garage 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
+            presence_garage = COALESCE(
+                d.presence_garage,
+                (
+                    SELECT dpe.presence_garage 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_garage IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                )
             ),
-            presence_veranda = (
-                SELECT dpe.presence_veranda 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999)) < 10
-                  AND (
-                      -- DPE avant la vente : toujours valide
-                      dpe.date_etablissement_dpe <= COALESCE(d.date_mutation, d.annee_source || '-12-31')
-                      OR
-                      -- DPE après la vente : seulement si dans les 6 mois
-                      (dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                       AND julianday(dpe.date_etablissement_dpe) - julianday(COALESCE(d.date_mutation, d.annee_source || '-12-31')) <= 180)
-                  )
-                ORDER BY 
-                  CASE 
-                    -- Si DPE après la vente (dans les 6 mois) : prendre le plus récent
-                    WHEN dpe.date_etablissement_dpe > COALESCE(d.date_mutation, d.annee_source || '-12-31') 
-                    THEN -julianday(dpe.date_etablissement_dpe)
-                    -- Si DPE avant la vente : prendre le plus ancien (pas de rénovation depuis)
-                    ELSE julianday(dpe.date_etablissement_dpe)
-                  END,
-                  ABS(dpe.surface_habitable_logement - COALESCE(d.surface_reelle_bati, 999999))
-                LIMIT 1
+            presence_veranda = COALESCE(
+                d.presence_veranda,
+                (
+                    SELECT dpe.presence_veranda 
+                    FROM temp_bdnb_dpe dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.presence_veranda IS NOT NULL
+                    ORDER BY dpe.date_etablissement_dpe DESC
+                    LIMIT 1
+                )
             )
         WHERE d.batiment_groupe_id IS NOT NULL 
           AND d.classe_dpe IS NULL
     `);
+    const memAfterFallback = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    console.log(`      (Mem: ${memBeforeFallback} → ${memAfterFallback} MB)`);
+    
+    // Checkpoint final après toutes les mises à jour
+    try {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (e) {
+        // Ignorer
+    }
     
     const endTime = Date.now();
     const duration = ((endTime - startTime) / 1000).toFixed(1);
@@ -1630,6 +1706,9 @@ async function createCompleteDatabase() {
         CREATE INDEX IF NOT EXISTS idx_dvf_date ON dvf_bdnb_complete(date_mutation) WHERE date_mutation IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_relations_parcelle ON temp_bdnb_relations(parcelle_id);
         CREATE INDEX IF NOT EXISTS idx_relations_batiment ON temp_bdnb_relations(batiment_groupe_id);
+        CREATE INDEX IF NOT EXISTS idx_dpe_batiment ON temp_bdnb_dpe(batiment_groupe_id);
+        CREATE INDEX IF NOT EXISTS idx_batiment_id ON temp_bdnb_batiment(batiment_groupe_id);
+        CREATE INDEX IF NOT EXISTS idx_parcelle_id ON temp_bdnb_parcelle(parcelle_id);
     `);
     
     console.log('✅ Tables créées\n');
@@ -1694,6 +1773,16 @@ async function createCompleteDatabase() {
         // Afficher la progression globale
         showProgress(processedFiles, dvfTasks.length, `(${processedFiles}/${dvfTasks.length} fichiers DVF)`);
         console.log('');
+        
+        // Checkpoint WAL et GC après chaque batch de fichiers DVF
+        try {
+            db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        } catch (e) {
+            // Ignorer
+        }
+        if (global.gc) {
+            global.gc();
+        }
     }
     
     // Vérifier que des transactions DVF ont été chargées
@@ -1748,7 +1837,6 @@ async function createCompleteDatabase() {
             COUNT(DISTINCT code_commune) as nb_communes,
             COUNT(CASE WHEN type_local = 'Maison' THEN 1 END) as maisons,
             COUNT(CASE WHEN type_local = 'Appartement' THEN 1 END) as appartements,
-            COUNT(CASE WHEN nature_culture = 'terrains a bâtir' THEN 1 END) as terrains_batir,
             COUNT(CASE WHEN batiment_groupe_id IS NOT NULL THEN 1 END) as avec_batiment_id,
             COUNT(CASE WHEN classe_dpe IS NOT NULL THEN 1 END) as avec_dpe,
             COUNT(CASE WHEN dpe_officiel = 1 THEN 1 END) as dpe_officiels,
@@ -1772,7 +1860,6 @@ async function createCompleteDatabase() {
     console.log(`🏘️ Communes : ${stats.nb_communes.toLocaleString()}`);
     console.log(`🏠 Maisons : ${stats.maisons.toLocaleString()}`);
     console.log(`🏢 Appartements : ${stats.appartements.toLocaleString()}`);
-    console.log(`🏞️ Terrains à bâtir : ${stats.terrains_batir.toLocaleString()}`);
     console.log(`🔗 Avec batiment_groupe_id : ${stats.avec_batiment_id.toLocaleString()} (${(stats.avec_batiment_id / stats.total * 100).toFixed(1)}%)`);
     console.log(`🔋 Avec DPE : ${stats.avec_dpe.toLocaleString()} (${(stats.avec_dpe / stats.total * 100).toFixed(1)}%)`);
     console.log(`   ✅ DPE Officiels : ${stats.dpe_officiels.toLocaleString()} (${(stats.dpe_officiels / stats.total * 100).toFixed(1)}%)`);

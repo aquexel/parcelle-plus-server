@@ -34,7 +34,7 @@ class EmailService {
             const verificationUrl = `${this.baseUrl}/api/auth/verify-email?token=${verificationToken}`;
             
             const mailOptions = {
-                from: `"ParcellePlus" <${process.env.SMTP_USER || 'noreply@parcelleplus.fr'}>`,
+                from: `"ParcellePlus" <${process.env.SMTP_USER || 'noreply@parcelle-plus.fr'}>`,
                 to: email,
                 subject: 'Confirmez votre adresse email - ParcellePlus',
                 html: `
@@ -112,7 +112,7 @@ class EmailService {
             const webUrl = `${this.baseUrl}/api/auth/reset-password?token=${resetToken}`;
             
             const mailOptions = {
-                from: `"ParcellePlus" <${process.env.SMTP_USER || 'noreply@parcelleplus.fr'}>`,
+                from: `"ParcellePlus" <${process.env.SMTP_USER || 'noreply@parcelle-plus.fr'}>`,
                 to: email,
                 subject: 'Réinitialisation de votre mot de passe - ParcellePlus',
                 html: `

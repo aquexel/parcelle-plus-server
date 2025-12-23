@@ -34,7 +34,31 @@ const messageService = new MessageService();
 const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
-const pushNotificationService = new (require('./services/PushNotificationService'))();
+
+// PushNotificationService optionnel (nécessite firebase-admin)
+let pushNotificationService;
+try {
+    // Essayer de charger firebase-admin pour vérifier s'il est installé
+    require('firebase-admin');
+    // Si on arrive ici, firebase-admin est installé, on peut charger le service
+    const PushNotificationService = require('./services/PushNotificationService');
+    pushNotificationService = new PushNotificationService();
+    console.log('✅ PushNotificationService initialisé');
+} catch (error) {
+    if (error.code === 'MODULE_NOT_FOUND') {
+        console.log('⚠️ PushNotificationService non disponible (firebase-admin non installé)');
+    } else {
+        console.log('⚠️ PushNotificationService non disponible:', error.message);
+    }
+    // Créer un stub pour éviter les erreurs
+    pushNotificationService = {
+        isInitialized: () => false,
+        registerUserFCMToken: async () => { return false; },
+        sendMessageNotification: async () => { return false; },
+        sendCustomNotification: async () => { return false; }
+    };
+}
+
 const emailService = new EmailService();
 
 // Créer le serveur HTTP

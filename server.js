@@ -940,39 +940,35 @@ app.post('/api/auth/register', async (req, res) => {
         
         const newUser = await userService.registerUser(userData);
         
-        // Envoyer l'email de confirmation (BLOQUANT - l'inscription échoue si l'email ne peut pas être envoyé)
+        // Envoyer l'email de confirmation (NON BLOQUANT - l'inscription réussit même si l'email échoue)
+        let emailSent = false;
         try {
-            const emailSent = await emailService.sendVerificationEmail(
+            emailSent = await emailService.sendVerificationEmail(
                 newUser.email,
                 newUser.username,
                 newUser.emailVerificationToken
             );
             
-            if (!emailSent) {
-                // Supprimer l'utilisateur créé si l'email n'a pas pu être envoyé
-                await userService.deleteUser(newUser.id);
-                throw new Error('Impossible d\'envoyer l\'email de confirmation. Veuillez vérifier la configuration SMTP.');
+            if (emailSent) {
+                console.log(`✅ Email de confirmation envoyé à ${newUser.email}`);
+            } else {
+                console.log(`⚠️ Email de confirmation non envoyé à ${newUser.email} (SMTP non configuré ou erreur)`);
             }
-            
-            console.log(`✅ Email de confirmation envoyé à ${newUser.email}`);
         } catch (emailError) {
-            console.error(`❌ Erreur envoi email de confirmation: ${emailError.message}`);
-            // Supprimer l'utilisateur créé si l'email échoue
-            try {
-                await userService.deleteUser(newUser.id);
-            } catch (deleteError) {
-                console.error(`⚠️ Erreur lors de la suppression de l'utilisateur: ${deleteError.message}`);
-            }
-            throw new Error(`Erreur lors de l'envoi de l'email de confirmation: ${emailError.message}`);
+            console.error(`⚠️ Erreur envoi email de confirmation: ${emailError.message}`);
+            console.log(`ℹ️ L'inscription est validée malgré l'erreur d'envoi d'email`);
+            // L'inscription continue même si l'email échoue
         }
         
         // Retourner les données sans le token
         const { emailVerificationToken, ...userWithoutToken } = newUser;
         
         res.status(201).json({
-            message: 'Utilisateur créé avec succès. Un email de confirmation a été envoyé.',
+            message: emailSent 
+                ? 'Utilisateur créé avec succès. Un email de confirmation a été envoyé.'
+                : 'Utilisateur créé avec succès. (Email de confirmation non envoyé - SMTP non configuré)',
             user: userWithoutToken,
-            emailSent: true
+            emailSent: emailSent
         });
         
     } catch (error) {

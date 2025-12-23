@@ -10,69 +10,72 @@ class PriceAlertService {
     }
 
     initializeDatabase() {
-        // Table pour les alertes de prix
-        const createAlertsTable = `
-            CREATE TABLE IF NOT EXISTS price_alerts (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                min_surface REAL NOT NULL,
-                max_surface REAL NOT NULL,
-                max_price REAL NOT NULL,
-                commune TEXT,
-                code_insee TEXT,
-                is_active INTEGER DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `;
+        // Utiliser serialize() pour garantir l'ordre d'exécution
+        this.db.serialize(() => {
+            // Table pour les alertes de prix
+            const createAlertsTable = `
+                CREATE TABLE IF NOT EXISTS price_alerts (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    min_surface REAL NOT NULL,
+                    max_surface REAL NOT NULL,
+                    max_price REAL NOT NULL,
+                    commune TEXT,
+                    code_insee TEXT,
+                    is_active INTEGER DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            `;
 
-        // Table pour suivre les annonces déjà notifiées
-        const createNotifiedTable = `
-            CREATE TABLE IF NOT EXISTS alert_notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                alert_id TEXT NOT NULL,
-                announcement_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                notified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (alert_id) REFERENCES price_alerts(id) ON DELETE CASCADE,
-                FOREIGN KEY (announcement_id) REFERENCES polygons(id) ON DELETE CASCADE,
-                UNIQUE(alert_id, announcement_id)
-            )
-        `;
+            // Table pour suivre les annonces déjà notifiées
+            const createNotifiedTable = `
+                CREATE TABLE IF NOT EXISTS alert_notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alert_id TEXT NOT NULL,
+                    announcement_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    notified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (alert_id) REFERENCES price_alerts(id) ON DELETE CASCADE,
+                    FOREIGN KEY (announcement_id) REFERENCES polygons(id) ON DELETE CASCADE,
+                    UNIQUE(alert_id, announcement_id)
+                )
+            `;
 
-        // Index pour améliorer les performances
-        const createIndexes = [
-            `CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_alerts_active ON price_alerts(is_active)`,
-            `CREATE INDEX IF NOT EXISTS idx_notified_alert ON alert_notifications(alert_id)`,
-            `CREATE INDEX IF NOT EXISTS idx_notified_announcement ON alert_notifications(announcement_id)`
-        ];
+            // Index pour améliorer les performances
+            const createIndexes = [
+                `CREATE INDEX IF NOT EXISTS idx_alerts_user ON price_alerts(user_id)`,
+                `CREATE INDEX IF NOT EXISTS idx_alerts_active ON price_alerts(is_active)`,
+                `CREATE INDEX IF NOT EXISTS idx_notified_alert ON alert_notifications(alert_id)`,
+                `CREATE INDEX IF NOT EXISTS idx_notified_announcement ON alert_notifications(announcement_id)`
+            ];
 
-        // Créer les tables d'abord, puis les index
-        this.db.run(createAlertsTable, (err) => {
-            if (err) {
-                console.error('❌ Erreur création table price_alerts:', err);
-            } else {
-                console.log('✅ Table price_alerts initialisée');
-                
-                // Créer la deuxième table après la première
-                this.db.run(createNotifiedTable, (err) => {
-                    if (err) {
-                        console.error('❌ Erreur création table alert_notifications:', err);
-                    } else {
-                        console.log('✅ Table alert_notifications initialisée');
-                        
-                        // Créer les index après que les tables soient créées
-                        createIndexes.forEach(indexQuery => {
-                            this.db.run(indexQuery, (err) => {
-                                if (err && !err.message.includes('already exists') && !err.message.includes('no such table')) {
-                                    console.error('❌ Erreur création index:', err);
-                                }
-                            });
-                        });
+            // Créer les tables d'abord
+            this.db.run(createAlertsTable, (err) => {
+                if (err) {
+                    console.error('❌ Erreur création table price_alerts:', err);
+                } else {
+                    console.log('✅ Table price_alerts initialisée');
+                }
+            });
+
+            // Créer la deuxième table
+            this.db.run(createNotifiedTable, (err) => {
+                if (err) {
+                    console.error('❌ Erreur création table alert_notifications:', err);
+                } else {
+                    console.log('✅ Table alert_notifications initialisée');
+                }
+            });
+
+            // Créer les index après les tables (serialize garantit l'ordre)
+            createIndexes.forEach(indexQuery => {
+                this.db.run(indexQuery, (err) => {
+                    if (err && !err.message.includes('already exists') && !err.message.includes('no such table')) {
+                        console.error('❌ Erreur création index:', err);
                     }
                 });
-            }
+            });
         });
     }
 

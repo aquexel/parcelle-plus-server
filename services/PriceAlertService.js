@@ -50,31 +50,31 @@ class PriceAlertService {
                 `CREATE INDEX IF NOT EXISTS idx_notified_announcement ON alert_notifications(announcement_id)`
             ];
 
-            // Créer les tables d'abord
+            // Créer les tables d'abord, puis les index dans les callbacks
             this.db.run(createAlertsTable, (err) => {
                 if (err) {
                     console.error('❌ Erreur création table price_alerts:', err);
                 } else {
                     console.log('✅ Table price_alerts initialisée');
+                    
+                    // Créer la deuxième table après la première
+                    this.db.run(createNotifiedTable, (err) => {
+                        if (err) {
+                            console.error('❌ Erreur création table alert_notifications:', err);
+                        } else {
+                            console.log('✅ Table alert_notifications initialisée');
+                            
+                            // Créer les index APRÈS que les deux tables soient créées
+                            createIndexes.forEach(indexQuery => {
+                                this.db.run(indexQuery, (err) => {
+                                    if (err && !err.message.includes('already exists') && !err.message.includes('no such table')) {
+                                        console.error('❌ Erreur création index:', err);
+                                    }
+                                });
+                            });
+                        }
+                    });
                 }
-            });
-
-            // Créer la deuxième table
-            this.db.run(createNotifiedTable, (err) => {
-                if (err) {
-                    console.error('❌ Erreur création table alert_notifications:', err);
-                } else {
-                    console.log('✅ Table alert_notifications initialisée');
-                }
-            });
-
-            // Créer les index après les tables (serialize garantit l'ordre)
-            createIndexes.forEach(indexQuery => {
-                this.db.run(indexQuery, (err) => {
-                    if (err && !err.message.includes('already exists') && !err.message.includes('no such table')) {
-                        console.error('❌ Erreur création index:', err);
-                    }
-                });
             });
         });
     }

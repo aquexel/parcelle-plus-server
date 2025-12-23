@@ -1245,17 +1245,48 @@ async function mergeDVFWithBDNB() {
     }
     
     // Étape 3: Fallback via code_commune pour les transactions sans id_parcelle
-    console.log('   🏘️ Fallback via code_commune...');
+    // OPTIMISATION : Créer une table temporaire avec un bâtiment représentatif par commune
+    // Cela évite les sous-requêtes corrélées qui sont très lentes
+    console.log('   🏘️ Fallback via code_commune (optimisé)...');
+    console.log('   🔄 Création de la table temporaire des bâtiments par commune...');
+    
+    // Créer une table temporaire avec un bâtiment représentatif par commune
+    // Utiliser MIN() pour avoir un bâtiment déterministe par commune
     db.exec(`
+        CREATE TEMP TABLE temp_batiment_par_commune AS
+        SELECT 
+            code_commune_insee,
+            MIN(batiment_groupe_id) as batiment_groupe_id
+        FROM temp_bdnb_batiment
+        WHERE code_commune_insee IS NOT NULL
+          AND batiment_groupe_id IS NOT NULL
+        GROUP BY code_commune_insee
+    `);
+    
+    // Créer un index pour accélérer la jointure
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_bat_commune ON temp_batiment_par_commune(code_commune_insee)`);
+    
+    console.log('   ✅ Table temporaire créée');
+    
+    // Maintenant, faire une simple jointure UPDATE (beaucoup plus rapide)
+    // Pas besoin de LIMIT 1 car il n'y a qu'un seul bâtiment par commune dans la table temporaire
+    console.log('   🔄 Mise à jour des batiment_groupe_id via code_commune...');
+    const updateFallback = db.prepare(`
         UPDATE dvf_bdnb_complete AS d 
         SET batiment_groupe_id = (
             SELECT bat.batiment_groupe_id 
-            FROM temp_bdnb_batiment bat 
+            FROM temp_batiment_par_commune bat 
             WHERE bat.code_commune_insee = d.code_commune
-            LIMIT 1
         )
         WHERE d.batiment_groupe_id IS NULL
+          AND d.code_commune IS NOT NULL
     `);
+    
+    const resultFallback = updateFallback.run();
+    console.log(`   ✅ ${resultFallback.changes.toLocaleString()} transactions mises à jour via code_commune`);
+    
+    // Nettoyer la table temporaire
+    db.exec(`DROP TABLE IF EXISTS temp_batiment_par_commune`);
     
     // Checkpoint après fallback
     try {

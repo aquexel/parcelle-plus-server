@@ -15,9 +15,9 @@ console.log(`🖥️  ${NUM_CPUS} cœurs disponibles, ${MAX_WORKERS} workers uti
 console.log('🚀 === CRÉATION BASE DVF + BDNB NATIONALE ===\n');
 
 // Configuration
-const CSV_DIR = process.argv[2] || path.join(__dirname, '..', 'open_data_millesime_2024-10-a_dep40_csv', 'csv');
-const DB_FILE = path.join(__dirname, '..', '..', 'database', 'dvf_bdnb_complete.db');
-const DVF_DIR = process.argv[3] || path.join(__dirname, '..', 'dvf_data');
+const CSV_DIR = process.argv[2] || path.join(__dirname, 'open_data_millesime_2024-10-a_dep40_csv', 'csv');
+const DB_FILE = path.join(__dirname, 'database', 'dvf_bdnb_complete.db');
+const DVF_DIR = process.argv[3] || path.join(__dirname, 'dvf_data');
 
 // Créer les dossiers
 if (!fs.existsSync(path.dirname(DB_FILE))) {
@@ -342,7 +342,30 @@ async function loadBDNBData() {
                 return null;
             }
         },
-        // Note: parcelle.csv est maintenant chargé depuis parcelles.db (voir loadParcellesFromDB())
+        {
+            name: 'parcelle.csv',
+            file: path.join(CSV_DIR, 'parcelle.csv'),
+            tableName: 'temp_bdnb_parcelle',
+            processRow: (row) => {
+                const parcelleId = row.parcelle_id?.trim();
+                const surfaceGeomParcelle = parseFloat(row.s_geom_parcelle) || null;
+                const geomParcelle = row.geom_parcelle?.trim() || null;
+                
+                if (parcelleId && geomParcelle) {
+                    // Calculer le centre directement pour éviter de stocker le MULTIPOLYGON complet
+                    const center = getCenterFromWKT(geomParcelle);
+                    if (center) {
+                        return {
+                            parcelle_id: parcelleId,
+                            surface_geom_parcelle: surfaceGeomParcelle,
+                            longitude: center.longitude,
+                            latitude: center.latitude
+                        };
+                    }
+                }
+                return null;
+            }
+        }
     ];
     
     // Ajouter Sitadel si disponible
@@ -465,86 +488,6 @@ async function loadBDNBData() {
     }
     
     console.log('\n✅ Données BDNB chargées\n');
-}
-
-// Fonction pour charger les parcelles depuis la base de données SQLite existante
-async function loadParcellesFromDB() {
-    console.log('📊 Chargement des parcelles depuis parcelles.db...\n');
-    
-    const parcellesDbPath = path.join(__dirname, '..', 'database', 'parcelles.db');
-    
-    if (!fs.existsSync(parcellesDbPath)) {
-        console.log('⚠️ Base parcelles.db introuvable, parcelles non chargées');
-        return;
-    }
-    
-    try {
-        // Ouvrir la base de données parcelles en lecture seule
-        const parcellesDb = new Database(parcellesDbPath, { readonly: true });
-        
-        // Vérifier quelle table existe dans la base
-        const tables = parcellesDb.prepare(`
-            SELECT name FROM sqlite_master 
-            WHERE type='table' 
-            AND name IN ('parcelles', 'parcelle', 'temp_bdnb_parcelle')
-        `).all();
-        
-        if (tables.length === 0) {
-            console.log('⚠️ Aucune table de parcelles trouvée dans parcelles.db');
-            parcellesDb.close();
-            return;
-        }
-        
-        const tableName = tables[0].name;
-        console.log(`   📋 Table trouvée: ${tableName}`);
-        
-        // Compter les parcelles
-        const count = parcellesDb.prepare(`SELECT COUNT(*) as total FROM ${tableName}`).get();
-        console.log(`   📊 ${count.total.toLocaleString()} parcelles à charger`);
-        
-        // Préparer l'insertion dans la base principale
-        const insertStmt = db.prepare(`
-            INSERT OR REPLACE INTO temp_bdnb_parcelle 
-            VALUES (?, ?, ?, ?)
-        `);
-        
-        // Charger par batch de 10000
-        const BATCH_SIZE = 10000;
-        let offset = 0;
-        let totalLoaded = 0;
-        
-        const insertBatch = db.transaction((items) => {
-            for (const item of items) {
-                insertStmt.run(item.parcelle_id, item.surface_geom_parcelle, item.longitude, item.latitude);
-            }
-        });
-        
-        while (true) {
-            const batch = parcellesDb.prepare(`
-                SELECT parcelle_id, surface_geom_parcelle, longitude, latitude 
-                FROM ${tableName} 
-                WHERE longitude IS NOT NULL AND latitude IS NOT NULL
-                LIMIT ${BATCH_SIZE} OFFSET ${offset}
-            `).all();
-            
-            if (batch.length === 0) break;
-            
-            insertBatch(batch);
-            totalLoaded += batch.length;
-            offset += BATCH_SIZE;
-            
-            // Afficher la progression
-            process.stdout.write(`\r   📊 ${totalLoaded.toLocaleString()} parcelles chargées...`);
-        }
-        
-        process.stdout.write('\r' + ' '.repeat(60) + '\r');
-        console.log(`   ✅ ${totalLoaded.toLocaleString()} parcelles chargées depuis parcelles.db`);
-        
-        parcellesDb.close();
-        
-    } catch (error) {
-        console.error('❌ Erreur chargement parcelles.db:', error.message);
-    }
 }
 
 // Fonction pour charger les données DVF séquentiellement
@@ -925,105 +868,131 @@ async function testJoin() {
         console.log(`   `);
     });
     
-    // Étape 3: Test de la jointure DPE - VERSION SIMPLIFIÉE pour performance
+    // Étape 3: Test de la jointure DPE - VERSION OPTIMISÉE avec table temporaire
     console.log('🔋 Test de la jointure DPE...');
     
     try {
-        // Version SIMPLIFIÉE : pas de calculs julianday() ni vérification de chronologie
-        // On prend simplement le DPE le plus récent pour le bâtiment
-        console.log('   🔄 Jointure simplifiée (sans chronologie)...');
+        // OPTIMISATION : Créer une table temporaire avec le DPE le plus récent par bâtiment
+        // Cela évite les sous-requêtes corrélées qui sont très lentes
+        console.log('   🔄 Création de la table temporaire DPE (DPE le plus récent par bâtiment)...');
         db.exec(`
-            UPDATE dvf_bdnb_complete AS d 
-            SET classe_dpe = (
-                    SELECT dpe.classe_dpe 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.classe_dpe IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                )
-            WHERE d.batiment_groupe_id IS NOT NULL
+            CREATE TEMP TABLE temp_dpe_latest AS
+            SELECT 
+                batiment_groupe_id,
+                classe_dpe,
+                orientation_principale,
+                pourcentage_vitrage,
+                presence_piscine,
+                presence_garage,
+                type_dpe,
+                dpe_officiel,
+                surface_habitable_logement,
+                date_etablissement_dpe,
+                ROW_NUMBER() OVER (
+                    PARTITION BY batiment_groupe_id 
+                    ORDER BY 
+                        CASE WHEN date_etablissement_dpe IS NULL THEN 0 ELSE 1 END DESC,
+                        date_etablissement_dpe DESC
+                ) as rn
+            FROM temp_bdnb_dpe
+            WHERE batiment_groupe_id IS NOT NULL
         `);
         
-        console.log('   ✅ Jointure DPE classe réussie');
+        // Créer un index pour accélérer la jointure
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dpe_latest ON temp_dpe_latest(batiment_groupe_id) WHERE rn = 1`);
         
-        // Jointure des autres colonnes DPE (orientation, vitrage, etc.)
+        console.log('   ✅ Table temporaire DPE créée');
+        
+        // Maintenant, faire une simple jointure UPDATE (beaucoup plus rapide)
+        console.log('   🔄 Jointure classe_dpe (optimisée)...');
+        const updateClasseDPE = db.prepare(`
+            UPDATE dvf_bdnb_complete AS d 
+            SET classe_dpe = (
+                SELECT dpe.classe_dpe 
+                FROM temp_dpe_latest dpe
+                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                  AND dpe.rn = 1
+                  AND dpe.classe_dpe IS NOT NULL
+            )
+            WHERE d.batiment_groupe_id IS NOT NULL
+        `);
+        const resultClasse = updateClasseDPE.run();
+        console.log(`   ✅ Jointure DPE classe réussie (${resultClasse.changes.toLocaleString()} lignes mises à jour)`);
+        
+        // Jointure des autres colonnes DPE en une seule requête (optimisée)
         console.log('   🔄 Enrichissement des autres champs DPE...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
             SET 
                 orientation_principale = (
                     SELECT dpe.orientation_principale 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.orientation_principale IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 pourcentage_vitrage = (
                     SELECT dpe.pourcentage_vitrage 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.pourcentage_vitrage IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 presence_piscine = (
                     SELECT dpe.presence_piscine 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.presence_piscine IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 presence_garage = (
                     SELECT dpe.presence_garage 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.presence_garage IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 type_dpe = (
                     SELECT dpe.type_dpe 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.type_dpe IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 dpe_officiel = (
                     SELECT dpe.dpe_officiel 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.dpe_officiel IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 surface_habitable_logement = (
                     SELECT dpe.surface_habitable_logement 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.surface_habitable_logement IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 date_etablissement_dpe = (
                     SELECT dpe.date_etablissement_dpe 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.date_etablissement_dpe IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 )
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
         
         console.log('   ✅ Enrichissement DPE complet');
         
+        // Nettoyer la table temporaire
+        db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
+        
     } catch (error) {
         console.log(`   ⚠️ Erreur jointure DPE : ${error.message}`);
         console.log('   ⚠️ Jointure DPE échouée mais le script continue');
+        // Nettoyer en cas d'erreur
+        db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
     }
     
     console.log('\n✅ Tests de jointure terminés\n');
@@ -1101,7 +1070,6 @@ async function runTest() {
         
         // Charger les données
         await loadBDNBData();
-        await loadParcellesFromDB(); // Charger les parcelles depuis parcelles.db
         await loadDVFData();
         
         // Tester les jointures

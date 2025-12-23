@@ -1,8 +1,8 @@
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 
 const dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
-const db = new sqlite3.Database(dbPath);
+const db = new Database(dbPath);
 
 // Récupérer le token depuis les arguments
 const token = process.argv[2];
@@ -17,31 +17,29 @@ console.log('🔍 Debug du token de vérification email\n');
 console.log(`Token reçu: ${token}`);
 console.log(`Longueur: ${token.length} caractères\n`);
 
-// Chercher l'utilisateur avec ce token
-db.get(`
-    SELECT 
-        id, 
-        username, 
-        email, 
-        email_verification_token,
-        email_verification_expires,
-        is_verified,
-        datetime(email_verification_expires/1000, 'unixepoch') as expires_at_formatted
-    FROM users 
-    WHERE email_verification_token = ?
-`, [token], (err, user) => {
-    if (err) {
-        console.error('❌ Erreur:', err.message);
-        db.close();
-        process.exit(1);
-    }
+try {
+    // Chercher l'utilisateur avec ce token
+    const stmt = db.prepare(`
+        SELECT 
+            id, 
+            username, 
+            email, 
+            email_verification_token,
+            email_verification_expires,
+            is_verified,
+            datetime(email_verification_expires/1000, 'unixepoch') as expires_at_formatted
+        FROM users 
+        WHERE email_verification_token = ?
+    `);
+    
+    const user = stmt.get(token);
     
     if (!user) {
         console.log('❌ Aucun utilisateur trouvé avec ce token');
         console.log('\n📋 Recherche de tous les tokens existants:\n');
         
         // Lister tous les utilisateurs avec leurs tokens
-        db.all(`
+        const allUsersStmt = db.prepare(`
             SELECT 
                 username,
                 email,
@@ -51,23 +49,22 @@ db.get(`
             FROM users
             WHERE email_verification_token IS NOT NULL
             ORDER BY email
-        `, [], (err, users) => {
-            if (err) {
-                console.error('❌ Erreur:', err.message);
-            } else if (users.length === 0) {
-                console.log('   Aucun token trouvé dans la base de données');
-            } else {
-                users.forEach((u, index) => {
-                    console.log(`${index + 1}. ${u.email} (${u.username})`);
-                    console.log(`   Token: ${u.email_verification_token}`);
-                    console.log(`   Vérifié: ${u.is_verified === 1 ? 'Oui' : 'Non'}`);
-                    console.log(`   Expire: ${u.expires_at || 'N/A'}`);
-                    console.log(`   Token correspond: ${u.email_verification_token === token ? '✅ OUI' : '❌ NON'}`);
-                    console.log('');
-                });
-            }
-            db.close();
-        });
+        `);
+        
+        const users = allUsersStmt.all();
+        
+        if (users.length === 0) {
+            console.log('   Aucun token trouvé dans la base de données');
+        } else {
+            users.forEach((u, index) => {
+                console.log(`${index + 1}. ${u.email} (${u.username})`);
+                console.log(`   Token: ${u.email_verification_token}`);
+                console.log(`   Vérifié: ${u.is_verified === 1 ? 'Oui' : 'Non'}`);
+                console.log(`   Expire: ${u.expires_at || 'N/A'}`);
+                console.log(`   Token correspond: ${u.email_verification_token === token ? '✅ OUI' : '❌ NON'}`);
+                console.log('');
+            });
+        }
     } else {
         console.log('✅ Utilisateur trouvé!\n');
         console.log(`Username: ${user.username}`);
@@ -89,8 +86,12 @@ db.get(`
             const hoursRemaining = ((expires - now) / (1000 * 60 * 60)).toFixed(2);
             console.log(`   Expire dans ${hoursRemaining} heures`);
         }
-        
-        db.close();
     }
-});
+    
+    db.close();
+} catch (err) {
+    console.error('❌ Erreur:', err.message);
+    db.close();
+    process.exit(1);
+}
 

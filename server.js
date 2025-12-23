@@ -1,3 +1,10 @@
+// Charger les variables d'environnement depuis .env si disponible
+try {
+    require('dotenv').config();
+} catch (e) {
+    // dotenv n'est pas installé, continuer sans
+}
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');

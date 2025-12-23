@@ -79,17 +79,31 @@ class UserService {
             VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
         `);
         
-        insertUser.run(
-            userId,
-            username,
-            email,
-            passwordHash,
-            fullName || null,
-            phone || null,
-            userType || 'buyer',
-            emailVerificationToken,
-            emailVerificationExpires
-        );
+        try {
+            insertUser.run(
+                userId,
+                username,
+                email,
+                passwordHash,
+                fullName || null,
+                phone || null,
+                userType || 'buyer',
+                emailVerificationToken,
+                emailVerificationExpires
+            );
+        } catch (insertError) {
+            console.error('❌ Erreur insertion utilisateur:', insertError.message);
+            throw new Error(`Erreur lors de la création de l'utilisateur: ${insertError.message}`);
+        }
+        
+        // Vérifier que le token a bien été enregistré
+        const verifyStmt = this.db.prepare('SELECT email_verification_token FROM users WHERE id = ?');
+        const verification = verifyStmt.get(userId);
+        
+        if (!verification || verification.email_verification_token !== emailVerificationToken) {
+            console.error('⚠️ Le token de vérification n\'a pas été correctement enregistré');
+            throw new Error('Erreur lors de l\'enregistrement du token de vérification');
+        }
         
         // Retourner les données de l'utilisateur (sans le mot de passe)
         const user = this.db.prepare('SELECT id, username, email, full_name, phone, user_type, is_verified FROM users WHERE id = ?').get(userId);

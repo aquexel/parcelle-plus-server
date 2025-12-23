@@ -1,14 +1,17 @@
-const Database = require('better-sqlite3');
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
-const bcrypt = require('bcryptjs');
 
 const dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
-const db = new Database(dbPath);
+const db = new sqlite3.Database(dbPath);
 
 console.log('📊 Liste des utilisateurs dans la base de données:\n');
 
-try {
-    const users = db.prepare('SELECT id, username, email, is_active, is_verified, user_type FROM users').all();
+db.all('SELECT id, username, email, is_active, is_verified, user_type FROM users', [], (err, users) => {
+    if (err) {
+        console.error('❌ Erreur:', err.message);
+        db.close();
+        return;
+    }
     
     if (users.length === 0) {
         console.log('⚠️ Aucun utilisateur trouvé dans la base de données');
@@ -25,9 +28,7 @@ try {
             console.log('');
         });
     }
-} catch (error) {
-    console.error('❌ Erreur:', error.message);
-}
-
-db.close();
+    
+    db.close();
+});
 

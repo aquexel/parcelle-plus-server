@@ -1112,104 +1112,127 @@ async function mergeDVFWithBDNB() {
     }
     
     // Étape 2: Mettre à jour les données DPE via batiment_groupe_id
-    // VERSION SIMPLIFIÉE (comme create-dvf-bdnb-national-FINAL.js) pour éviter les 0%
-    // Pas de filtre sur surface habitable ni chronologie complexe - juste prendre le DPE le plus récent
-    console.log('   🔋 Mise à jour des données DPE (version simplifiée)...');
+    // VERSION OPTIMISÉE avec table temporaire (comme create-dvf-bdnb-national-FINAL.js)
+    console.log('   🔋 Mise à jour des données DPE (version optimisée)...');
     const memBeforeDPE = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     console.log(`      (Mem avant: ${memBeforeDPE} MB)`);
     
     try {
-        // D'abord, mettre à jour classe_dpe (version simplifiée)
-        console.log('   🔄 Jointure classe_dpe (simplifiée)...');
+        // OPTIMISATION : Créer une table temporaire avec le DPE le plus récent par bâtiment
+        // Cela évite les sous-requêtes corrélées qui sont très lentes
+        console.log('   🔄 Création de la table temporaire DPE (DPE le plus récent par bâtiment)...');
         db.exec(`
+            CREATE TEMP TABLE temp_dpe_latest AS
+            SELECT 
+                batiment_groupe_id,
+                classe_dpe,
+                orientation_principale,
+                pourcentage_vitrage,
+                presence_piscine,
+                presence_garage,
+                presence_veranda,
+                type_dpe,
+                dpe_officiel,
+                surface_habitable_logement,
+                date_etablissement_dpe,
+                ROW_NUMBER() OVER (
+                    PARTITION BY batiment_groupe_id 
+                    ORDER BY 
+                        CASE WHEN date_etablissement_dpe IS NULL THEN 0 ELSE 1 END DESC,
+                        date_etablissement_dpe DESC
+                ) as rn
+            FROM temp_bdnb_dpe
+            WHERE batiment_groupe_id IS NOT NULL
+        `);
+        
+        // Créer un index pour accélérer la jointure
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dpe_latest ON temp_dpe_latest(batiment_groupe_id) WHERE rn = 1`);
+        
+        console.log('   ✅ Table temporaire DPE créée');
+        
+        // Maintenant, faire une simple jointure UPDATE (beaucoup plus rapide)
+        console.log('   🔄 Jointure classe_dpe (optimisée)...');
+        const updateClasseDPE = db.prepare(`
             UPDATE dvf_bdnb_complete AS d 
             SET classe_dpe = (
                 SELECT dpe.classe_dpe 
-                FROM temp_bdnb_dpe dpe
+                FROM temp_dpe_latest dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                  AND dpe.rn = 1
                   AND dpe.classe_dpe IS NOT NULL
-                ORDER BY dpe.date_etablissement_dpe DESC
-                LIMIT 1
             )
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
+        const resultClasse = updateClasseDPE.run();
+        console.log(`   ✅ Jointure DPE classe réussie (${resultClasse.changes.toLocaleString()} lignes mises à jour)`);
         
-        // Ensuite, mettre à jour tous les autres champs DPE en une seule requête
+        // Jointure des autres colonnes DPE en une seule requête (optimisée)
         console.log('   🔄 Enrichissement des autres champs DPE...');
         db.exec(`
             UPDATE dvf_bdnb_complete AS d 
             SET 
                 orientation_principale = (
                     SELECT dpe.orientation_principale 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.orientation_principale IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 pourcentage_vitrage = (
                     SELECT dpe.pourcentage_vitrage 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.pourcentage_vitrage IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 presence_piscine = (
                     SELECT dpe.presence_piscine 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.presence_piscine IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 presence_garage = (
                     SELECT dpe.presence_garage 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.presence_garage IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 presence_veranda = (
                     SELECT dpe.presence_veranda 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.presence_veranda IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 type_dpe = (
                     SELECT dpe.type_dpe 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.type_dpe IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 dpe_officiel = (
                     SELECT dpe.dpe_officiel 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.dpe_officiel IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 surface_habitable_logement = (
                     SELECT dpe.surface_habitable_logement 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.surface_habitable_logement IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 ),
                 date_etablissement_dpe = (
                     SELECT dpe.date_etablissement_dpe 
-                    FROM temp_bdnb_dpe dpe
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
                       AND dpe.date_etablissement_dpe IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
                 )
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
@@ -1217,6 +1240,9 @@ async function mergeDVFWithBDNB() {
         const memAfterDPE = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
         console.log(`      (Mem après: ${memAfterDPE} MB)`);
         console.log('   ✅ Enrichissement DPE complet');
+        
+        // Nettoyer la table temporaire
+        db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
         
         // Checkpoint après mise à jour DPE
         try {
@@ -1237,11 +1263,17 @@ async function mergeDVFWithBDNB() {
                 FROM temp_bdnb_dpe dpe
                 WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
                   AND dpe.classe_dpe IS NOT NULL
-                ORDER BY dpe.date_etablissement_dpe DESC
                 LIMIT 1
             )
             WHERE d.batiment_groupe_id IS NOT NULL
         `);
+        
+        // Nettoyer la table temporaire en cas d'erreur
+        try {
+            db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
+        } catch (e) {
+            // Ignorer
+        }
     }
     
     // Étape 3: Fallback via code_commune pour les transactions sans id_parcelle
@@ -1441,80 +1473,115 @@ async function mergeDVFWithBDNB() {
     console.log(`      Avec GPS: ${stats.with_gps} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
     
     // Étape 7: Mettre à jour les données DPE pour les transactions qui n'ont pas encore de DPE
-    // VERSION SIMPLIFIÉE (comme create-dvf-bdnb-national-FINAL.js)
-    console.log('   🔋 Mise à jour des données DPE manquantes (fallback simplifié)...');
+    // VERSION OPTIMISÉE avec table temporaire (comme create-dvf-bdnb-national-FINAL.js)
+    console.log('   🔋 Mise à jour des données DPE manquantes (fallback optimisé)...');
     const memBeforeFallback = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     
-    // Mettre à jour seulement les transactions qui n'ont pas encore de classe_dpe
-    db.exec(`
-        UPDATE dvf_bdnb_complete AS d 
-        SET 
-            classe_dpe = (
-                SELECT dpe.classe_dpe 
-                FROM temp_bdnb_dpe dpe
-                WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                  AND dpe.classe_dpe IS NOT NULL
-                ORDER BY dpe.date_etablissement_dpe DESC
-                LIMIT 1
-            ),
-            orientation_principale = COALESCE(
-                d.orientation_principale,
-                (
-                    SELECT dpe.orientation_principale 
-                    FROM temp_bdnb_dpe dpe
+    try {
+        // Recréer la table temporaire DPE pour le fallback
+        console.log('   🔄 Recréation de la table temporaire DPE pour fallback...');
+        db.exec(`
+            CREATE TEMP TABLE IF NOT EXISTS temp_dpe_latest AS
+            SELECT 
+                batiment_groupe_id,
+                classe_dpe,
+                orientation_principale,
+                pourcentage_vitrage,
+                presence_piscine,
+                presence_garage,
+                presence_veranda,
+                type_dpe,
+                dpe_officiel,
+                surface_habitable_logement,
+                date_etablissement_dpe,
+                ROW_NUMBER() OVER (
+                    PARTITION BY batiment_groupe_id 
+                    ORDER BY 
+                        CASE WHEN date_etablissement_dpe IS NULL THEN 0 ELSE 1 END DESC,
+                        date_etablissement_dpe DESC
+                ) as rn
+            FROM temp_bdnb_dpe
+            WHERE batiment_groupe_id IS NOT NULL
+        `);
+        
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_dpe_latest ON temp_dpe_latest(batiment_groupe_id) WHERE rn = 1`);
+        
+        // Mettre à jour seulement les transactions qui n'ont pas encore de classe_dpe
+        db.exec(`
+            UPDATE dvf_bdnb_complete AS d 
+            SET 
+                classe_dpe = (
+                    SELECT dpe.classe_dpe 
+                    FROM temp_dpe_latest dpe
                     WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.orientation_principale IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
+                      AND dpe.rn = 1
+                      AND dpe.classe_dpe IS NOT NULL
+                ),
+                orientation_principale = COALESCE(
+                    d.orientation_principale,
+                    (
+                        SELECT dpe.orientation_principale 
+                        FROM temp_dpe_latest dpe
+                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                          AND dpe.rn = 1
+                          AND dpe.orientation_principale IS NOT NULL
+                    )
+                ),
+                pourcentage_vitrage = COALESCE(
+                    d.pourcentage_vitrage,
+                    (
+                        SELECT dpe.pourcentage_vitrage 
+                        FROM temp_dpe_latest dpe
+                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                          AND dpe.rn = 1
+                          AND dpe.pourcentage_vitrage IS NOT NULL
+                    )
+                ),
+                presence_piscine = COALESCE(
+                    d.presence_piscine,
+                    (
+                        SELECT dpe.presence_piscine 
+                        FROM temp_dpe_latest dpe
+                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                          AND dpe.rn = 1
+                          AND dpe.presence_piscine IS NOT NULL
+                    )
+                ),
+                presence_garage = COALESCE(
+                    d.presence_garage,
+                    (
+                        SELECT dpe.presence_garage 
+                        FROM temp_dpe_latest dpe
+                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                          AND dpe.rn = 1
+                          AND dpe.presence_garage IS NOT NULL
+                    )
+                ),
+                presence_veranda = COALESCE(
+                    d.presence_veranda,
+                    (
+                        SELECT dpe.presence_veranda 
+                        FROM temp_dpe_latest dpe
+                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                          AND dpe.rn = 1
+                          AND dpe.presence_veranda IS NOT NULL
+                    )
                 )
-            ),
-            pourcentage_vitrage = COALESCE(
-                d.pourcentage_vitrage,
-                (
-                    SELECT dpe.pourcentage_vitrage 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.pourcentage_vitrage IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                )
-            ),
-            presence_piscine = COALESCE(
-                d.presence_piscine,
-                (
-                    SELECT dpe.presence_piscine 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.presence_piscine IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                )
-            ),
-            presence_garage = COALESCE(
-                d.presence_garage,
-                (
-                    SELECT dpe.presence_garage 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.presence_garage IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                )
-            ),
-            presence_veranda = COALESCE(
-                d.presence_veranda,
-                (
-                    SELECT dpe.presence_veranda 
-                    FROM temp_bdnb_dpe dpe
-                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                      AND dpe.presence_veranda IS NOT NULL
-                    ORDER BY dpe.date_etablissement_dpe DESC
-                    LIMIT 1
-                )
-            )
-        WHERE d.batiment_groupe_id IS NOT NULL 
-          AND d.classe_dpe IS NULL
-    `);
+            WHERE d.batiment_groupe_id IS NOT NULL 
+              AND d.classe_dpe IS NULL
+        `);
+        
+        // Nettoyer la table temporaire
+        db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
+    } catch (error) {
+        console.log(`   ⚠️ Erreur lors du fallback DPE : ${error.message}`);
+        try {
+            db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
+        } catch (e) {
+            // Ignorer
+        }
+    }
+    
     const memAfterFallback = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     console.log(`      (Mem: ${memBeforeFallback} → ${memAfterFallback} MB)`);
     

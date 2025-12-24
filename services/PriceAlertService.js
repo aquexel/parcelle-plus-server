@@ -1,11 +1,26 @@
 const sqlite3 = require('sqlite3').verbose();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const fs = require('fs');
 
 class PriceAlertService {
     constructor() {
         this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_business.db');
-        this.db = new sqlite3.Database(this.dbPath);
+        
+        // S'assurer que le répertoire database existe
+        const dbDir = path.dirname(this.dbPath);
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
+            console.log(`✅ Répertoire database créé: ${dbDir}`);
+        }
+        
+        this.db = new sqlite3.Database(this.dbPath, (err) => {
+            if (err) {
+                console.error('❌ Erreur ouverture base de données PriceAlertService:', err);
+            } else {
+                console.log(`✅ Base de données PriceAlertService connectée: ${this.dbPath}`);
+            }
+        });
         this.initializeDatabase();
     }
 

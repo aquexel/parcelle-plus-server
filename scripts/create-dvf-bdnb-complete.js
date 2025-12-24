@@ -1046,17 +1046,30 @@ async function mergeDVFWithBDNB() {
     `).get();
     console.log(`      📊 Échantillon de correspondances: ${sampleMatch.count} sur 1000 premières`);
     
-    db.exec(`
-        UPDATE dvf_bdnb_complete AS d 
+    // Utiliser une jointure UPDATE optimisée (comme dans create-dvf-dpe-annexes-db-enhanced.js)
+    // Créer d'abord un index sur parcelle_id pour accélérer la jointure
+    try {
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_relations_parcelle ON temp_bdnb_relations(parcelle_id)`);
+    } catch (e) {
+        // Index peut déjà exister
+    }
+    
+    // Utiliser une approche avec sous-requête corrélée mais optimisée
+    const updateStmt = db.prepare(`
+        UPDATE dvf_bdnb_complete 
         SET batiment_groupe_id = (
             SELECT rel.batiment_groupe_id 
             FROM temp_bdnb_relations rel 
-            WHERE rel.parcelle_id = d.id_parcelle
+            WHERE rel.parcelle_id = dvf_bdnb_complete.id_parcelle
             LIMIT 1
         )
-        WHERE d.id_parcelle IS NOT NULL 
-          AND d.id_parcelle != ''
+        WHERE id_parcelle IS NOT NULL 
+          AND id_parcelle != ''
+          AND batiment_groupe_id IS NULL
     `);
+    
+    const result = updateStmt.run();
+    console.log(`      ✅ ${result.changes.toLocaleString()} lignes mises à jour`);
     
     const statsAfter = db.prepare(`
         SELECT COUNT(CASE WHEN batiment_groupe_id IS NOT NULL THEN 1 END) as avec_batiment

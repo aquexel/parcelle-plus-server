@@ -1086,6 +1086,102 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
 });
 
+// Route GET pour rediriger vers l'application Android
+app.get('/api/auth/reset-password', async (req, res) => {
+    try {
+        const { token } = req.query;
+        
+        if (!token) {
+            return res.status(400).send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta http-equiv="refresh" content="0;url=parcelleplus://reset-password">
+                    <title>Redirection...</title>
+                </head>
+                <body>
+                    <p>Redirection vers l'application...</p>
+                    <script>window.location.href = 'parcelleplus://reset-password';</script>
+                </body>
+                </html>
+            `);
+        }
+        
+        // Vérifier que le token existe et n'est pas expiré
+        const user = userService.db.prepare(`
+            SELECT id, username, email, password_reset_expires 
+            FROM users 
+            WHERE password_reset_token = ? AND password_reset_expires > ?
+        `).get(token, Date.now());
+        
+        if (!user) {
+            return res.status(400).send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <meta http-equiv="refresh" content="0;url=parcelleplus://reset-password?token=${token}&error=expired">
+                    <title>Redirection...</title>
+                </head>
+                <body>
+                    <p>Redirection vers l'application...</p>
+                    <script>window.location.href = 'parcelleplus://reset-password?token=${token}&error=expired';</script>
+                </body>
+                </html>
+            `);
+        }
+        
+        // Rediriger vers l'application Android avec le token
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta http-equiv="refresh" content="0;url=parcelleplus://reset-password?token=${token}">
+                <title>Redirection vers l'application...</title>
+                <style>
+                    body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+                    .container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                    h1 { color: #2196F3; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>📱 Ouverture de l'application...</h1>
+                    <p>Redirection vers ParcellePlus pour réinitialiser votre mot de passe.</p>
+                    <p>Si l'application ne s'ouvre pas automatiquement, <a href="parcelleplus://reset-password?token=${token}">cliquez ici</a>.</p>
+                </div>
+                <script>
+                    // Essayer d'ouvrir l'app immédiatement
+                    window.location.href = 'parcelleplus://reset-password?token=${token}';
+                    
+                    // Si après 2 secondes l'app ne s'est pas ouverte, afficher un message
+                    setTimeout(function() {
+                        document.body.innerHTML = '<div class="container"><h1>📱 Application non trouvée</h1><p>Veuillez installer l\'application ParcellePlus pour réinitialiser votre mot de passe.</p></div>';
+                    }, 2000);
+                </script>
+            </body>
+            </html>
+        `);
+    } catch (error) {
+        console.error('❌ Erreur redirection réinitialisation:', error.message);
+        res.status(500).send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Erreur</title>
+            </head>
+            <body>
+                <h1>❌ Erreur</h1>
+                <p>Une erreur est survenue. Veuillez réessayer plus tard.</p>
+            </body>
+            </html>
+        `);
+    }
+});
+
 // Réinitialiser le mot de passe avec un token
 app.post('/api/auth/reset-password', async (req, res) => {
     try {

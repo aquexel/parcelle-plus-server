@@ -37,7 +37,6 @@ class PriceAlertService {
                     user_id TEXT NOT NULL,
                     notified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (alert_id) REFERENCES price_alerts(id) ON DELETE CASCADE,
-                    FOREIGN KEY (announcement_id) REFERENCES polygons(id) ON DELETE CASCADE,
                     UNIQUE(alert_id, announcement_id)
                 )
             `;
@@ -65,13 +64,33 @@ class PriceAlertService {
                             console.log('✅ Table alert_notifications initialisée');
                             
                             // Créer les index APRÈS que les deux tables soient créées
-                            createIndexes.forEach(indexQuery => {
+                            // Créer les index de manière séquentielle pour éviter les erreurs
+                            let indexIndex = 0;
+                            const createNextIndex = () => {
+                                if (indexIndex >= createIndexes.length) {
+                                    console.log('✅ Tous les index créés');
+                                    return;
+                                }
+                                
+                                const indexQuery = createIndexes[indexIndex];
                                 this.db.run(indexQuery, (err) => {
-                                    if (err && !err.message.includes('already exists') && !err.message.includes('no such table')) {
-                                        console.error('❌ Erreur création index:', err);
+                                    if (err) {
+                                        // Ignorer les erreurs si l'index existe déjà ou si la table n'existe pas
+                                        if (err.message.includes('already exists') || 
+                                            err.message.includes('duplicate') ||
+                                            err.message.includes('no such table')) {
+                                            console.log(`ℹ️ Index ${indexIndex + 1} ignoré (déjà existant ou table absente)`);
+                                        } else {
+                                            console.error(`❌ Erreur création index ${indexIndex + 1}:`, err.message);
+                                        }
+                                    } else {
+                                        console.log(`✅ Index ${indexIndex + 1} créé`);
                                     }
+                                    indexIndex++;
+                                    createNextIndex();
                                 });
-                            });
+                            };
+                            createNextIndex();
                         }
                     });
                 }

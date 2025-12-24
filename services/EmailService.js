@@ -16,7 +16,8 @@ class EmailService {
         });
         
         // URL de base de l'application (pour les liens de confirmation)
-        this.baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+        // Utiliser le domaine si disponible, sinon utiliser BASE_URL ou localhost
+        this.baseUrl = process.env.BASE_URL || process.env.DOMAIN_URL || 'https://parcelle-plus.fr';
     }
     
     /**
@@ -31,7 +32,12 @@ class EmailService {
      */
     async sendVerificationEmail(email, username, verificationToken) {
         try {
-            const verificationUrl = `${this.baseUrl}/api/auth/verify-email?token=${verificationToken}`;
+            // Utiliser un deep link Android pour ouvrir directement l'app (ne révèle pas l'IP)
+            const deepLinkUrl = `parcelleplus://verify-email?token=${verificationToken}`;
+            // URL web de secours (utiliser le domaine si disponible, sinon BASE_URL)
+            const webUrl = this.baseUrl.includes('://') && !this.baseUrl.match(/^\d+\.\d+\.\d+\.\d+/) 
+                ? `${this.baseUrl}/api/auth/verify-email?token=${verificationToken}`
+                : `https://parcelle-plus.fr/api/auth/verify-email?token=${verificationToken}`;
             
             const mailOptions = {
                 from: `"ParcellePlus" <${process.env.SMTP_USER || 'noreply@parcelle-plus.fr'}>`,
@@ -61,10 +67,11 @@ class EmailService {
                                 <p>Merci de vous être inscrit sur ParcellePlus.</p>
                                 <p>Pour activer votre compte, veuillez confirmer votre adresse email en cliquant sur le bouton ci-dessous :</p>
                                 <div style="text-align: center;">
-                                    <a href="${verificationUrl}" class="button">Confirmer mon email</a>
+                                    <a href="${deepLinkUrl}" class="button">Confirmer mon email</a>
                                 </div>
+                                <p><small>Si l'application ParcellePlus est installée sur votre appareil, le lien s'ouvrira automatiquement dans l'app.</small></p>
                                 <p>Ou copiez-collez ce lien dans votre navigateur :</p>
-                                <p style="word-break: break-all; color: #2196F3;">${verificationUrl}</p>
+                                <p style="word-break: break-all; color: #2196F3;">${webUrl}</p>
                                 <p><strong>Ce lien expire dans 24 heures.</strong></p>
                                 <p>Si vous n'avez pas créé de compte sur ParcellePlus, vous pouvez ignorer cet email.</p>
                             </div>
@@ -81,9 +88,9 @@ class EmailService {
                     Merci de vous être inscrit sur ParcellePlus.
                     
                     Pour activer votre compte, veuillez confirmer votre adresse email en visitant ce lien :
-                    ${verificationUrl}
+                    ${webUrl}
                     
-                    Si l'application ParcellePlus est installée, vous pouvez également utiliser le lien de réinitialisation depuis l'app.
+                    Si l'application ParcellePlus est installée, vous pouvez également utiliser le lien depuis l'app.
                     
                     Ce lien expire dans 24 heures.
                     

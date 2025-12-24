@@ -14,9 +14,14 @@ SMTP_USER=votre-email@gmail.com
 SMTP_PASS=votre-mot-de-passe-app
 
 # URL de base de l'application (pour les liens de confirmation)
-BASE_URL=http://localhost:3000
-# Ou en production :
-# BASE_URL=https://votre-domaine.com
+# Utiliser un domaine pour éviter d'exposer l'adresse IP
+# L'application utilisera automatiquement le domaine si disponible
+BASE_URL=https://parcelle-plus.fr
+# Ou pour un sous-domaine API :
+# BASE_URL=https://api.parcelle-plus.fr
+
+# Alternative : utiliser DOMAIN_URL (prioritaire si défini)
+# DOMAIN_URL=https://parcelle-plus.fr
 ```
 
 ## Configuration Gmail

@@ -16,8 +16,15 @@ class EmailService {
         });
         
         // URL de base de l'application (pour les liens de confirmation)
-        // Utiliser le domaine si disponible, sinon utiliser BASE_URL ou localhost
+        // Utiliser le domaine pour éviter d'exposer l'adresse IP
+        // Par défaut, utiliser le domaine parcelle-plus.fr
         this.baseUrl = process.env.BASE_URL || process.env.DOMAIN_URL || 'https://parcelle-plus.fr';
+        
+        // Si BASE_URL contient une IP (format http://IP:port), utiliser le domaine par défaut
+        if (this.baseUrl.match(/^https?:\/\/\d+\.\d+\.\d+\.\d+/)) {
+            console.log('⚠️ BASE_URL contient une adresse IP, utilisation du domaine par défaut pour les emails');
+            this.baseUrl = 'https://parcelle-plus.fr';
+        }
     }
     
     /**
@@ -34,10 +41,8 @@ class EmailService {
         try {
             // Utiliser un deep link Android pour ouvrir directement l'app (ne révèle pas l'IP)
             const deepLinkUrl = `parcelleplus://verify-email?token=${verificationToken}`;
-            // URL web de secours (utiliser le domaine si disponible, sinon BASE_URL)
-            const webUrl = this.baseUrl.includes('://') && !this.baseUrl.match(/^\d+\.\d+\.\d+\.\d+/) 
-                ? `${this.baseUrl}/api/auth/verify-email?token=${verificationToken}`
-                : `https://parcelle-plus.fr/api/auth/verify-email?token=${verificationToken}`;
+            // URL web de secours (utilise toujours le domaine, pas l'IP)
+            const webUrl = `${this.baseUrl}/api/auth/verify-email?token=${verificationToken}`;
             
             const mailOptions = {
                 from: `"ParcellePlus" <${process.env.SMTP_USER || 'noreply@parcelle-plus.fr'}>`,
@@ -114,8 +119,9 @@ class EmailService {
      */
     async sendPasswordResetEmail(email, username, resetToken) {
         try {
-            // Utiliser un deep link Android pour ouvrir directement l'app
+            // Utiliser un deep link Android pour ouvrir directement l'app (ne révèle pas l'IP)
             const resetUrl = `parcelleplus://reset-password?token=${resetToken}`;
+            // URL web de secours (utilise toujours le domaine, pas l'IP)
             const webUrl = `${this.baseUrl}/api/auth/reset-password?token=${resetToken}`;
             
             const mailOptions = {

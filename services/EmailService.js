@@ -57,6 +57,8 @@ class EmailService {
                             body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
                             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
                             .header { background: linear-gradient(135deg, #2196F3 0%, #42A5F5 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+                            .logo { width: 80px; height: 80px; margin: 0 auto 15px; display: block; }
+                            .header h1 { margin: 0; font-size: 28px; font-weight: bold; }
                             .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
                             .button { display: inline-block; background: #4CAF50; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
                             .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
@@ -65,7 +67,8 @@ class EmailService {
                     <body>
                         <div class="container">
                             <div class="header">
-                                <h1>🏠 ParcellePlus</h1>
+                                <img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4NCjxzdmcgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHZpZXdCb3g9IjAgMCAxMDggMTA4IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPg0KICAgIDwhLS0gRm9uZCBkw6lncmFkw6kgdmVydCBjbGFpciAtLT4NCiAgICA8ZGVmcz4NCiAgICAgICAgPHJhZGlhbEdyYWRpZW50IGlkPSJiZ0dyYWRpZW50IiBjeD0iNTAlIiBjeT0iNTAlIiByPSI1NSUiPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6I0U4RjVFODtzdG9wLW9wYWNpdHk6MSIgLz4NCiAgICAgICAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3R5bGU9InN0b3AtY29sb3I6I0YxRjhFOTtzdG9wLW9wYWNpdHk6MSIgLz4NCiAgICAgICAgPC9yYWRpYWxHcmFkaWVudD4NCiAgICA8L2RlZnM+DQogICAgDQogICAgPCEtLSBGb25kIC0tPg0KICAgIDxyZWN0IHdpZHRoPSIxMDgiIGhlaWdodD0iMTA4IiBmaWxsPSJ1cmwoI2JnR3JhZGllbnQpIi8+DQogICAgDQogICAgPCEtLSBNb3RpZnMgZGUgcGFyY2VsbGVzIHN1YnRpbHMgLS0+DQogICAgPHJlY3QgeD0iMjAiIHk9IjIwIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzRDQUY1MCIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMSIvPg0KICAgIDxyZWN0IHg9IjY4IiB5PSI2OCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiBmaWxsPSJub25lIiBzdHJva2U9IiM0Q0FGNTAiIHN0cm9rZS13aWR0aD0iMC41IiBvcGFjaXR5PSIwLjEiLz4NCiAgICANCiAgICA8IS0tIENlcmNsZSBleHTDqXJpZXVyIGdyaXMgZm9uY8OpIC0tPg0KICAgIDxjaXJjbGUgY3g9IjU0IiBjeT0iNTQiIHI9IjQ1IiBmaWxsPSJub25lIiBzdHJva2U9IiM0MjQyNDIiIHN0cm9rZS13aWR0aD0iNiIvPg0KICAgIA0KICAgIDwhLS0gQ29udG91ciBibGFuYyAtLT4NCiAgICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSI0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRkZGRkZGIiBzdHJva2Utd2lkdGg9IjMiLz4NCiAgICANCiAgICA8IS0tIENlcmNsZSBwcmluY2lwYWwgdmVydCAtLT4NCiAgICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSI0MCIgZmlsbD0iIzRDQUY1MCIvPg0KICAgIA0KICAgIDwhLS0gU2lnbmUgIisiIGVuIGJsYW5jIGF1IGNlbnRyZSAtLT4NCiAgICA8cGF0aCBkPSJNNTAsNDIgTDU4LDQyIEw1OCw1MCBMNjYsNTAgTDY2LDU4IEw1OCw1OCBMNTgsNjYgTDUwLDY2IEw1MCw1OCBMNDIsNTggTDQyLDUwIEw1MCw1MCBaIiBmaWxsPSIjRkZGRkZGIi8+DQogICAgDQogICAgPCEtLSBCb3JkdXJlIGR1IGNlcmNsZSB2ZXJ0IC0tPg0KICAgIDxjaXJjbGUgY3g9IjU0IiBjeT0iNTQiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiMyRTdEMzIiIHN0cm9rZS13aWR0aD0iMiIvPg0KPC9zdmc+DQoNCg0KDQoNCg0K" alt="ParcellePlus Logo" class="logo" />
+                                <h1>ParcellePlus</h1>
                             </div>
                             <div class="content">
                                 <h2>Bienvenue ${username} !</h2>

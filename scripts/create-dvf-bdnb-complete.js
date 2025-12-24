@@ -1021,6 +1021,31 @@ async function mergeDVFWithBDNB() {
     // Étape 1: Mettre à jour via id_parcelle (jointure précise)
     console.log('   📍 Jointure via id_parcelle...');
     const memBefore = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    
+    // Vérifier d'abord combien de transactions ont un id_parcelle
+    const statsBefore = db.prepare(`
+        SELECT 
+            COUNT(*) as total,
+            COUNT(CASE WHEN id_parcelle IS NOT NULL AND id_parcelle != '' THEN 1 END) as avec_parcelle,
+            COUNT(CASE WHEN batiment_groupe_id IS NOT NULL THEN 1 END) as avec_batiment
+        FROM dvf_bdnb_complete
+    `).get();
+    console.log(`      📊 Avant jointure: ${statsBefore.total.toLocaleString()} total, ${statsBefore.avec_parcelle.toLocaleString()} avec id_parcelle, ${statsBefore.avec_batiment.toLocaleString()} avec batiment_groupe_id`);
+    
+    // Vérifier combien de relations sont disponibles
+    const relationsCount = db.prepare('SELECT COUNT(*) as count FROM temp_bdnb_relations').get();
+    console.log(`      📊 Relations disponibles: ${relationsCount.count.toLocaleString()}`);
+    
+    // Vérifier un échantillon de correspondances
+    const sampleMatch = db.prepare(`
+        SELECT COUNT(*) as count
+        FROM dvf_bdnb_complete d
+        INNER JOIN temp_bdnb_relations rel ON rel.parcelle_id = d.id_parcelle
+        WHERE d.id_parcelle IS NOT NULL AND d.id_parcelle != ''
+        LIMIT 1000
+    `).get();
+    console.log(`      📊 Échantillon de correspondances: ${sampleMatch.count} sur 1000 premières`);
+    
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET batiment_groupe_id = (
@@ -1032,7 +1057,13 @@ async function mergeDVFWithBDNB() {
         WHERE d.id_parcelle IS NOT NULL 
           AND d.id_parcelle != ''
     `);
+    
+    const statsAfter = db.prepare(`
+        SELECT COUNT(CASE WHEN batiment_groupe_id IS NOT NULL THEN 1 END) as avec_batiment
+        FROM dvf_bdnb_complete
+    `).get();
     const memAfter = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    console.log(`      📊 Après jointure: ${statsAfter.avec_batiment.toLocaleString()} avec batiment_groupe_id (${(statsAfter.avec_batiment / statsBefore.total * 100).toFixed(1)}%)`);
     console.log(`      (Mem: ${memBefore} → ${memAfter} MB)`);
     
     // Checkpoint après jointure

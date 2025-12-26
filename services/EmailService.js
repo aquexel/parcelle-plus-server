@@ -1,6 +1,10 @@
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
+// Logo PNG en base64 (généré depuis app_logo.svg)
+// Pour régénérer : ouvrir raspberry-pi-server/scripts/create-png-base64.html dans un navigateur
+const LOGO_PNG_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
 class EmailService {
     constructor() {
         // Configuration SMTP (à adapter selon votre fournisseur d'email)
@@ -65,7 +69,7 @@ class EmailService {
                     <body>
                         <div class="container">
                             <div class="header">
-                                <img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4NCjxzdmcgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHZpZXdCb3g9IjAgMCAxMDggMTA4IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPg0KICAgIDwhLS0gRm9uZCBkw6lncmFkw6kgdmVydCBjbGFpciAtLT4NCiAgICA8ZGVmcz4NCiAgICAgICAgPHJhZGlhbEdyYWRpZW50IGlkPSJiZ0dyYWRpZW50IiBjeD0iNTAlIiBjeT0iNTAlIiByPSI1NSUiPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6I0U4RjVFODtzdG9wLW9wYWNpdHk6MSIgLz4NCiAgICAgICAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3R5bGU9InN0b3AtY29sb3I6I0YxRjhFOTtzdG9wLW9wYWNpdHk6MSIgLz4NCiAgICAgICAgPC9yYWRpYWxHcmFkaWVudD4NCiAgICA8L2RlZnM+DQogICAgDQogICAgPCEtLSBGb25kIC0tPg0KICAgIDxyZWN0IHdpZHRoPSIxMDgiIGhlaWdodD0iMTA4IiBmaWxsPSJ1cmwoI2JnR3JhZGllbnQpIi8+DQogICAgDQogICAgPCEtLSBNb3RpZnMgZGUgcGFyY2VsbGVzIHN1YnRpbHMgLS0+DQogICAgPHJlY3QgeD0iMjAiIHk9IjIwIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzRDQUY1MCIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMSIvPg0KICAgIDxyZWN0IHg9IjY4IiB5PSI2OCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiBmaWxsPSJub25lIiBzdHJva2U9IiM0Q0FGNTAiIHN0cm9rZS13aWR0aD0iMC41IiBvcGFjaXR5PSIwLjEiLz4NCiAgICANCiAgICA8IS0tIENlcmNsZSBleHTDqXJpZXVyIGdyaXMgZm9uY8OpIC0tPg0KICAgIDxjaXJjbGUgY3g9IjU0IiBjeT0iNTQiIHI9IjQ1IiBmaWxsPSJub25lIiBzdHJva2U9IiM0MjQyNDIiIHN0cm9rZS13aWR0aD0iNiIvPg0KICAgIA0KICAgIDwhLS0gQ29udG91ciBibGFuYyAtLT4NCiAgICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSI0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRkZGRkZGIiBzdHJva2Utd2lkdGg9IjMiLz4NCiAgICANCiAgICA8IS0tIENlcmNsZSBwcmluY2lwYWwgdmVydCAtLT4NCiAgICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSI0MCIgZmlsbD0iIzRDQUY1MCIvPg0KICAgIA0KICAgIDwhLS0gU2lnbmUgIisiIGVuIGJsYW5jIGF1IGNlbnRyZSAtLT4NCiAgICA8cGF0aCBkPSJNNTAsNDIgTDU4LDQyIEw1OCw1MCBMNjYsNTAgTDY2LDU4IEw1OCw1OCBMNTgsNjYgTDUwLDY2IEw1MCw1OCBMNDIsNTggTDQyLDUwIEw1MCw1MCBaIiBmaWxsPSIjRkZGRkZGIi8+DQogICAgDQogICAgPCEtLSBCb3JkdXJlIGR1IGNlcmNsZSB2ZXJ0IC0tPg0KICAgIDxjaXJjbGUgY3g9IjU0IiBjeT0iNTQiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiMyRTdEMzIiIHN0cm9rZS13aWR0aD0iMiIvPg0KPC9zdmc+DQoNCg0KDQoNCg0K" alt="ParcellePlus Logo" class="logo" />
+                                <img src="${LOGO_PNG_BASE64}" alt="ParcellePlus Logo" class="logo" />
                                 <h1>ParcellePlus</h1>
                             </div>
                             <div class="content">
@@ -148,7 +152,7 @@ class EmailService {
                     <body>
                         <div class="container">
                             <div class="header">
-                                <img src="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4NCjxzdmcgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHZpZXdCb3g9IjAgMCAxMDggMTA4IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPg0KICAgIDwhLS0gRm9uZCBkw6lncmFkw6kgdmVydCBjbGFpciAtLT4NCiAgICA8ZGVmcz4NCiAgICAgICAgPHJhZGlhbEdyYWRpZW50IGlkPSJiZ0dyYWRpZW50IiBjeD0iNTAlIiBjeT0iNTAlIiByPSI1NSUiPg0KICAgICAgICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3R5bGU9InN0b3AtY29sb3I6I0U4RjVFODtzdG9wLW9wYWNpdHk6MSIgLz4NCiAgICAgICAgICAgIDxzdG9wIG9mZnNldD0iMTAwJSIgc3R5bGU9InN0b3AtY29sb3I6I0YxRjhFOTtzdG9wLW9wYWNpdHk6MSIgLz4NCiAgICAgICAgPC9yYWRpYWxHcmFkaWVudD4NCiAgICA8L2RlZnM+DQogICAgDQogICAgPCEtLSBGb25kIC0tPg0KICAgIDxyZWN0IHdpZHRoPSIxMDgiIGhlaWdodD0iMTA4IiBmaWxsPSJ1cmwoI2JnR3JhZGllbnQpIi8+DQogICAgDQogICAgPCEtLSBNb3RpZnMgZGUgcGFyY2VsbGVzIHN1YnRpbHMgLS0+DQogICAgPHJlY3QgeD0iMjAiIHk9IjIwIiB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzRDQUY1MCIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMSIvPg0KICAgIDxyZWN0IHg9IjY4IiB5PSI2OCIgd2lkdGg9IjIwIiBoZWlnaHQ9IjIwIiBmaWxsPSJub25lIiBzdHJva2U9IiM0Q0FGNTAiIHN0cm9rZS13aWR0aD0iMC41IiBvcGFjaXR5PSIwLjEiLz4NCiAgICANCiAgICA8IS0tIENlcmNsZSBleHTDqXJpZXVyIGdyaXMgZm9uY8OpIC0tPg0KICAgIDxjaXJjbGUgY3g9IjU0IiBjeT0iNTQiIHI9IjQ1IiBmaWxsPSJub25lIiBzdHJva2U9IiM0MjQyNDIiIHN0cm9rZS13aWR0aD0iNiIvPg0KICAgIA0KICAgIDwhLS0gQ29udG91ciBibGFuYyAtLT4NCiAgICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSI0MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjRkZGRkZGIiBzdHJva2Utd2lkdGg9IjMiLz4NCiAgICANCiAgICA8IS0tIENlcmNsZSBwcmluY2lwYWwgdmVydCAtLT4NCiAgICA8Y2lyY2xlIGN4PSI1NCIgY3k9IjU0IiByPSI0MCIgZmlsbD0iIzRDQUY1MCIvPg0KICAgIA0KICAgIDwhLS0gU2lnbmUgIisiIGVuIGJsYW5jIGF1IGNlbnRyZSAtLT4NCiAgICA8cGF0aCBkPSJNNTAsNDIgTDU4LDQyIEw1OCw1MCBMNjYsNTAgTDY2LDU4IEw1OCw1OCBMNTgsNjYgTDUwLDY2IEw1MCw1OCBMNDIsNTggTDQyLDUwIEw1MCw1MCBaIiBmaWxsPSIjRkZGRkZGIi8+DQogICAgDQogICAgPCEtLSBCb3JkdXJlIGR1IGNlcmNsZSB2ZXJ0IC0tPg0KICAgIDxjaXJjbGUgY3g9IjU0IiBjeT0iNTQiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiMyRTdEMzIiIHN0cm9rZS13aWR0aD0iMiIvPg0KPC9zdmc+DQoNCg0KDQoNCg0K" alt="ParcellePlus Logo" class="logo" />
+                                <img src="${LOGO_PNG_BASE64}" alt="ParcellePlus Logo" class="logo" />
                                 <h1>ParcellePlus</h1>
                             </div>
                             <div class="content">

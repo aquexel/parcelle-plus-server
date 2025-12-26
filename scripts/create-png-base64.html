@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Convertir Logo en PNG Base64</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        canvas { border: 1px solid #ccc; margin: 20px 0; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+        textarea { width: 100%; height: 200px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>Convertir Logo ParcellePlus en PNG Base64</h1>
+    <canvas id="canvas" width="512" height="512"></canvas>
+    <br>
+    <button onclick="convertToPNG()">Convertir en PNG Base64</button>
+    <h2>Base64 PNG :</h2>
+    <textarea id="base64Output"></textarea>
+    <button onclick="copyBase64()">Copier Base64</button>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const scale = 512 / 108;
+
+        function drawLogo() {
+            ctx.save();
+            ctx.scale(scale, scale);
+            
+            // Fond dégradé vert clair
+            const gradient = ctx.createRadialGradient(54, 54, 0, 54, 54, 60);
+            gradient.addColorStop(0, '#E8F5E8');
+            gradient.addColorStop(1, '#F1F8E9');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 108, 108);
+            
+            // Motifs de parcelles subtils
+            ctx.strokeStyle = 'rgba(76, 175, 80, 0.1)';
+            ctx.lineWidth = 0.5;
+            ctx.strokeRect(20, 20, 20, 20);
+            ctx.strokeRect(68, 68, 20, 20);
+            
+            // Cercle extérieur gris foncé
+            ctx.beginPath();
+            ctx.arc(54, 54, 45, 0, 2 * Math.PI);
+            ctx.strokeStyle = '#424242';
+            ctx.lineWidth = 6;
+            ctx.stroke();
+            
+            // Contour blanc
+            ctx.beginPath();
+            ctx.arc(54, 54, 42, 0, 2 * Math.PI);
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // Cercle principal vert
+            ctx.beginPath();
+            ctx.arc(54, 54, 40, 0, 2 * Math.PI);
+            ctx.fillStyle = '#4CAF50';
+            ctx.fill();
+            
+            // Signe "+" en blanc au centre
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(50, 42, 8, 24);  // Barre verticale
+            ctx.fillRect(42, 50, 24, 8);  // Barre horizontale
+            
+            // Bordure du cercle vert
+            ctx.beginPath();
+            ctx.arc(54, 54, 40, 0, 2 * Math.PI);
+            ctx.strokeStyle = '#2E7D32';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            ctx.restore();
+        }
+
+        function convertToPNG() {
+            drawLogo();
+            const pngBase64 = canvas.toDataURL('image/png');
+            document.getElementById('base64Output').value = pngBase64;
+        }
+
+        function copyBase64() {
+            const textarea = document.getElementById('base64Output');
+            textarea.select();
+            document.execCommand('copy');
+            alert('Base64 copié !');
+        }
+
+        // Dessiner au chargement
+        drawLogo();
+    </script>
+</body>
+</html>
+

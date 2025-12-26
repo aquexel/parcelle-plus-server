@@ -159,7 +159,7 @@ class EmailService {
                                 <p>Vous avez demandé à réinitialiser votre mot de passe.</p>
                                 <p>Cliquez sur le bouton ci-dessous pour créer un nouveau mot de passe :</p>
                                 <div style="text-align: center;">
-                                    <a href="${resetUrl}" class="button">Réinitialiser mon mot de passe</a>
+                                    <a href="${webUrl}" class="button">Réinitialiser mon mot de passe</a>
                                 </div>
                                 <p>Ou copiez-collez ce lien dans votre navigateur :</p>
                                 <p style="word-break: break-all; color: #2196F3;">${webUrl}</p>

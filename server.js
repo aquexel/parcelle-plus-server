@@ -1086,6 +1086,17 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     }
 });
 
+// Route GET pour rediriger vers le deep link Android lors du clic sur le lien dans l'email
+app.get('/api/auth/reset-password', async (req, res) => {
+    const { token } = req.query;
+    if (!token) {
+        return res.status(400).send('Token de réinitialisation manquant.');
+    }
+    // Rediriger vers le deep link de l'application Android
+    // L'application Android est configurée pour gérer ce schéma
+    res.redirect(`parcelleplus://reset-password?token=${token}`);
+});
+
 // Réinitialiser le mot de passe avec un token
 app.post('/api/auth/reset-password', async (req, res) => {
     try {

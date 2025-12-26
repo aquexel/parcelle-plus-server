@@ -56,6 +56,9 @@ const createBusinessTables = () => {
                     status TEXT DEFAULT 'available',
                     is_public INTEGER DEFAULT 0,
                     zone_plu TEXT,
+                    orientation TEXT,
+                    luminosite REAL,
+                    surface_maison REAL,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )

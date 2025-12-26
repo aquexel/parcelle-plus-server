@@ -16,14 +16,12 @@ class EmailService {
         });
         
         // URL de base de l'application (pour les liens de confirmation)
-        // Utiliser le domaine pour éviter d'exposer l'adresse IP
-        // Par défaut, utiliser le domaine parcelle-plus.fr
-        this.baseUrl = process.env.BASE_URL || process.env.DOMAIN_URL || 'https://parcelle-plus.fr';
+        // Utiliser l'IP avec le port si configuré, sinon le domaine
+        this.baseUrl = process.env.BASE_URL || process.env.DOMAIN_URL || 'http://149.202.33.164:3000';
         
-        // Si BASE_URL contient une IP (format http://IP:port), utiliser le domaine par défaut
-        if (this.baseUrl.match(/^https?:\/\/\d+\.\d+\.\d+\.\d+/)) {
-            console.log('⚠️ BASE_URL contient une adresse IP, utilisation du domaine par défaut pour les emails');
-            this.baseUrl = 'https://parcelle-plus.fr';
+        // Si BASE_URL n'est pas configuré et qu'on utilise l'IP par défaut, l'utiliser telle quelle
+        if (!process.env.BASE_URL && !process.env.DOMAIN_URL) {
+            console.log('ℹ️ Utilisation de l\'URL par défaut pour les emails: http://149.202.33.164:3000');
         }
     }
     

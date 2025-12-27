@@ -98,6 +98,14 @@ class PolygonService {
                         console.log('✅ Colonne nombre_pieces ajoutée');
                     }
                 });
+                
+                this.db.run(`ALTER TABLE polygons ADD COLUMN type TEXT DEFAULT 'TERRAIN'`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        // Ignorer si la colonne existe déjà
+                    } else if (!err) {
+                        console.log('✅ Colonne type ajoutée');
+                    }
+                });
             }
         });
 
@@ -125,7 +133,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces
+                    orientation, luminosite, surface_maison, nombre_pieces, type
                 FROM polygons
             `;
             let params = [];
@@ -161,7 +169,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces
+                    orientation, luminosite, surface_maison, nombre_pieces, type
                 FROM polygons
                 WHERE is_public = 1 AND status = 'available'
                 ORDER BY created_at DESC 
@@ -191,7 +199,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, is_public
+                    orientation, luminosite, surface_maison, nombre_pieces, is_public, type
                 FROM polygons 
                 WHERE id = ?
             `;
@@ -225,8 +233,8 @@ class PolygonService {
                 INSERT INTO polygons (
                     id, user_id, title, description, price, coordinates, 
                     status, commune, code_insee, surface, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    orientation, luminosite, surface_maison, nombre_pieces, type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -247,7 +255,8 @@ class PolygonService {
                 polygonData.orientation || null,
                 polygonData.luminosite !== undefined ? polygonData.luminosite : null,
                 polygonData.surfaceMaison !== undefined ? polygonData.surfaceMaison : null,
-                polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null
+                polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
+                polygonData.type || 'TERRAIN'
             ];
 
             this.db.run(query, params, function(err) {
@@ -272,6 +281,7 @@ class PolygonService {
                         luminosite: polygonData.luminosite !== undefined ? polygonData.luminosite : null,
                         surfaceMaison: polygonData.surfaceMaison !== undefined ? polygonData.surfaceMaison : null,
                         nombrePieces: polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
+                        type: polygonData.type || 'TERRAIN',
                         createdAt: now,
                         updatedAt: now
                     };
@@ -348,6 +358,10 @@ class PolygonService {
                 updateFields.push('nombre_pieces = ?');
                 params.push(updateData.nombrePieces);
             }
+            if (updateData.type !== undefined) {
+                updateFields.push('type = ?');
+                params.push(updateData.type);
+            }
             
             updateFields.push('updated_at = ?');
             params.push(now);
@@ -400,7 +414,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces
+                    orientation, luminosite, surface_maison, nombre_pieces, type
                 FROM polygons 
                 WHERE user_id = ? 
                 ORDER BY created_at DESC 
@@ -430,7 +444,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, is_public
+                    orientation, luminosite, surface_maison, nombre_pieces, is_public, type
                 FROM polygons 
                 WHERE commune LIKE ? 
                 ORDER BY created_at DESC 

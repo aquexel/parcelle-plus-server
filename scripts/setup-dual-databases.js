@@ -60,6 +60,7 @@ const createBusinessTables = () => {
                     luminosite REAL,
                     surface_maison REAL,
                     nombre_pieces INTEGER,
+                    type TEXT DEFAULT 'TERRAIN',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )

@@ -274,6 +274,7 @@ class PolygonService {
 
     async updatePolygon(id, updateData) {
         return new Promise((resolve, reject) => {
+            const self = this; // Stocker la référence à l'instance
             const now = new Date().toISOString();
             
             // Construire la requête dynamiquement
@@ -353,7 +354,7 @@ class PolygonService {
                 } else {
                     console.log(`✅ Polygone mis à jour: ${id}`);
                     // Récupérer le polygone mis à jour depuis la base
-                    this.getPolygonById(id).then(resolve).catch(reject);
+                    self.getPolygonById(id).then(resolve).catch(reject);
                 }
             });
         });

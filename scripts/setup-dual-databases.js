@@ -59,6 +59,7 @@ const createBusinessTables = () => {
                     orientation TEXT,
                     luminosite REAL,
                     surface_maison REAL,
+                    nombre_pieces INTEGER,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )

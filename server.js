@@ -320,6 +320,28 @@ app.post('/api/polygons', async (req, res) => {
                         message: `🔔 Nouvelle annonce: ${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`
                     });
                     
+                    // Envoyer notification FCM (push notification)
+                    if (pushNotificationService.isInitialized()) {
+                        const notificationTitle = "🔔 Nouvelle annonce correspondant à votre alerte";
+                        const notificationBody = `${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`;
+                        
+                        await pushNotificationService.sendCustomNotification(
+                            alert.userId,
+                            notificationTitle,
+                            notificationBody,
+                            {
+                                type: 'price_alert',
+                                announcement_id: savedPolygon.id,
+                                alert_id: alert.id,
+                                surface: savedPolygon.surface.toString(),
+                                price: savedPolygon.price.toString(),
+                                commune: savedPolygon.commune || ''
+                            }
+                        );
+                        
+                        console.log(`📲 Notification FCM envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                    }
+                    
                     console.log(`📲 Notification envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
                 }
             }

@@ -1,26 +1,11 @@
 const sqlite3 = require('sqlite3').verbose();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const fs = require('fs');
 
 class PriceAlertService {
     constructor() {
         this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_business.db');
-        
-        // S'assurer que le répertoire database existe
-        const dbDir = path.dirname(this.dbPath);
-        if (!fs.existsSync(dbDir)) {
-            fs.mkdirSync(dbDir, { recursive: true });
-            console.log(`✅ Répertoire database créé: ${dbDir}`);
-        }
-        
-        this.db = new sqlite3.Database(this.dbPath, (err) => {
-            if (err) {
-                console.error('❌ Erreur ouverture base de données PriceAlertService:', err);
-            } else {
-                console.log(`✅ Base de données PriceAlertService connectée: ${this.dbPath}`);
-            }
-        });
+        this.db = new sqlite3.Database(this.dbPath);
         this.initializeDatabase();
     }
 
@@ -52,6 +37,7 @@ class PriceAlertService {
                     user_id TEXT NOT NULL,
                     notified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (alert_id) REFERENCES price_alerts(id) ON DELETE CASCADE,
+                    FOREIGN KEY (announcement_id) REFERENCES polygons(id) ON DELETE CASCADE,
                     UNIQUE(alert_id, announcement_id)
                 )
             `;
@@ -79,33 +65,13 @@ class PriceAlertService {
                             console.log('✅ Table alert_notifications initialisée');
                             
                             // Créer les index APRÈS que les deux tables soient créées
-                            // Créer les index de manière séquentielle pour éviter les erreurs
-                            let indexIndex = 0;
-                            const createNextIndex = () => {
-                                if (indexIndex >= createIndexes.length) {
-                                    console.log('✅ Tous les index créés');
-                                    return;
-                                }
-                                
-                                const indexQuery = createIndexes[indexIndex];
+                            createIndexes.forEach(indexQuery => {
                                 this.db.run(indexQuery, (err) => {
-                                    if (err) {
-                                        // Ignorer les erreurs si l'index existe déjà ou si la table n'existe pas
-                                        if (err.message.includes('already exists') || 
-                                            err.message.includes('duplicate') ||
-                                            err.message.includes('no such table')) {
-                                            console.log(`ℹ️ Index ${indexIndex + 1} ignoré (déjà existant ou table absente)`);
-                                        } else {
-                                            console.error(`❌ Erreur création index ${indexIndex + 1}:`, err.message);
-                                        }
-                                    } else {
-                                        console.log(`✅ Index ${indexIndex + 1} créé`);
+                                    if (err && !err.message.includes('already exists') && !err.message.includes('no such table')) {
+                                        console.error('❌ Erreur création index:', err);
                                     }
-                                    indexIndex++;
-                                    createNextIndex();
                                 });
-                            };
-                            createNextIndex();
+                            });
                         }
                     });
                 }

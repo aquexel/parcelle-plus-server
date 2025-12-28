@@ -12,7 +12,7 @@ class PriceAlertService {
     initializeDatabase() {
         // Utiliser serialize() pour garantir l'ordre d'exécution
         this.db.serialize(() => {
-            // Table pour les alertes de prix
+            // Table pour les alertes de prix (avec toutes les colonnes)
             const createAlertsTable = `
                 CREATE TABLE IF NOT EXISTS price_alerts (
                     id TEXT PRIMARY KEY,
@@ -24,7 +24,12 @@ class PriceAlertService {
                     code_insee TEXT,
                     is_active INTEGER DEFAULT 1,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    types TEXT DEFAULT '[]',
+                    min_surface_habitable REAL,
+                    max_surface_habitable REAL,
+                    min_surface_terrain REAL,
+                    max_surface_terrain REAL
                 )
             `;
 
@@ -56,6 +61,8 @@ class PriceAlertService {
                     console.error('❌ Erreur création table price_alerts:', err);
                 } else {
                     console.log('✅ Table price_alerts initialisée');
+                    // Migration : ajouter les nouvelles colonnes si elles n'existent pas (pour les bases existantes)
+                    this.migrateDatabase();
                     
                     // Créer la deuxième table après la première
                     this.db.run(createNotifiedTable, (err) => {
@@ -80,6 +87,32 @@ class PriceAlertService {
     }
 
     /**
+     * Migration pour ajouter les nouvelles colonnes
+     */
+    migrateDatabase() {
+        const migrations = [
+            "ALTER TABLE price_alerts ADD COLUMN types TEXT DEFAULT '[]'",
+            "ALTER TABLE price_alerts ADD COLUMN min_surface_habitable REAL",
+            "ALTER TABLE price_alerts ADD COLUMN max_surface_habitable REAL",
+            "ALTER TABLE price_alerts ADD COLUMN min_surface_terrain REAL",
+            "ALTER TABLE price_alerts ADD COLUMN max_surface_terrain REAL"
+        ];
+
+        migrations.forEach((migration, index) => {
+            this.db.run(migration, (err) => {
+                if (err && !err.message.includes('duplicate column name')) {
+                    // Colonne déjà existante, c'est OK
+                    if (index === 0) {
+                        console.log('✅ Migration colonnes déjà appliquée ou en cours');
+                    }
+                } else if (!err) {
+                    console.log(`✅ Migration colonne ${index + 1} appliquée`);
+                }
+            });
+        });
+    }
+
+    /**
      * Créer une nouvelle alerte de prix
      */
     async createAlert(alertData) {
@@ -87,24 +120,36 @@ class PriceAlertService {
             const id = uuidv4();
             const now = new Date().toISOString();
 
+            // Convertir les types en JSON string si c'est un array
+            const typesJson = Array.isArray(alertData.types) 
+                ? JSON.stringify(alertData.types) 
+                : (alertData.types || '[]');
+
             const query = `
                 INSERT INTO price_alerts (
                     id, user_id, min_surface, max_surface, max_price, 
-                    commune, code_insee, is_active, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    commune, code_insee, is_active, created_at, updated_at,
+                    types, min_surface_habitable, max_surface_habitable,
+                    min_surface_terrain, max_surface_terrain
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
                 id,
                 alertData.userId,
-                alertData.minSurface || 0,
-                alertData.maxSurface || 999999,
+                alertData.minSurface || alertData.minSurfaceHabitable || 0,
+                alertData.maxSurface || alertData.maxSurfaceHabitable || 999999,
                 alertData.maxPrice,
                 alertData.commune || '',
                 alertData.codeInsee || '',
                 1,
                 now,
-                now
+                now,
+                typesJson,
+                alertData.minSurfaceHabitable || null,
+                alertData.maxSurfaceHabitable || null,
+                alertData.minSurfaceTerrain || null,
+                alertData.maxSurfaceTerrain || null
             ];
 
             this.db.run(query, params, function(err) {
@@ -112,19 +157,32 @@ class PriceAlertService {
                     console.error('❌ Erreur création alerte:', err);
                     reject(err);
                 } else {
+                    // Parser les types depuis JSON
+                    let types = [];
+                    try {
+                        types = JSON.parse(typesJson);
+                    } catch (e) {
+                        types = [];
+                    }
+
                     const alert = {
                         id,
                         userId: alertData.userId,
-                        minSurface: alertData.minSurface || 0,
-                        maxSurface: alertData.maxSurface || 999999,
+                        minSurface: alertData.minSurface || alertData.minSurfaceHabitable || 0,
+                        maxSurface: alertData.maxSurface || alertData.maxSurfaceHabitable || 999999,
                         maxPrice: alertData.maxPrice,
                         commune: alertData.commune || '',
                         codeInsee: alertData.codeInsee || '',
                         isActive: true,
                         createdAt: now,
-                        updatedAt: now
+                        updatedAt: now,
+                        types: types,
+                        minSurfaceHabitable: alertData.minSurfaceHabitable || null,
+                        maxSurfaceHabitable: alertData.maxSurfaceHabitable || null,
+                        minSurfaceTerrain: alertData.minSurfaceTerrain || null,
+                        maxSurfaceTerrain: alertData.maxSurfaceTerrain || null
                     };
-                    console.log(`✅ Alerte créée: ${id} pour l'utilisateur ${alertData.userId} (${alertData.minSurface}-${alertData.maxSurface}m², max ${alertData.maxPrice}€)`);
+                    console.log(`✅ Alerte créée: ${id} pour l'utilisateur ${alertData.userId} (types: ${types.join(', ')}, ${alert.minSurfaceHabitable || alert.minSurface}-${alert.maxSurfaceHabitable || alert.maxSurface}m² habitable, ${alert.minSurfaceTerrain || 0}-${alert.maxSurfaceTerrain || '∞'}m² terrain, max ${alertData.maxPrice}€)`);
                     resolve(alert);
                 }
             });
@@ -147,18 +205,33 @@ class PriceAlertService {
                     console.error('❌ Erreur récupération alertes:', err);
                     reject(err);
                 } else {
-                    const alerts = rows.map(row => ({
-                        id: row.id,
-                        userId: row.user_id,
-                        minSurface: row.min_surface,
-                        maxSurface: row.max_surface,
-                        maxPrice: row.max_price,
-                        commune: row.commune,
-                        codeInsee: row.code_insee,
-                        isActive: row.is_active === 1,
-                        createdAt: row.created_at,
-                        updatedAt: row.updated_at
-                    }));
+                    const alerts = rows.map(row => {
+                        // Parser les types depuis JSON
+                        let types = [];
+                        try {
+                            types = row.types ? JSON.parse(row.types) : [];
+                        } catch (e) {
+                            types = [];
+                        }
+
+                        return {
+                            id: row.id,
+                            userId: row.user_id,
+                            minSurface: row.min_surface,
+                            maxSurface: row.max_surface,
+                            maxPrice: row.max_price,
+                            commune: row.commune,
+                            codeInsee: row.code_insee,
+                            isActive: row.is_active === 1,
+                            createdAt: row.created_at,
+                            updatedAt: row.updated_at,
+                            types: types,
+                            minSurfaceHabitable: row.min_surface_habitable,
+                            maxSurfaceHabitable: row.max_surface_habitable,
+                            minSurfaceTerrain: row.min_surface_terrain,
+                            maxSurfaceTerrain: row.max_surface_terrain
+                        };
+                    });
                     console.log(`✅ ${alerts.length} alertes récupérées pour l'utilisateur ${userId}`);
                     resolve(alerts);
                 }
@@ -229,6 +302,29 @@ class PriceAlertService {
             if (updateData.codeInsee !== undefined) {
                 updateFields.push('code_insee = ?');
                 params.push(updateData.codeInsee);
+            }
+            if (updateData.types !== undefined) {
+                const typesJson = Array.isArray(updateData.types) 
+                    ? JSON.stringify(updateData.types) 
+                    : (updateData.types || '[]');
+                updateFields.push('types = ?');
+                params.push(typesJson);
+            }
+            if (updateData.minSurfaceHabitable !== undefined) {
+                updateFields.push('min_surface_habitable = ?');
+                params.push(updateData.minSurfaceHabitable);
+            }
+            if (updateData.maxSurfaceHabitable !== undefined) {
+                updateFields.push('max_surface_habitable = ?');
+                params.push(updateData.maxSurfaceHabitable);
+            }
+            if (updateData.minSurfaceTerrain !== undefined) {
+                updateFields.push('min_surface_terrain = ?');
+                params.push(updateData.minSurfaceTerrain);
+            }
+            if (updateData.maxSurfaceTerrain !== undefined) {
+                updateFields.push('max_surface_terrain = ?');
+                params.push(updateData.maxSurfaceTerrain);
             }
             if (updateData.isActive !== undefined) {
                 updateFields.push('is_active = ?');
@@ -313,15 +409,30 @@ class PriceAlertService {
                     console.error('❌ Erreur vérification alertes:', err);
                     reject(err);
                 } else {
-                    const matchingAlerts = rows.map(row => ({
-                        id: row.id,
-                        userId: row.user_id,
-                        minSurface: row.min_surface,
-                        maxSurface: row.max_surface,
-                        maxPrice: row.max_price,
-                        commune: row.commune,
-                        codeInsee: row.code_insee
-                    }));
+                    const matchingAlerts = rows.map(row => {
+                        // Parser les types depuis JSON
+                        let types = [];
+                        try {
+                            types = row.types ? JSON.parse(row.types) : [];
+                        } catch (e) {
+                            types = [];
+                        }
+
+                        return {
+                            id: row.id,
+                            userId: row.user_id,
+                            minSurface: row.min_surface,
+                            maxSurface: row.max_surface,
+                            maxPrice: row.max_price,
+                            commune: row.commune,
+                            codeInsee: row.code_insee,
+                            types: types,
+                            minSurfaceHabitable: row.min_surface_habitable,
+                            maxSurfaceHabitable: row.max_surface_habitable,
+                            minSurfaceTerrain: row.min_surface_terrain,
+                            maxSurfaceTerrain: row.max_surface_terrain
+                        };
+                    });
 
                     if (matchingAlerts.length > 0) {
                         console.log(`🔔 ${matchingAlerts.length} alertes correspondent à l'annonce ${announcement.id}`);
@@ -386,16 +497,31 @@ class PriceAlertService {
                     console.error('❌ Erreur récupération stats alertes:', err);
                     reject(err);
                 } else {
-                    const stats = rows.map(row => ({
-                        alertId: row.id,
-                        minSurface: row.min_surface,
-                        maxSurface: row.max_surface,
-                        maxPrice: row.max_price,
-                        commune: row.commune,
-                        isActive: row.is_active === 1,
-                        createdAt: row.created_at,
-                        notificationsSent: row.notifications_sent
-                    }));
+                    const stats = rows.map(row => {
+                        // Parser les types depuis JSON
+                        let types = [];
+                        try {
+                            types = row.types ? JSON.parse(row.types) : [];
+                        } catch (e) {
+                            types = [];
+                        }
+
+                        return {
+                            alertId: row.id,
+                            minSurface: row.min_surface,
+                            maxSurface: row.max_surface,
+                            maxPrice: row.max_price,
+                            commune: row.commune,
+                            isActive: row.is_active === 1,
+                            createdAt: row.created_at,
+                            notificationsSent: row.notifications_sent,
+                            types: types,
+                            minSurfaceHabitable: row.min_surface_habitable,
+                            maxSurfaceHabitable: row.max_surface_habitable,
+                            minSurfaceTerrain: row.min_surface_terrain,
+                            maxSurfaceTerrain: row.max_surface_terrain
+                        };
+                    });
                     console.log(`✅ Stats alertes pour l'utilisateur ${userId}: ${stats.length} alertes`);
                     resolve(stats);
                 }

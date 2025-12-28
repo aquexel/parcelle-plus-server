@@ -649,7 +649,7 @@ class OfferService {
                 const placeholders = roomIds.map(() => '?').join(',');
 
                 // 1. Supprimer les messages de ces conversations
-                const deleteMessagesQuery = `DELETE FROM messages WHERE room_id IN (${placeholders})`;
+                const deleteMessagesQuery = `DELETE FROM messages WHERE room IN (${placeholders})`;
                 
                 this.db.run(deleteMessagesQuery, roomIds, function(err) {
                     if (err) {

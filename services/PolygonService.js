@@ -295,7 +295,7 @@ class PolygonService {
 
     async updatePolygon(id, updateData) {
         return new Promise((resolve, reject) => {
-            const self = this; // Stocker la référence à l'instance
+            const self = this;
             const now = new Date().toISOString();
             
             // Construire la requête dynamiquement

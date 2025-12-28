@@ -573,6 +573,24 @@ app.post('/api/messages', async (req, res) => {
     console.log('📨 POST /api/messages - Données reçues:', req.body);
     try {
         const messageData = req.body;
+        
+        // Si c'est une room privée, récupérer le username de l'autre utilisateur pour le nom de la room
+        if (messageData.room && messageData.room.startsWith('private_')) {
+            try {
+                const targetUserId = await determineTargetUserId(messageData.room, messageData.senderId);
+                if (targetUserId) {
+                    const targetUser = await userService.getUserById(targetUserId);
+                    if (targetUser && targetUser.username) {
+                        messageData.targetUserName = targetUser.username;
+                        console.log(`👤 Username de l'interlocuteur récupéré: ${targetUser.username}`);
+                    }
+                }
+            } catch (userError) {
+                console.warn('⚠️ Impossible de récupérer le username de l\'interlocuteur:', userError.message);
+                // Continuer même si on ne peut pas récupérer le username
+            }
+        }
+        
         console.log('📡 Appel messageService.saveMessage avec:', messageData);
         const savedMessage = await messageService.saveMessage(messageData);
         console.log('✅ Message sauvegardé:', savedMessage);

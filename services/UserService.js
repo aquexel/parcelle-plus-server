@@ -7,7 +7,8 @@ const { v4: uuidv4 } = require('uuid');
 class UserService {
     constructor() {
         const dbDir = path.join(__dirname, '..', 'database');
-        this.dbPath = path.join(dbDir, 'parcelle_chat.db');
+        // Utiliser parcelle_business.db pour la table users (comme OfferService)
+        this.dbPath = path.join(dbDir, 'parcelle_business.db');
         this.db = new Database(this.dbPath);
         
         // Créer les tables si elles n'existent pas
@@ -16,12 +17,13 @@ class UserService {
     
     initializeDatabase() {
         // Table des utilisateurs
+        // Note: email et password_hash peuvent être NULL pour les comptes OAuth
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
+                email TEXT UNIQUE,
+                password_hash TEXT,
                 full_name TEXT,
                 phone TEXT,
                 user_type TEXT DEFAULT 'buyer',
@@ -186,6 +188,11 @@ class UserService {
             throw new Error('Nom d\'utilisateur ou mot de passe incorrect');
         }
         
+        // Vérifier si l'utilisateur a un mot de passe (pas un compte OAuth)
+        if (!user.password_hash) {
+            throw new Error('Ce compte utilise l\'authentification OAuth. Veuillez vous connecter avec Google ou LinkedIn.');
+        }
+        
         // Vérifier le mot de passe
         const passwordMatch = await bcrypt.compare(password, user.password_hash);
         if (!passwordMatch) {
@@ -298,6 +305,11 @@ class UserService {
         
         if (!user) {
             throw new Error('Utilisateur non trouvé');
+        }
+        
+        // Vérifier si l'utilisateur a un mot de passe (pas un compte OAuth)
+        if (!user.password_hash) {
+            throw new Error('Ce compte utilise l\'authentification OAuth. Veuillez vous connecter avec Google ou LinkedIn.');
         }
         
         // Vérifier le mot de passe
@@ -442,6 +454,129 @@ class UserService {
     async deleteUser(userId) {
         const result = this.db.prepare('DELETE FROM users WHERE id = ?').run(userId);
         return result.changes > 0;
+    }
+    
+    // ========== OAUTH ==========
+    
+    /**
+     * Vérifier si un username est disponible
+     */
+    async isUsernameAvailable(username) {
+        const existing = this.db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+        return !existing;
+    }
+    
+    /**
+     * Récupérer ou créer un utilisateur OAuth (Google ou LinkedIn)
+     * @param {Object} oauthData - { providerId, email, fullName, username?, userType? }
+     * @returns {Object} - { user, isNewUser, session }
+     */
+    async registerOrGetOAuthUser(oauthData) {
+        const { providerId, email, fullName, username, userType } = oauthData;
+        
+        // Vérifier si l'utilisateur existe déjà par son providerId (ex: "google_123456")
+        let user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(providerId);
+        
+        if (user) {
+            // Utilisateur existant, créer une session et retourner
+            const sessionId = uuidv4();
+            const token = crypto.randomBytes(32).toString('hex');
+            const expiresAt = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 jours
+            
+            this.db.prepare(`
+                INSERT INTO user_sessions (id, user_id, token, expires_at)
+                VALUES (?, ?, ?, ?)
+            `).run(sessionId, user.id, token, expiresAt);
+            
+            return {
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    fullName: user.full_name,
+                    userType: user.user_type,
+                    isVerified: user.is_verified === 1
+                },
+                isNewUser: false,
+                session: {
+                    id: sessionId,
+                    token,
+                    expiresAt
+                }
+            };
+        }
+        
+        // Nouveau utilisateur - vérifier que le username est fourni et disponible
+        if (!username) {
+            throw new Error('Username requis pour créer un compte OAuth');
+        }
+        
+        // Vérifier que le username n'est pas déjà pris
+        const usernameTaken = !(await this.isUsernameAvailable(username));
+        if (usernameTaken) {
+            throw new Error('Ce nom d\'utilisateur est déjà pris. Veuillez en choisir un autre.');
+        }
+        
+        // Vérifier que l'email n'est pas déjà utilisé
+        const emailUser = this.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        if (emailUser) {
+            throw new Error('Un compte avec cet email existe déjà. Veuillez vous connecter avec votre mot de passe.');
+        }
+        
+        // Créer le nouvel utilisateur OAuth
+        // Pour OAuth, password_hash est NULL (les utilisateurs OAuth n'ont pas de mot de passe)
+        
+        const insertUser = this.db.prepare(`
+            INSERT INTO users (
+                id, username, email, password_hash, full_name, 
+                user_type, is_active, is_verified, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `);
+        
+        try {
+            insertUser.run(
+                providerId, // Utiliser le providerId comme ID (ex: "google_123456")
+                username,
+                email,
+                null, // password_hash NULL pour les utilisateurs OAuth
+                fullName || null,
+                userType || 'buyer'
+            );
+        } catch (insertError) {
+            console.error('❌ Erreur création utilisateur OAuth:', insertError.message);
+            throw new Error(`Erreur lors de la création de l'utilisateur: ${insertError.message}`);
+        }
+        
+        // Récupérer l'utilisateur créé
+        user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(providerId);
+        
+        // Créer une session
+        const sessionId = uuidv4();
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiresAt = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 jours
+        
+        this.db.prepare(`
+            INSERT INTO user_sessions (id, user_id, token, expires_at)
+            VALUES (?, ?, ?, ?)
+        `).run(sessionId, user.id, token, expiresAt);
+        
+        return {
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                fullName: user.full_name,
+                userType: user.user_type,
+                isVerified: user.is_verified === 1
+            },
+            isNewUser: true,
+            session: {
+                id: sessionId,
+                token,
+                expiresAt
+            }
+        };
     }
     
     close() {

@@ -165,13 +165,13 @@ class OfferService {
                     const conversations = [];
                     
                     rows.forEach(row => {
-                        // Récupérer le nom de l'acheteur
+                        // Récupérer le nom de l'acheteur depuis users
                         this.usersDb.get("SELECT username FROM users WHERE id = ?", [row.buyer_id], (err, buyer) => {
                             if (err) {
                                 console.error('❌ Erreur récupération acheteur:', err);
                             }
                             
-                            // Récupérer le nom du vendeur
+                            // Récupérer le nom du vendeur depuis users
                             this.usersDb.get("SELECT username FROM users WHERE id = ?", [row.seller_id], (err, seller) => {
                                 if (err) {
                                     console.error('❌ Erreur récupération vendeur:', err);
@@ -784,5 +784,7 @@ class OfferService {
 }
 
 module.exports = OfferService;
+
+
 
 

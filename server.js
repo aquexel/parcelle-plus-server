@@ -1461,6 +1461,120 @@ app.get('/api/health', (req, res) => {
 
 // Route DVF avec DPE et Annexes (pour estimation enrichie)
 const dvfWithFeaturesRoute = require('./routes/dvfWithFeaturesRoute');
+// Route pour vérifier si un username est disponible (pour OAuth)
+app.get('/api/auth/oauth/check-username', async (req, res) => {
+    try {
+        const { username } = req.query;
+        
+        if (!username) {
+            return res.status(400).json({ error: 'Username requis' });
+        }
+        
+        const isAvailable = await userService.isUsernameAvailable(username);
+        
+        res.json({
+            available: isAvailable,
+            message: isAvailable ? 'Username disponible' : 'Username déjà pris'
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur vérification username:', error.message);
+        res.status(500).json({ 
+            error: 'Erreur lors de la vérification du username'
+        });
+    }
+});
+
+// Route pour l'authentification OAuth Google
+app.post('/api/auth/oauth/google', async (req, res) => {
+    try {
+        const { googleId, email, fullName, username, userType } = req.body;
+        
+        if (!googleId || !email) {
+            return res.status(400).json({ 
+                error: 'googleId et email requis' 
+            });
+        }
+        
+        if (!username) {
+            return res.status(400).json({ 
+                error: 'Username requis pour créer un compte' 
+            });
+        }
+        
+        // Créer le providerId au format "google_<googleId>"
+        const providerId = `google_${googleId}`;
+        
+        // Enregistrer ou récupérer l'utilisateur
+        const result = await userService.registerOrGetOAuthUser({
+            providerId,
+            email,
+            fullName,
+            username,
+            userType: userType || 'buyer'
+        });
+        
+        res.json({
+            message: result.isNewUser ? 'Compte créé avec succès' : 'Connexion réussie',
+            user: result.user,
+            token: result.session.token,
+            expiresAt: result.session.expiresAt,
+            isNewUser: result.isNewUser
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur authentification Google:', error.message);
+        res.status(400).json({ 
+            error: error.message || 'Erreur lors de l\'authentification Google'
+        });
+    }
+});
+
+// Route pour l'authentification OAuth LinkedIn
+app.post('/api/auth/oauth/linkedin', async (req, res) => {
+    try {
+        const { linkedinId, email, fullName, username, userType } = req.body;
+        
+        if (!linkedinId || !email) {
+            return res.status(400).json({ 
+                error: 'linkedinId et email requis' 
+            });
+        }
+        
+        if (!username) {
+            return res.status(400).json({ 
+                error: 'Username requis pour créer un compte' 
+            });
+        }
+        
+        // Créer le providerId au format "linkedin_<linkedinId>"
+        const providerId = `linkedin_${linkedinId}`;
+        
+        // Enregistrer ou récupérer l'utilisateur
+        const result = await userService.registerOrGetOAuthUser({
+            providerId,
+            email,
+            fullName,
+            username,
+            userType: userType || 'buyer'
+        });
+        
+        res.json({
+            message: result.isNewUser ? 'Compte créé avec succès' : 'Connexion réussie',
+            user: result.user,
+            token: result.session.token,
+            expiresAt: result.session.expiresAt,
+            isNewUser: result.isNewUser
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur authentification LinkedIn:', error.message);
+        res.status(400).json({ 
+            error: error.message || 'Erreur lors de l\'authentification LinkedIn'
+        });
+    }
+});
+
 // Route pour le callback LinkedIn OAuth (redirige vers le deep link Android)
 app.get('/api/auth/linkedin/callback', (req, res) => {
     try {

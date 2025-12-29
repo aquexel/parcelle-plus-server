@@ -43,19 +43,34 @@ const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
 
 // PushNotificationService optionnel (nécessite firebase-admin)
+console.log('🔍 Tentative de chargement PushNotificationService...');
 let pushNotificationService;
 try {
     // Essayer de charger firebase-admin pour vérifier s'il est installé
     require('firebase-admin');
+    console.log('✅ firebase-admin trouvé, chargement du service...');
     // Si on arrive ici, firebase-admin est installé, on peut charger le service
     const PushNotificationService = require('./services/PushNotificationService');
     pushNotificationService = new PushNotificationService();
-    console.log('✅ PushNotificationService initialisé');
+    console.log('✅ PushNotificationService instancié');
+    
+    // Vérifier si l'initialisation a réussi
+    if (pushNotificationService.isInitialized()) {
+        console.log('✅ PushNotificationService initialisé - Notifications push activées');
+    } else {
+        console.log('⚠️ PushNotificationService créé mais non initialisé (fichier firebase-service-account.json manquant)');
+        console.log('📋 Pour activer les notifications push:');
+        console.log('   1. Téléchargez le fichier firebase-service-account.json depuis Firebase Console');
+        console.log('   2. Placez-le dans le dossier racine du serveur');
+    }
 } catch (error) {
+    console.log('❌ Erreur lors du chargement PushNotificationService:', error.message);
     if (error.code === 'MODULE_NOT_FOUND') {
         console.log('⚠️ PushNotificationService non disponible (firebase-admin non installé)');
+        console.log('📦 Installez firebase-admin: npm install firebase-admin');
     } else {
         console.log('⚠️ PushNotificationService non disponible:', error.message);
+        console.log('📋 Stack:', error.stack);
     }
     // Créer un stub pour éviter les erreurs
     pushNotificationService = {
@@ -325,24 +340,34 @@ app.post('/api/polygons', async (req, res) => {
                         const notificationTitle = "🔔 Nouvelle annonce correspondant à votre alerte";
                         const notificationBody = `${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`;
                         
-                        await pushNotificationService.sendCustomNotification(
-                            alert.userId,
-                            notificationTitle,
-                            notificationBody,
-                            {
-                                type: 'price_alert',
-                                announcement_id: savedPolygon.id,
-                                alert_id: alert.id,
-                                surface: savedPolygon.surface.toString(),
-                                price: savedPolygon.price.toString(),
-                                commune: savedPolygon.commune || ''
+                        try {
+                            const notificationSent = await pushNotificationService.sendCustomNotification(
+                                alert.userId,
+                                notificationTitle,
+                                notificationBody,
+                                {
+                                    type: 'price_alert',
+                                    announcement_id: savedPolygon.id,
+                                    alert_id: alert.id,
+                                    surface: savedPolygon.surface.toString(),
+                                    price: savedPolygon.price.toString(),
+                                    commune: savedPolygon.commune || ''
+                                }
+                            );
+                            
+                            if (notificationSent) {
+                                console.log(`✅ Notification FCM envoyée avec succès à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                            } else {
+                                console.log(`⚠️ Échec envoi notification FCM à l'utilisateur ${alert.userId} pour l'alerte ${alert.id} (token FCM manquant ou erreur)`);
                             }
-                        );
-                        
-                        console.log(`📲 Notification FCM envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                        } catch (notificationError) {
+                            console.error(`❌ Erreur lors de l'envoi de la notification FCM à ${alert.userId}:`, notificationError.message);
+                        }
+                    } else {
+                        console.log(`⚠️ PushNotificationService non initialisé - Notification FCM non envoyée pour l'alerte ${alert.id}`);
                     }
                     
-                    console.log(`📲 Notification envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                    console.log(`✅ Notification enregistrée: alerte ${alert.id}, annonce ${savedPolygon.id}`);
                 }
             }
         } catch (alertError) {
@@ -573,6 +598,24 @@ app.post('/api/messages', async (req, res) => {
     console.log('📨 POST /api/messages - Données reçues:', req.body);
     try {
         const messageData = req.body;
+        
+        // Si c'est une room privée, récupérer le username de l'autre utilisateur pour le nom de la room
+        if (messageData.room && messageData.room.startsWith('private_')) {
+            try {
+                const targetUserId = await determineTargetUserId(messageData.room, messageData.senderId);
+                if (targetUserId) {
+                    const targetUser = await userService.getUserById(targetUserId);
+                    if (targetUser && targetUser.username) {
+                        messageData.targetUserName = targetUser.username;
+                        console.log(`👤 Username de l'interlocuteur récupéré: ${targetUser.username}`);
+                    }
+                }
+            } catch (userError) {
+                console.warn('⚠️ Impossible de récupérer le username de l\'interlocuteur:', userError.message);
+                // Continuer même si on ne peut pas récupérer le username
+            }
+        }
+        
         console.log('📡 Appel messageService.saveMessage avec:', messageData);
         const savedMessage = await messageService.saveMessage(messageData);
         console.log('✅ Message sauvegardé:', savedMessage);
@@ -1392,9 +1435,16 @@ app.post('/api/fcm/register-token', async (req, res) => {
         }
         
         console.log(`📱 Enregistrement token FCM pour utilisateur: ${userId}`);
+        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, 20)}...`);
         
         // Enregistrer le token dans la base de données
-        await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+        const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+        
+        if (registered) {
+            console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
+        } else {
+            console.log(`⚠️ Échec enregistrement token FCM pour ${userId}`);
+        }
         
         res.json({ 
             message: 'Token FCM enregistré avec succès',
@@ -1496,21 +1546,37 @@ app.post('/api/auth/oauth/google', async (req, res) => {
             });
         }
         
-        if (!username) {
+        // Créer le providerId au format "google_<googleId>"
+        const providerId = `google_${googleId}`;
+        
+        // Vérifier d'abord si l'utilisateur existe déjà par EMAIL (priorité)
+        // L'email est l'identifiant unique qui reste constant même si le provider change
+        // On vérifie directement dans la base de données
+        const emailCheck = userService.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        let existingUser = null;
+        
+        if (emailCheck) {
+            // Utilisateur existe par email, récupérer ses informations
+            existingUser = userService.getUserById(emailCheck.id);
+        } else {
+            // Si pas trouvé par email, vérifier par providerId (fallback)
+            existingUser = userService.getUserById(providerId);
+        }
+        
+        if (!existingUser && !username) {
+            // Utilisateur n'existe pas et pas de username fourni
             return res.status(400).json({ 
                 error: 'Username requis pour créer un compte' 
             });
         }
         
-        // Créer le providerId au format "google_<googleId>"
-        const providerId = `google_${googleId}`;
-        
         // Enregistrer ou récupérer l'utilisateur
+        // Si l'utilisateur existe déjà, username peut être vide (sera ignoré)
         const result = await userService.registerOrGetOAuthUser({
             providerId,
             email,
             fullName,
-            username,
+            username: username || '', // Permettre username vide si utilisateur existe
             userType: userType || 'buyer'
         });
         
@@ -1541,21 +1607,37 @@ app.post('/api/auth/oauth/linkedin', async (req, res) => {
             });
         }
         
-        if (!username) {
+        // Créer le providerId au format "linkedin_<linkedinId>"
+        const providerId = `linkedin_${linkedinId}`;
+        
+        // Vérifier d'abord si l'utilisateur existe déjà par EMAIL (priorité)
+        // L'email est l'identifiant unique qui reste constant même si le provider change
+        // On vérifie directement dans la base de données
+        const emailCheck = userService.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        let existingUser = null;
+        
+        if (emailCheck) {
+            // Utilisateur existe par email, récupérer ses informations
+            existingUser = userService.getUserById(emailCheck.id);
+        } else {
+            // Si pas trouvé par email, vérifier par providerId (fallback)
+            existingUser = userService.getUserById(providerId);
+        }
+        
+        if (!existingUser && !username) {
+            // Utilisateur n'existe pas et pas de username fourni
             return res.status(400).json({ 
                 error: 'Username requis pour créer un compte' 
             });
         }
         
-        // Créer le providerId au format "linkedin_<linkedinId>"
-        const providerId = `linkedin_${linkedinId}`;
-        
         // Enregistrer ou récupérer l'utilisateur
+        // Si l'utilisateur existe déjà, username peut être vide (sera ignoré)
         const result = await userService.registerOrGetOAuthUser({
             providerId,
             email,
             fullName,
-            username,
+            username: username || '', // Permettre username vide si utilisateur existe
             userType: userType || 'buyer'
         });
         

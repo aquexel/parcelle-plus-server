@@ -474,11 +474,47 @@ class UserService {
     async registerOrGetOAuthUser(oauthData) {
         const { providerId, email, fullName, username, userType } = oauthData;
         
-        // Vérifier si l'utilisateur existe déjà par son providerId (ex: "google_123456")
-        let user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(providerId);
+        // PRIORITÉ 1: Vérifier si l'utilisateur existe déjà par son EMAIL
+        // L'email est l'identifiant unique qui reste constant même si le provider change
+        let user = this.db.prepare('SELECT * FROM users WHERE email = ?').get(email);
         
         if (user) {
-            // Utilisateur existant, créer une session et retourner
+            // Utilisateur existant trouvé par email, créer une session et retourner
+            // Mettre à jour l'ID si nécessaire (au cas où le providerId a changé)
+            // Mais on garde le même compte utilisateur
+            const sessionId = uuidv4();
+            const token = crypto.randomBytes(32).toString('hex');
+            const expiresAt = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 jours
+            
+            this.db.prepare(`
+                INSERT INTO user_sessions (id, user_id, token, expires_at)
+                VALUES (?, ?, ?, ?)
+            `).run(sessionId, user.id, token, expiresAt);
+            
+            return {
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    fullName: user.full_name,
+                    userType: user.user_type,
+                    isVerified: user.is_verified === 1
+                },
+                isNewUser: false,
+                session: {
+                    id: sessionId,
+                    token,
+                    expiresAt
+                }
+            };
+        }
+        
+        // PRIORITÉ 2: Vérifier si l'utilisateur existe par providerId (fallback)
+        // Au cas où l'email n'est pas fourni ou a changé
+        user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(providerId);
+        
+        if (user) {
+            // Utilisateur existant trouvé par providerId, créer une session et retourner
             const sessionId = uuidv4();
             const token = crypto.randomBytes(32).toString('hex');
             const expiresAt = Date.now() + (30 * 24 * 60 * 60 * 1000); // 30 jours
@@ -515,12 +551,6 @@ class UserService {
         const usernameTaken = !(await this.isUsernameAvailable(username));
         if (usernameTaken) {
             throw new Error('Ce nom d\'utilisateur est déjà pris. Veuillez en choisir un autre.');
-        }
-        
-        // Vérifier que l'email n'est pas déjà utilisé
-        const emailUser = this.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-        if (emailUser) {
-            throw new Error('Un compte avec cet email existe déjà. Veuillez vous connecter avec votre mot de passe.');
         }
         
         // Créer le nouvel utilisateur OAuth

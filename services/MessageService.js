@@ -95,7 +95,9 @@ class MessageService {
                 // Si c'est une room privée (commence par "private_"), la créer automatiquement
                 if (roomId.startsWith('private_')) {
                     console.log(`🏠 Vérification/création de la room privée: ${roomId}`);
-                    await this.ensurePrivateRoomExists(roomId, messageData.senderId);
+                    // Utiliser le username de l'autre utilisateur si fourni dans messageData
+                    const otherUserName = messageData.targetUserName || messageData.otherUserName || null;
+                    await this.ensurePrivateRoomExists(roomId, messageData.senderId, otherUserName);
                 }
                 
                 const id = uuidv4();
@@ -418,10 +420,10 @@ class MessageService {
     }
 
     // NOUVELLE MÉTHODE: Créer automatiquement une room privée si elle n'existe pas
-    async ensurePrivateRoomExists(roomId, creatorId) {
+    async ensurePrivateRoomExists(roomId, creatorId, otherUserName = null) {
         return new Promise((resolve, reject) => {
             // Vérifier si la room existe déjà
-            const checkQuery = `SELECT id FROM rooms WHERE id = ?`;
+            const checkQuery = `SELECT id, name FROM rooms WHERE id = ?`;
             
             this.db.get(checkQuery, [roomId], (err, row) => {
                 if (err) {
@@ -431,9 +433,23 @@ class MessageService {
                 }
                 
                 if (row) {
-                    // La room existe déjà
-                    console.log(`✅ Room privée existe déjà: ${roomId}`);
-                    resolve(row);
+                    // La room existe déjà - mettre à jour le nom si un username est fourni et que le nom est générique
+                    if (otherUserName && row.name === 'Conversation privée') {
+                        const updatedRoomName = `Chat avec ${otherUserName}`;
+                        const updateQuery = `UPDATE rooms SET name = ?, updated_at = datetime('now') WHERE id = ?`;
+                        this.db.run(updateQuery, [updatedRoomName, roomId], (updateErr) => {
+                            if (updateErr) {
+                                console.error('❌ Erreur mise à jour nom room:', updateErr);
+                            } else {
+                                console.log(`✅ Nom de room mis à jour: ${updatedRoomName}`);
+                                row.name = updatedRoomName;
+                            }
+                            resolve(row);
+                        });
+                    } else {
+                        console.log(`✅ Room privée existe déjà: ${roomId}`);
+                        resolve(row);
+                    }
                     return;
                 }
                 
@@ -441,9 +457,18 @@ class MessageService {
                 console.log(`🆕 Création de la room privée: ${roomId}`);
                 
                 // Extraire les IDs des utilisateurs du nom de la room
-                const userIds = roomId.replace('private_', '').split('_');
-                const roomName = `Conversation privée`;
-                const roomDescription = `Conversation entre utilisateurs ${userIds.join(' et ')}`;
+                // Le format peut être: private_user1_user2 ou private_user1_user2_announcement_id
+                let userIds = roomId.replace('private_', '').split('_');
+                // Si c'est une room avec annonce, retirer le dernier élément (announcement_id)
+                if (roomId.includes('_announcement_')) {
+                    userIds = roomId.replace('private_', '').split('_announcement_')[0].split('_');
+                }
+                
+                // Utiliser le username si fourni, sinon nom générique
+                const roomName = otherUserName ? `Chat avec ${otherUserName}` : `Conversation privée`;
+                const roomDescription = otherUserName 
+                    ? `Conversation avec ${otherUserName}`
+                    : `Conversation entre utilisateurs ${userIds.join(' et ')}`;
                 
                 const createQuery = `
                     INSERT INTO rooms (id, name, description, created_by, created_at, updated_at)
@@ -455,7 +480,7 @@ class MessageService {
                         console.error('❌ Erreur création room privée:', err);
                         reject(err);
                     } else {
-                        console.log(`✅ Room privée créée: ${roomId}`);
+                        console.log(`✅ Room privée créée: ${roomId} - ${roomName}`);
                         resolve({
                             id: roomId,
                             name: roomName,

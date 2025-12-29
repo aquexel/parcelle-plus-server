@@ -106,6 +106,14 @@ class PolygonService {
                         console.log('✅ Colonne type ajoutée');
                     }
                 });
+                
+                this.db.run(`ALTER TABLE polygons ADD COLUMN classe_dpe TEXT`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        // Ignorer si la colonne existe déjà
+                    } else if (!err) {
+                        console.log('✅ Colonne classe_dpe ajoutée');
+                    }
+                });
             }
         });
 
@@ -133,7 +141,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type
+                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe
                 FROM polygons
             `;
             let params = [];
@@ -169,7 +177,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type
+                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe
                 FROM polygons
                 WHERE is_public = 1 AND status = 'available'
                 ORDER BY created_at DESC 
@@ -199,7 +207,7 @@ class PolygonService {
                 SELECT 
                     id, user_id, title, description, coordinates, surface, 
                     commune, code_insee, price, status, created_at, updated_at, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, is_public, type
+                    orientation, luminosite, surface_maison, nombre_pieces, is_public, type, classe_dpe
                 FROM polygons 
                 WHERE id = ?
             `;
@@ -233,8 +241,8 @@ class PolygonService {
                 INSERT INTO polygons (
                     id, user_id, title, description, price, coordinates, 
                     status, commune, code_insee, surface, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -256,7 +264,8 @@ class PolygonService {
                 polygonData.luminosite !== undefined ? polygonData.luminosite : null,
                 polygonData.surfaceMaison !== undefined ? polygonData.surfaceMaison : null,
                 polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
-                polygonData.type || 'TERRAIN'
+                polygonData.type || 'TERRAIN',
+                polygonData.classeDpe || null
             ];
 
             this.db.run(query, params, function(err) {

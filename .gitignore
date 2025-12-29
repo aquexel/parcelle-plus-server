@@ -133,5 +133,20 @@ Thumbs.db
 # PM2
 .pm2/
 
+# Android keystore
+*.keystore
+keystore.properties
+
+# Application Android (ne pas versionner)
+app/
+build.gradle
+settings.gradle
+gradlew
+gradlew.bat
+gradle.properties
+.gradle/
+build/
+capabilities.xml
+
 
 

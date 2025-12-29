@@ -1630,25 +1630,19 @@ async function mergeDVFWithBDNB() {
                           AND dpe.pourcentage_vitrage IS NOT NULL
                     )
                 ),
-                presence_piscine = COALESCE(
-                    d.presence_piscine,
-                    (
-                        SELECT dpe.presence_piscine 
-                        FROM temp_dpe_latest dpe
-                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                          AND dpe.rn = 1
-                          AND dpe.presence_piscine IS NOT NULL
-                    )
+                presence_piscine = (
+                    SELECT dpe.presence_piscine 
+                    FROM temp_dpe_latest dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
+                      AND dpe.presence_piscine IS NOT NULL
                 ),
-                presence_garage = COALESCE(
-                    d.presence_garage,
-                    (
-                        SELECT dpe.presence_garage 
-                        FROM temp_dpe_latest dpe
-                        WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
-                          AND dpe.rn = 1
-                          AND dpe.presence_garage IS NOT NULL
-                    )
+                presence_garage = (
+                    SELECT dpe.presence_garage 
+                    FROM temp_dpe_latest dpe
+                    WHERE dpe.batiment_groupe_id = d.batiment_groupe_id
+                      AND dpe.rn = 1
+                      AND dpe.presence_garage IS NOT NULL
                 ),
                 presence_veranda = COALESCE(
                     d.presence_veranda,

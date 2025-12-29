@@ -1435,9 +1435,16 @@ app.post('/api/fcm/register-token', async (req, res) => {
         }
         
         console.log(`📱 Enregistrement token FCM pour utilisateur: ${userId}`);
+        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, 20)}...`);
         
         // Enregistrer le token dans la base de données
-        await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+        const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+        
+        if (registered) {
+            console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
+        } else {
+            console.log(`⚠️ Échec enregistrement token FCM pour ${userId}`);
+        }
         
         res.json({ 
             message: 'Token FCM enregistré avec succès',

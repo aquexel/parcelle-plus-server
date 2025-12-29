@@ -43,13 +43,16 @@ const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
 
 // PushNotificationService optionnel (nécessite firebase-admin)
+console.log('🔍 Tentative de chargement PushNotificationService...');
 let pushNotificationService;
 try {
     // Essayer de charger firebase-admin pour vérifier s'il est installé
     require('firebase-admin');
+    console.log('✅ firebase-admin trouvé, chargement du service...');
     // Si on arrive ici, firebase-admin est installé, on peut charger le service
     const PushNotificationService = require('./services/PushNotificationService');
     pushNotificationService = new PushNotificationService();
+    console.log('✅ PushNotificationService instancié');
     
     // Vérifier si l'initialisation a réussi
     if (pushNotificationService.isInitialized()) {
@@ -61,11 +64,13 @@ try {
         console.log('   2. Placez-le dans le dossier racine du serveur');
     }
 } catch (error) {
+    console.log('❌ Erreur lors du chargement PushNotificationService:', error.message);
     if (error.code === 'MODULE_NOT_FOUND') {
         console.log('⚠️ PushNotificationService non disponible (firebase-admin non installé)');
         console.log('📦 Installez firebase-admin: npm install firebase-admin');
     } else {
         console.log('⚠️ PushNotificationService non disponible:', error.message);
+        console.log('📋 Stack:', error.stack);
     }
     // Créer un stub pour éviter les erreurs
     pushNotificationService = {

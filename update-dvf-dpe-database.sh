@@ -398,7 +398,22 @@ echo "⏳ Création en cours (10-30 minutes selon serveur)..."
 echo ""
 
 # Chercher le script de création de base DVF+BDNB
-if [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-national-FINAL.js" ]; then
+# Priorité 1: create-dvf-bdnb-complete.js (dans scripts/)
+if [ -f "$(dirname "${BASH_SOURCE[0]}")/scripts/create-dvf-bdnb-complete.js" ]; then
+    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/scripts/create-dvf-bdnb-complete.js"
+    echo "✅ Utilisation du script : scripts/create-dvf-bdnb-complete.js"
+elif [ -f "$PROJECT_DIR/scripts/create-dvf-bdnb-complete.js" ]; then
+    SCRIPT_PATH="$PROJECT_DIR/scripts/create-dvf-bdnb-complete.js"
+    echo "✅ Utilisation du script : scripts/create-dvf-bdnb-complete.js"
+# Priorité 2: create-dvf-bdnb-complete.js (racine)
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-complete.js" ]; then
+    SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-complete.js"
+    echo "✅ Utilisation du script : create-dvf-bdnb-complete.js"
+elif [ -f "$PROJECT_DIR/create-dvf-bdnb-complete.js" ]; then
+    SCRIPT_PATH="$PROJECT_DIR/create-dvf-bdnb-complete.js"
+    echo "✅ Utilisation du script : create-dvf-bdnb-complete.js"
+# Priorité 3: create-dvf-bdnb-national-FINAL.js (fallback)
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-national-FINAL.js" ]; then
     SCRIPT_PATH="$(dirname "${BASH_SOURCE[0]}")/create-dvf-bdnb-national-FINAL.js"
     echo "✅ Utilisation du script : create-dvf-bdnb-national-FINAL.js"
 elif [ -f "$PROJECT_DIR/create-dvf-bdnb-national-FINAL.js" ]; then
@@ -406,7 +421,7 @@ elif [ -f "$PROJECT_DIR/create-dvf-bdnb-national-FINAL.js" ]; then
     echo "✅ Utilisation du script : create-dvf-bdnb-national-FINAL.js"
 else
     echo "❌ Aucun script de création de base trouvé"
-    echo "   Cherché : create-dvf-bdnb-national-FINAL.js"
+    echo "   Cherché : create-dvf-bdnb-complete.js ou create-dvf-bdnb-national-FINAL.js"
     exit 1
 fi
 
@@ -417,6 +432,23 @@ echo ""
 # Convertir le chemin CSV en chemin absolu si nécessaire
 CSV_DIR_ABS=$(cd "$CSV_DIR" && pwd)
 DVF_DIR_ABS=$(cd "$PROJECT_DIR/dvf_data" 2>/dev/null && pwd || echo "$PROJECT_DIR/dvf_data")
+
+# Charger nvm si disponible et utiliser Node.js v20.19.6
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    source "$HOME/.nvm/nvm.sh"
+    echo "📦 Chargement de nvm..."
+    nvm use 20.19.6 2>/dev/null || nvm install 20.19.6
+    echo "✅ Node.js version: $(node --version)"
+elif [ -s "/usr/local/opt/nvm/nvm.sh" ]; then
+    source "/usr/local/opt/nvm/nvm.sh"
+    echo "📦 Chargement de nvm..."
+    nvm use 20.19.6 2>/dev/null || nvm install 20.19.6
+    echo "✅ Node.js version: $(node --version)"
+else
+    echo "⚠️  nvm non trouvé, utilisation de la version Node.js par défaut"
+    echo "   Version actuelle: $(node --version)"
+    echo "   ⚠️  Assurez-vous que Node.js v20.19.6 est installé"
+fi
 
 NODE_OPTIONS="--max-old-space-size=4096" node "$SCRIPT_PATH" "$CSV_DIR_ABS" "$DVF_DIR_ABS"
 

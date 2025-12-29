@@ -471,6 +471,8 @@ async function loadBDNBData() {
     }
     
     // Définir les tâches de chargement BDNB
+    // ⚠️ IMPORTANT: Ne PAS ajouter parcelle.csv ici !
+    // Les parcelles sont chargées depuis la base de données parcelles.db via loadParcellesFromDB()
     const bdnbTasks = [
         {
             name: 'relations',
@@ -542,6 +544,25 @@ async function loadBDNBData() {
             }
         }
     ];
+    
+    // Ajouter Sitadel si disponible
+    const sitadelFile = path.join(BDNB_DIR, 'parcelle_sitadel.csv');
+    if (fs.existsSync(sitadelFile)) {
+        bdnbTasks.push({
+            name: 'Sitadel',
+            file: 'parcelle_sitadel.csv',
+            table: 'temp_parcelle_sitadel',
+            insertSQL: `INSERT OR REPLACE INTO temp_parcelle_sitadel VALUES (?, ?, ?)`,
+            process: (row) => {
+                const parcelleId = row.parcelle_id?.trim();
+                const indicateurPiscine = parseInt(row.indicateur_piscine) || 0;
+                const indicateurGarage = parseInt(row.indicateur_garage) || 0;
+                
+                if (!parcelleId) return null;
+                return [parcelleId, indicateurPiscine, indicateurGarage];
+            }
+        });
+    }
     
     // Vérifier les fichiers BDNB manquants avant de commencer
     const missingBdnbFiles = bdnbTasks.filter(task => {
@@ -1288,7 +1309,35 @@ async function mergeDVFWithBDNB() {
         // Nettoyer la table temporaire
         db.exec(`DROP TABLE IF EXISTS temp_dpe_latest`);
         
-        // Checkpoint après mise à jour DPE
+        // Étape 2d: Mise à jour des données piscine/garage via Sitadel (si disponible)
+        const sitadelExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='temp_parcelle_sitadel'`).get();
+        if (sitadelExists) {
+            console.log('🏊 Mise à jour des données piscine/garage via Sitadel...');
+            db.exec(`
+                UPDATE dvf_bdnb_complete AS d 
+                SET 
+                    presence_piscine = (
+                        SELECT sit.indicateur_piscine 
+                        FROM temp_parcelle_sitadel sit 
+                        WHERE sit.parcelle_id = d.id_parcelle
+                        LIMIT 1
+                    ),
+                    presence_garage = (
+                        SELECT sit.indicateur_garage 
+                        FROM temp_parcelle_sitadel sit 
+                        WHERE sit.parcelle_id = d.id_parcelle
+                        LIMIT 1
+                    )
+                WHERE d.id_parcelle IS NOT NULL
+                  AND (d.presence_piscine IS NULL OR d.presence_piscine = 0)
+                  AND (d.presence_garage IS NULL OR d.presence_garage = 0)
+            `);
+            console.log('   ✅ Mise à jour Sitadel complète');
+        } else {
+            console.log('   ℹ️ Fichier Sitadel non disponible, passage de cette étape');
+        }
+        
+        // Checkpoint après mise à jour DPE et Sitadel
         try {
             db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
         } catch (e) {
@@ -1626,6 +1675,34 @@ async function mergeDVFWithBDNB() {
         }
     }
     
+    // Étape 2d: Mise à jour des données piscine/garage via Sitadel (si disponible)
+    const sitadelExistsFallback = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='temp_parcelle_sitadel'`).get();
+    if (sitadelExistsFallback) {
+        console.log('🏊 Mise à jour des données piscine/garage via Sitadel...');
+        db.exec(`
+            UPDATE dvf_bdnb_complete AS d 
+            SET 
+                presence_piscine = (
+                    SELECT sit.indicateur_piscine 
+                    FROM temp_parcelle_sitadel sit 
+                    WHERE sit.parcelle_id = d.id_parcelle
+                    LIMIT 1
+                ),
+                presence_garage = (
+                    SELECT sit.indicateur_garage 
+                    FROM temp_parcelle_sitadel sit 
+                    WHERE sit.parcelle_id = d.id_parcelle
+                    LIMIT 1
+                )
+            WHERE d.id_parcelle IS NOT NULL
+              AND (d.presence_piscine IS NULL OR d.presence_piscine = 0)
+              AND (d.presence_garage IS NULL OR d.presence_garage = 0)
+        `);
+        console.log('   ✅ Mise à jour Sitadel complète');
+    } else {
+        console.log('   ℹ️ Fichier Sitadel non disponible, passage de cette étape');
+    }
+    
     const memAfterFallback = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     console.log(`      (Mem: ${memBeforeFallback} → ${memAfterFallback} MB)`);
     
@@ -1837,6 +1914,14 @@ async function createCompleteDatabase() {
         )
     `);
     
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_parcelle_sitadel (
+            parcelle_id TEXT PRIMARY KEY,
+            indicateur_piscine INTEGER DEFAULT 0,
+            indicateur_garage INTEGER DEFAULT 0
+        )
+    `);
+    
     // Créer les index pour les performances
     console.log('📊 Création des index...');
     db.exec(`
@@ -1851,6 +1936,7 @@ async function createCompleteDatabase() {
         CREATE INDEX IF NOT EXISTS idx_dpe_batiment ON temp_bdnb_dpe(batiment_groupe_id);
         CREATE INDEX IF NOT EXISTS idx_batiment_id ON temp_bdnb_batiment(batiment_groupe_id);
         CREATE INDEX IF NOT EXISTS idx_parcelle_id ON temp_bdnb_parcelle(parcelle_id);
+        CREATE INDEX IF NOT EXISTS idx_sitadel_parcelle ON temp_parcelle_sitadel(parcelle_id);
     `);
     
     console.log('✅ Tables créées\n');

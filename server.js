@@ -1514,21 +1514,37 @@ app.post('/api/auth/oauth/google', async (req, res) => {
             });
         }
         
-        if (!username) {
+        // Créer le providerId au format "google_<googleId>"
+        const providerId = `google_${googleId}`;
+        
+        // Vérifier d'abord si l'utilisateur existe déjà par EMAIL (priorité)
+        // L'email est l'identifiant unique qui reste constant même si le provider change
+        // On vérifie directement dans la base de données
+        const emailCheck = userService.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        let existingUser = null;
+        
+        if (emailCheck) {
+            // Utilisateur existe par email, récupérer ses informations
+            existingUser = userService.getUserById(emailCheck.id);
+        } else {
+            // Si pas trouvé par email, vérifier par providerId (fallback)
+            existingUser = userService.getUserById(providerId);
+        }
+        
+        if (!existingUser && !username) {
+            // Utilisateur n'existe pas et pas de username fourni
             return res.status(400).json({ 
                 error: 'Username requis pour créer un compte' 
             });
         }
         
-        // Créer le providerId au format "google_<googleId>"
-        const providerId = `google_${googleId}`;
-        
         // Enregistrer ou récupérer l'utilisateur
+        // Si l'utilisateur existe déjà, username peut être vide (sera ignoré)
         const result = await userService.registerOrGetOAuthUser({
             providerId,
             email,
             fullName,
-            username,
+            username: username || '', // Permettre username vide si utilisateur existe
             userType: userType || 'buyer'
         });
         
@@ -1559,21 +1575,37 @@ app.post('/api/auth/oauth/linkedin', async (req, res) => {
             });
         }
         
-        if (!username) {
+        // Créer le providerId au format "linkedin_<linkedinId>"
+        const providerId = `linkedin_${linkedinId}`;
+        
+        // Vérifier d'abord si l'utilisateur existe déjà par EMAIL (priorité)
+        // L'email est l'identifiant unique qui reste constant même si le provider change
+        // On vérifie directement dans la base de données
+        const emailCheck = userService.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        let existingUser = null;
+        
+        if (emailCheck) {
+            // Utilisateur existe par email, récupérer ses informations
+            existingUser = userService.getUserById(emailCheck.id);
+        } else {
+            // Si pas trouvé par email, vérifier par providerId (fallback)
+            existingUser = userService.getUserById(providerId);
+        }
+        
+        if (!existingUser && !username) {
+            // Utilisateur n'existe pas et pas de username fourni
             return res.status(400).json({ 
                 error: 'Username requis pour créer un compte' 
             });
         }
         
-        // Créer le providerId au format "linkedin_<linkedinId>"
-        const providerId = `linkedin_${linkedinId}`;
-        
         // Enregistrer ou récupérer l'utilisateur
+        // Si l'utilisateur existe déjà, username peut être vide (sera ignoré)
         const result = await userService.registerOrGetOAuthUser({
             providerId,
             email,
             fullName,
-            username,
+            username: username || '', // Permettre username vide si utilisateur existe
             userType: userType || 'buyer'
         });
         

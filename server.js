@@ -325,24 +325,34 @@ app.post('/api/polygons', async (req, res) => {
                         const notificationTitle = "🔔 Nouvelle annonce correspondant à votre alerte";
                         const notificationBody = `${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`;
                         
-                        await pushNotificationService.sendCustomNotification(
-                            alert.userId,
-                            notificationTitle,
-                            notificationBody,
-                            {
-                                type: 'price_alert',
-                                announcement_id: savedPolygon.id,
-                                alert_id: alert.id,
-                                surface: savedPolygon.surface.toString(),
-                                price: savedPolygon.price.toString(),
-                                commune: savedPolygon.commune || ''
+                        try {
+                            const notificationSent = await pushNotificationService.sendCustomNotification(
+                                alert.userId,
+                                notificationTitle,
+                                notificationBody,
+                                {
+                                    type: 'price_alert',
+                                    announcement_id: savedPolygon.id,
+                                    alert_id: alert.id,
+                                    surface: savedPolygon.surface.toString(),
+                                    price: savedPolygon.price.toString(),
+                                    commune: savedPolygon.commune || ''
+                                }
+                            );
+                            
+                            if (notificationSent) {
+                                console.log(`✅ Notification FCM envoyée avec succès à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                            } else {
+                                console.log(`⚠️ Échec envoi notification FCM à l'utilisateur ${alert.userId} pour l'alerte ${alert.id} (token FCM manquant ou erreur)`);
                             }
-                        );
-                        
-                        console.log(`📲 Notification FCM envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                        } catch (notificationError) {
+                            console.error(`❌ Erreur lors de l'envoi de la notification FCM à ${alert.userId}:`, notificationError.message);
+                        }
+                    } else {
+                        console.log(`⚠️ PushNotificationService non initialisé - Notification FCM non envoyée pour l'alerte ${alert.id}`);
                     }
                     
-                    console.log(`📲 Notification envoyée à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
+                    console.log(`✅ Notification enregistrée: alerte ${alert.id}, annonce ${savedPolygon.id}`);
                 }
             }
         } catch (alertError) {

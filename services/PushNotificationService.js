@@ -257,7 +257,7 @@ class PushNotificationService {
      */
     async sendCustomNotification(userId, title, body, data = {}) {
         if (!this.initialized) {
-            console.log('⚠️ Firebase non initialisé - Notification non envoyée');
+            console.log(`⚠️ Firebase non initialisé - Notification non envoyée pour utilisateur ${userId}`);
             return false;
         }
 
@@ -265,9 +265,12 @@ class PushNotificationService {
             // Récupérer le token FCM de l'utilisateur
             const fcmToken = await this.getUserFCMToken(userId);
             if (!fcmToken) {
-                console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${userId}`);
+                console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${userId} - Notification non envoyée`);
+                console.log(`💡 L'utilisateur doit ouvrir l'application pour enregistrer son token FCM`);
                 return false;
             }
+
+            console.log(`📱 Tentative d'envoi notification à ${userId} avec token FCM: ${fcmToken.substring(0, 20)}...`);
 
             const message = {
                 token: fcmToken,
@@ -283,17 +286,21 @@ class PushNotificationService {
                     priority: 'high',
                     notification: {
                         sound: 'default',
-                        priority: 'high'
+                        priority: 'high',
+                        channelId: 'parcelle_plus_alerts'
                     }
                 }
             };
 
             const response = await admin.messaging().send(message);
-            console.log(`✅ Notification personnalisée envoyée: ${response}`);
+            console.log(`✅ Notification personnalisée envoyée avec succès (messageId: ${response}) pour utilisateur ${userId}`);
             return true;
 
         } catch (error) {
-            console.error('❌ Erreur envoi notification personnalisée:', error.message);
+            console.error(`❌ Erreur envoi notification personnalisée pour ${userId}:`, error.message);
+            if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
+                console.log(`⚠️ Token FCM invalide ou expiré pour ${userId} - Le token doit être réenregistré`);
+            }
             return false;
         }
     }

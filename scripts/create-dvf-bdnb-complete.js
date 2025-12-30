@@ -1,4 +1,4 @@
-// Vérification de la version Node.js (requis: v20.19.x)
+// Vérification de la version Node.js (requis: v20.x)
 const nodeVersion = process.version;
 const nodeVersionMatch = nodeVersion.match(/^v(\d+)\.(\d+)\.(\d+)/);
 if (!nodeVersionMatch) {
@@ -9,15 +9,15 @@ const major = parseInt(nodeVersionMatch[1]);
 const minor = parseInt(nodeVersionMatch[2]);
 const patch = parseInt(nodeVersionMatch[3]);
 
-// Vérifier que c'est au moins v20.19.0 (ou exactement v20.19.6)
-if (major !== 20 || minor !== 19) {
-    console.error('❌ ERREUR: Version Node.js incorrecte');
+// Vérifier que c'est Node.js v20.x ou supérieur
+if (major < 20) {
+    console.error('❌ ERREUR: Version Node.js trop ancienne');
     console.error(`   Version actuelle: ${nodeVersion}`);
-    console.error(`   Version requise: v20.19.x (recommandé: v20.19.6)`);
+    console.error(`   Version requise: v20.x ou supérieur`);
     console.error('');
     console.error('💡 Solutions:');
-    console.error('   1. Utiliser nvm: nvm use 20.19.6');
-    console.error('   2. Ou installer Node.js v20.19.6');
+    console.error('   1. Utiliser nvm: nvm install 20 && nvm use 20');
+    console.error('   2. Ou installer Node.js v20.x via NodeSource');
     console.error('   3. Ou utiliser le script shell update-dvf-dpe-database.sh qui gère automatiquement la version');
     process.exit(1);
 }

@@ -1511,6 +1511,7 @@ app.get('/api/health', (req, res) => {
 
 // Route DVF avec DPE et Annexes (pour estimation enrichie)
 const dvfWithFeaturesRoute = require('./routes/dvfWithFeaturesRoute');
+const renovationsRoute = require('./routes/renovationsRoute');
 // Route pour vérifier si un username est disponible (pour OAuth)
 app.get('/api/auth/oauth/check-username', async (req, res) => {
     try {
@@ -1682,6 +1683,7 @@ app.get('/api/auth/linkedin/callback', (req, res) => {
 });
 
 app.get('/api/dvf/search-with-features', dvfWithFeaturesRoute);
+app.get('/api/renovations/search', renovationsRoute);
 
 const saferRoute = require('./routes/saferRoute');
 app.get('/api/safer/prix', saferRoute);

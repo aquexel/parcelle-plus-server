@@ -1529,23 +1529,16 @@ async function mergeDVFWithBDNB() {
         // Ignorer
     }
     
-    // Étape 6: Suppression des transactions non enrichissables et des terrains nus
-    console.log('   🗑️ Suppression des transactions non enrichissables et des terrains nus...');
-    
-    // Supprimer TOUTES les transactions sans GPS (non enrichissables)
-    const deleteNoGPS = db.prepare(`
-        DELETE FROM dvf_bdnb_complete 
-        WHERE longitude IS NULL 
-          AND latitude IS NULL
-    `);
-    const deletedNoGPS = deleteNoGPS.run().changes;
-    console.log(`   🗑️ ${deletedNoGPS} transactions supprimées (sans GPS)`);
-    
-    // Supprimer UNIQUEMENT les terrains nus (sans construction dans la même mutation)
-    // On garde : toutes les maisons/appartements + les terrains vendus avec une construction
-    console.log('   🏞️ Suppression des terrains nus (garde maisons/appartements + terrains vendus avec construction)...');
+    // Étape 6: Suppression des transactions sans GPS et des terrains nus
+    // ⚠️ RÈGLE: 
+    // 1. On garde TOUTES les transactions avec GPS (maisons, appartements, terrains avec GPS)
+    // 2. On supprime les transactions sans GPS
+    // 3. On supprime les terrains nus (sans construction dans la mutation), même avec GPS
+    console.log('   🗑️ Suppression des transactions sans GPS et des terrains nus...');
     
     // Étape 1: Identifier les mutations qui contiennent au moins une maison ou un appartement
+    // (pour préserver les terrains vendus avec une construction)
+    console.log('   🔍 Identification des mutations avec construction...');
     db.exec(`
         CREATE TEMP TABLE IF NOT EXISTS mutations_avec_construction AS
         SELECT DISTINCT id_mutation
@@ -1553,22 +1546,37 @@ async function mergeDVFWithBDNB() {
         WHERE type_local IN ('Maison', 'Appartement')
     `);
     
-    // Étape 2: Supprimer uniquement les terrains qui ne sont PAS dans une mutation avec construction
+    const countMutationsAvecConstruction = db.prepare(`
+        SELECT COUNT(DISTINCT id_mutation) as count FROM mutations_avec_construction
+    `).get();
+    console.log(`   📊 ${countMutationsAvecConstruction.count.toLocaleString()} mutations avec construction identifiées`);
+    
+    // Étape 2: Supprimer les transactions sans GPS
+    console.log('   🗑️ Suppression des transactions sans GPS...');
+    const deleteNoGPS = db.prepare(`
+        DELETE FROM dvf_bdnb_complete 
+        WHERE longitude IS NULL OR latitude IS NULL
+    `);
+    const deletedNoGPS = deleteNoGPS.run().changes;
+    console.log(`   🗑️ ${deletedNoGPS.toLocaleString()} transactions supprimées (sans GPS)`);
+    
+    // Étape 3: Supprimer les terrains nus (sans construction dans la mutation)
     // On garde :
     // - Toutes les maisons et appartements (type_local IN ('Maison', 'Appartement'))
     // - Les terrains vendus avec une construction (id_mutation IN mutations_avec_construction)
-    const deleteTerrains = db.prepare(`
+    console.log('   🏞️ Suppression des terrains nus (sans construction dans la mutation)...');
+    const deleteTerrainsNus = db.prepare(`
         DELETE FROM dvf_bdnb_complete 
         WHERE (type_local IS NULL OR type_local = '' OR type_local NOT IN ('Maison', 'Appartement'))
           AND id_mutation NOT IN (SELECT id_mutation FROM mutations_avec_construction)
     `);
-    const deletedTerrains = deleteTerrains.run().changes;
-    console.log(`   🗑️ ${deletedTerrains} transactions de terrains nus supprimées`);
+    const deletedTerrainsNus = deleteTerrainsNus.run().changes;
+    console.log(`   🗑️ ${deletedTerrainsNus.toLocaleString()} transactions de terrains nus supprimées`);
     
     // Nettoyer la table temporaire
     db.exec(`DROP TABLE IF EXISTS mutations_avec_construction`);
     
-    const deletedCount = deletedNoGPS + deletedTerrains;
+    const deletedCount = deletedNoGPS + deletedTerrainsNus;
     
     // Checkpoint après suppression
     try {
@@ -1582,14 +1590,18 @@ async function mergeDVFWithBDNB() {
         SELECT 
             COUNT(*) as total_transactions,
             COUNT(CASE WHEN surface_reelle_bati IS NOT NULL THEN 1 END) as with_surface_bati,
-            COUNT(CASE WHEN longitude IS NOT NULL AND latitude IS NOT NULL THEN 1 END) as with_gps
+            COUNT(CASE WHEN longitude IS NOT NULL AND latitude IS NOT NULL THEN 1 END) as with_gps,
+            COUNT(CASE WHEN type_local IN ('Maison', 'Appartement') THEN 1 END) as maisons_appartements,
+            COUNT(CASE WHEN (type_local IS NULL OR type_local = '' OR type_local NOT IN ('Maison', 'Appartement')) THEN 1 END) as terrains
         FROM dvf_bdnb_complete
     `).get();
     
     console.log(`   📊 Résultats finaux:`);
-    console.log(`      Total transactions: ${stats.total_transactions}`);
-    console.log(`      Avec surface bâti: ${stats.with_surface_bati} (${(stats.with_surface_bati/stats.total_transactions*100).toFixed(1)}%)`);
-    console.log(`      Avec GPS: ${stats.with_gps} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
+    console.log(`      Total transactions: ${stats.total_transactions.toLocaleString()}`);
+    console.log(`      Avec surface bâti: ${stats.with_surface_bati.toLocaleString()} (${(stats.with_surface_bati/stats.total_transactions*100).toFixed(1)}%)`);
+    console.log(`      Avec GPS: ${stats.with_gps.toLocaleString()} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
+    console.log(`      Maisons/Appartements: ${stats.maisons_appartements.toLocaleString()}`);
+    console.log(`      Terrains (vendus avec construction): ${stats.terrains.toLocaleString()}`);
     
     // Étape 7: Mettre à jour les données DPE pour les transactions qui n'ont pas encore de DPE
     // VERSION OPTIMISÉE avec table temporaire (comme create-dvf-bdnb-national-FINAL.js)

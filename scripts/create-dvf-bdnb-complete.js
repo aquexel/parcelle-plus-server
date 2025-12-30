@@ -1395,12 +1395,51 @@ async function mergeDVFWithBDNB() {
         }
     }
     
-    // Étape 3: Pas de fallback via code_commune (comme le script FINAL)
-    // On garde uniquement les batiment_groupe_id obtenus via id_parcelle pour être plus précis
-    // Cela évite d'assigner un bâtiment arbitraire à des transactions qui ne devraient pas en avoir
-    console.log('   ⚠️  Pas de fallback via code_commune (précision maximale, comme script FINAL)');
+    // Étape 3: Fallback via code_commune pour les transactions sans id_parcelle
+    // OPTIMISATION : Créer une table temporaire avec un bâtiment représentatif par commune
+    // Cela évite les sous-requêtes corrélées qui sont très lentes
+    console.log('   🏘️ Fallback via code_commune (optimisé)...');
+    console.log('   🔄 Création de la table temporaire des bâtiments par commune...');
     
-    // Checkpoint après jointure
+    // Créer une table temporaire avec un bâtiment représentatif par commune
+    // Utiliser MIN() pour avoir un bâtiment déterministe par commune
+    db.exec(`
+        CREATE TEMP TABLE temp_batiment_par_commune AS
+        SELECT 
+            code_commune_insee,
+            MIN(batiment_groupe_id) as batiment_groupe_id
+        FROM temp_bdnb_batiment
+        WHERE code_commune_insee IS NOT NULL
+          AND batiment_groupe_id IS NOT NULL
+        GROUP BY code_commune_insee
+    `);
+    
+    // Créer un index pour accélérer la jointure
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_temp_bat_commune ON temp_batiment_par_commune(code_commune_insee)`);
+    
+    console.log('   ✅ Table temporaire créée');
+    
+    // Maintenant, faire une simple jointure UPDATE (beaucoup plus rapide)
+    // Pas besoin de LIMIT 1 car il n'y a qu'un seul bâtiment par commune dans la table temporaire
+    console.log('   🔄 Mise à jour des batiment_groupe_id via code_commune...');
+    const updateFallback = db.prepare(`
+        UPDATE dvf_bdnb_complete AS d 
+        SET batiment_groupe_id = (
+            SELECT bat.batiment_groupe_id 
+            FROM temp_batiment_par_commune bat 
+            WHERE bat.code_commune_insee = d.code_commune
+        )
+        WHERE d.batiment_groupe_id IS NULL
+          AND d.code_commune IS NOT NULL
+    `);
+    
+    const resultFallback = updateFallback.run();
+    console.log(`   ✅ ${resultFallback.changes.toLocaleString()} transactions mises à jour via code_commune`);
+    
+    // Nettoyer la table temporaire
+    db.exec(`DROP TABLE IF EXISTS temp_batiment_par_commune`);
+    
+    // Checkpoint après fallback
     try {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
     } catch (e) {
@@ -1466,8 +1505,9 @@ async function mergeDVFWithBDNB() {
         // Ignorer
     }
     
-    // Étape 5: Enrichissement des surfaces terrain pour les maisons et appartements
-    console.log('   🌾 Enrichissement des surfaces terrain pour les maisons et appartements...');
+    // Étape 5: Enrichissement des surfaces terrain UNIQUEMENT pour les maisons
+    // ⚠️ Les appartements ne doivent PAS avoir de surface terrain (pas de jardin)
+    console.log('   🌾 Enrichissement des surfaces terrain pour les maisons uniquement...');
     db.exec(`
         UPDATE dvf_bdnb_complete AS d 
         SET surface_terrain = COALESCE(
@@ -1478,9 +1518,18 @@ async function mergeDVFWithBDNB() {
                 WHERE parc.parcelle_id = d.id_parcelle
             )
         )
-        WHERE d.type_local IN ('Maison', 'Appartement')
+        WHERE d.type_local = 'Maison'
           AND d.surface_terrain IS NULL
           AND d.id_parcelle IS NOT NULL
+    `);
+    
+    // Pour les appartements, on s'assure que surface_terrain reste NULL (pas de jardin)
+    console.log('   🏢 Vérification: les appartements ne doivent pas avoir de surface terrain...');
+    db.exec(`
+        UPDATE dvf_bdnb_complete 
+        SET surface_terrain = NULL
+        WHERE type_local = 'Appartement'
+          AND surface_terrain IS NOT NULL
     `);
     
     // Checkpoint après enrichissement terrains
@@ -1490,20 +1539,46 @@ async function mergeDVFWithBDNB() {
         // Ignorer
     }
     
-    // Étape 6: Suppression des transactions sans GPS (comme le script FINAL)
-    // ⚠️ RÈGLE: On garde TOUTES les transactions avec GPS, peu importe leur type
-    // On supprime UNIQUEMENT les transactions qui n'ont pas de GPS après tous les enrichissements
-    console.log('   🗑️ Suppression des transactions sans GPS (après enrichissements)...');
+    // Étape 6: Suppression des transactions non enrichissables et des terrains nus
+    console.log('   🗑️ Suppression des transactions non enrichissables et des terrains nus...');
     
-    // Supprimer UNIQUEMENT les transactions sans GPS (comme le script FINAL)
+    // Supprimer TOUTES les transactions sans GPS (non enrichissables)
     const deleteNoGPS = db.prepare(`
         DELETE FROM dvf_bdnb_complete 
-        WHERE longitude IS NULL OR latitude IS NULL
+        WHERE longitude IS NULL 
+          AND latitude IS NULL
     `);
     const deletedNoGPS = deleteNoGPS.run().changes;
-    console.log(`   🗑️ ${deletedNoGPS.toLocaleString()} transactions supprimées (sans GPS)`);
+    console.log(`   🗑️ ${deletedNoGPS} transactions supprimées (sans GPS)`);
     
-    const deletedCount = deletedNoGPS;
+    // Supprimer UNIQUEMENT les terrains nus (sans construction dans la même mutation)
+    // On garde : toutes les maisons/appartements + les terrains vendus avec une construction
+    console.log('   🏞️ Suppression des terrains nus (garde maisons/appartements + terrains vendus avec construction)...');
+    
+    // Étape 1: Identifier les mutations qui contiennent au moins une maison ou un appartement
+    db.exec(`
+        CREATE TEMP TABLE IF NOT EXISTS mutations_avec_construction AS
+        SELECT DISTINCT id_mutation
+        FROM dvf_bdnb_complete
+        WHERE type_local IN ('Maison', 'Appartement')
+    `);
+    
+    // Étape 2: Supprimer uniquement les terrains qui ne sont PAS dans une mutation avec construction
+    // On garde :
+    // - Toutes les maisons et appartements (type_local IN ('Maison', 'Appartement'))
+    // - Les terrains vendus avec une construction (id_mutation IN mutations_avec_construction)
+    const deleteTerrains = db.prepare(`
+        DELETE FROM dvf_bdnb_complete 
+        WHERE (type_local IS NULL OR type_local = '' OR type_local NOT IN ('Maison', 'Appartement'))
+          AND id_mutation NOT IN (SELECT id_mutation FROM mutations_avec_construction)
+    `);
+    const deletedTerrains = deleteTerrains.run().changes;
+    console.log(`   🗑️ ${deletedTerrains} transactions de terrains nus supprimées`);
+    
+    // Nettoyer la table temporaire
+    db.exec(`DROP TABLE IF EXISTS mutations_avec_construction`);
+    
+    const deletedCount = deletedNoGPS + deletedTerrains;
     
     // Checkpoint après suppression
     try {
@@ -1517,18 +1592,14 @@ async function mergeDVFWithBDNB() {
         SELECT 
             COUNT(*) as total_transactions,
             COUNT(CASE WHEN surface_reelle_bati IS NOT NULL THEN 1 END) as with_surface_bati,
-            COUNT(CASE WHEN longitude IS NOT NULL AND latitude IS NOT NULL THEN 1 END) as with_gps,
-            COUNT(CASE WHEN type_local IN ('Maison', 'Appartement') THEN 1 END) as maisons_appartements,
-            COUNT(CASE WHEN (type_local IS NULL OR type_local = '' OR type_local NOT IN ('Maison', 'Appartement')) THEN 1 END) as terrains
+            COUNT(CASE WHEN longitude IS NOT NULL AND latitude IS NOT NULL THEN 1 END) as with_gps
         FROM dvf_bdnb_complete
     `).get();
     
     console.log(`   📊 Résultats finaux:`);
-    console.log(`      Total transactions: ${stats.total_transactions.toLocaleString()}`);
-    console.log(`      Avec surface bâti: ${stats.with_surface_bati.toLocaleString()} (${(stats.with_surface_bati/stats.total_transactions*100).toFixed(1)}%)`);
-    console.log(`      Avec GPS: ${stats.with_gps.toLocaleString()} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
-    console.log(`      Maisons/Appartements: ${stats.maisons_appartements.toLocaleString()}`);
-    console.log(`      Terrains: ${stats.terrains.toLocaleString()}`);
+    console.log(`      Total transactions: ${stats.total_transactions}`);
+    console.log(`      Avec surface bâti: ${stats.with_surface_bati} (${(stats.with_surface_bati/stats.total_transactions*100).toFixed(1)}%)`);
+    console.log(`      Avec GPS: ${stats.with_gps} (${(stats.with_gps/stats.total_transactions*100).toFixed(1)}%)`);
     
     // Étape 7: Mettre à jour les données DPE pour les transactions qui n'ont pas encore de DPE
     // VERSION OPTIMISÉE avec table temporaire (comme create-dvf-bdnb-national-FINAL.js)

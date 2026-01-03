@@ -321,6 +321,18 @@ app.post('/api/polygons', async (req, res) => {
                     // Marquer comme notifié
                     await priceAlertService.markAsNotified(alert.id, savedPolygon.id, alert.userId);
                     
+                    // Déterminer la surface à afficher selon le type de bien
+                    const surfaceToDisplay = (savedPolygon.type === 'APPARTEMENT' || savedPolygon.type === 'MAISON_SEULE') && 
+                                           savedPolygon.surfaceMaison && savedPolygon.surfaceMaison > 0
+                        ? savedPolygon.surfaceMaison
+                        : savedPolygon.surface;
+                    
+                    const surfaceLabel = (savedPolygon.type === 'APPARTEMENT' && savedPolygon.surfaceMaison && savedPolygon.surfaceMaison > 0)
+                        ? 'Surface appartement'
+                        : (savedPolygon.type === 'MAISON_SEULE' && savedPolygon.surfaceMaison && savedPolygon.surfaceMaison > 0)
+                        ? 'Surface maison'
+                        : 'Surface';
+                    
                     // Envoyer notification WebSocket
                     broadcastNotification({
                         type: 'price_alert',
@@ -332,13 +344,13 @@ app.post('/api/polygons', async (req, res) => {
                             minSurface: alert.minSurface,
                             maxSurface: alert.maxSurface
                         },
-                        message: `🔔 Nouvelle annonce: ${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`
+                        message: `🔔 Nouvelle annonce: ${surfaceToDisplay}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`
                     });
                     
                     // Envoyer notification FCM (push notification)
                     if (pushNotificationService.isInitialized()) {
                         const notificationTitle = "🔔 Nouvelle annonce correspondant à votre alerte";
-                        const notificationBody = `${savedPolygon.surface}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`;
+                        const notificationBody = `${surfaceToDisplay}m² à ${savedPolygon.price}€ dans ${savedPolygon.commune}`;
                         
                         try {
                             const notificationSent = await pushNotificationService.sendCustomNotification(
@@ -349,7 +361,9 @@ app.post('/api/polygons', async (req, res) => {
                                     type: 'price_alert',
                                     announcement_id: savedPolygon.id,
                                     alert_id: alert.id,
-                                    surface: savedPolygon.surface.toString(),
+                                    surface: surfaceToDisplay.toString(),
+                                    surfaceMaison: (savedPolygon.surfaceMaison || 0).toString(),
+                                    announcementType: savedPolygon.type || '',
                                     price: savedPolygon.price.toString(),
                                     commune: savedPolygon.commune || ''
                                 }

@@ -86,7 +86,7 @@ module.exports = (req, res) => {
             console.log('[RENOVATIONS] Utilisation de terrains_pc_sans_pa.db');
         } else if (fs.existsSync(DB_COMPLET)) {
             dbPath = DB_COMPLET;
-            tableName = 'terrains_batir_complet';
+            tableName = 'terrains_batir';
             console.log('[RENOVATIONS] Utilisation de terrains_batir_complet.db');
         } else {
             console.log('[RENOVATIONS][WARN] Aucune base de données de rénovation trouvée');

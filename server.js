@@ -43,6 +43,7 @@ const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
 const pdfService = new PDFService();
+const emailService = new EmailService();
 
 // PushNotificationService optionnel (nécessite firebase-admin)
 console.log('🔍 Tentative de chargement PushNotificationService...');
@@ -890,7 +891,130 @@ app.post('/api/offers/:id/accept', async (req, res) => {
     }
 });
 
-// Ajouter une signature électronique à une offre acceptée
+// Demander l'envoi d'un email de vérification pour signature
+app.post('/api/offers/:id/request-signature-verification', async (req, res) => {
+    try {
+        const { actorId, actorName, actorEmail, signatureType } = req.body;
+        
+        if (!actorId || !actorName || !actorEmail || !signatureType) {
+            return res.status(400).json({ 
+                error: 'actorId, actorName, actorEmail et signatureType sont requis' 
+            });
+        }
+
+        // Récupérer l'offre
+        const offer = await offerService.getOfferById(req.params.id);
+        if (!offer) {
+            return res.status(404).json({ error: 'Proposition non trouvée' });
+        }
+
+        // Vérifier que l'offre est acceptée
+        if (offer.status !== 'accepted') {
+            return res.status(400).json({ error: 'La proposition doit être acceptée avant de pouvoir être signée' });
+        }
+
+        // Vérifier que l'utilisateur peut signer (acheteur ou vendeur)
+        const isBuyer = offer.buyer_id === actorId;
+        const isSeller = offer.seller_id === actorId;
+        
+        if (!isBuyer && !isSeller) {
+            return res.status(403).json({ error: 'Vous n\'êtes pas autorisé à signer cette proposition' });
+        }
+
+        // Vérifier le type de signature
+        const expectedSignatureType = isBuyer ? 'buyer' : 'seller';
+        if (signatureType !== expectedSignatureType) {
+            return res.status(400).json({ error: `Type de signature incorrect. Attendu: ${expectedSignatureType}` });
+        }
+
+        // Vérifier si une signature existe déjà
+        const existingSignature = await offerService.getSignatureByOfferAndUser(req.params.id, actorId);
+        
+        let signatureId;
+        if (existingSignature) {
+            // Si la signature existe déjà et est vérifiée, retourner une erreur
+            if (existingSignature.email_verified === 1) {
+                return res.status(400).json({ error: 'Vous avez déjà signé cette proposition' });
+            }
+            signatureId = existingSignature.id;
+        } else {
+            // Créer une entrée de signature en attente
+            const signature = await offerService.addSignature({
+                offerId: req.params.id,
+                userId: actorId,
+                userName: actorName,
+                userEmail: actorEmail,
+                signatureType: signatureType,
+                emailVerified: 0
+            });
+            signatureId = signature.id;
+        }
+
+        // Générer un token de vérification
+        const verificationToken = emailService.generateVerificationToken();
+        
+        // Mettre à jour la signature avec le token
+        await offerService.updateSignatureVerificationToken(signatureId, verificationToken);
+        
+        // Envoyer l'email de vérification
+        const emailSent = await emailService.sendSignatureVerificationEmail(
+            actorEmail,
+            actorName,
+            req.params.id,
+            verificationToken
+        );
+        
+        if (!emailSent) {
+            return res.status(500).json({ error: 'Erreur lors de l\'envoi de l\'email de vérification' });
+        }
+
+        console.log(`✅ Email de vérification envoyé pour signature ${signatureType} de la proposition ${req.params.id}`);
+
+        res.json({ 
+            success: true,
+            message: 'Email de vérification envoyé. Veuillez vérifier votre boîte mail.'
+        });
+    } catch (error) {
+        console.error('❌ Erreur demande vérification email:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Vérifier le token d'email pour signature
+app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
+    try {
+        const { token } = req.query;
+        const offerId = req.params.id;
+        
+        if (!token) {
+            return res.status(400).json({ error: 'Token manquant' });
+        }
+
+        // Récupérer la signature avec ce token
+        const signatures = await offerService.getSignaturesByOfferId(offerId);
+        const signature = signatures.find(s => s.email_verification_token === token && s.email_verified === 0);
+        
+        if (!signature) {
+            return res.status(400).json({ error: 'Token invalide ou expiré' });
+        }
+
+        // Vérifier l'email
+        await offerService.verifySignatureEmail(offerId, signature.user_id, token);
+
+        console.log(`✅ Email vérifié pour signature ${signature.signature_type} de la proposition ${offerId}`);
+
+        res.json({ 
+            success: true,
+            message: 'Email vérifié avec succès. Vous pouvez maintenant signer.',
+            signatureType: signature.signature_type
+        });
+    } catch (error) {
+        console.error('❌ Erreur vérification email:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Ajouter une signature électronique à une offre acceptée (après vérification email)
 app.post('/api/offers/:id/sign', async (req, res) => {
     try {
         const { actorId, actorName, actorEmail, signatureType } = req.body;
@@ -927,25 +1051,29 @@ app.post('/api/offers/:id/sign', async (req, res) => {
         }
 
         // Vérifier si la signature existe déjà
-        const existingSignatures = await offerService.getSignaturesByOfferId(req.params.id);
-        const existingSignature = existingSignatures.find(s => s.user_id === actorId);
-        if (existingSignature) {
+        const existingSignature = await offerService.getSignatureByOfferAndUser(req.params.id, actorId);
+        if (!existingSignature) {
+            return res.status(400).json({ error: 'Veuillez d\'abord demander la vérification email' });
+        }
+
+        // Vérifier que l'email a été vérifié
+        if (existingSignature.email_verified !== 1) {
+            return res.status(400).json({ error: 'Veuillez d\'abord vérifier votre email en cliquant sur le lien reçu' });
+        }
+
+        // Vérifier si la signature est déjà finalisée
+        if (existingSignature.signature_timestamp) {
             return res.status(400).json({ error: 'Vous avez déjà signé cette proposition' });
         }
 
-        // Ajouter la signature
-        await offerService.addSignature({
-            offerId: req.params.id,
-            userId: actorId,
-            userName: actorName,
-            userEmail: actorEmail,
-            signatureType: signatureType
-        });
+        // Finaliser la signature (mettre à jour le timestamp)
+        await offerService.finalizeSignature(req.params.id, actorId);
 
-        // Récupérer toutes les signatures
+        // Récupérer toutes les signatures (uniquement celles vérifiées et finalisées)
         const signatures = await offerService.getSignaturesByOfferId(req.params.id);
-        const hasBuyerSignature = signatures.some(s => s.signature_type === 'buyer');
-        const hasSellerSignature = signatures.some(s => s.signature_type === 'seller');
+        const verifiedSignatures = signatures.filter(s => s.email_verified === 1 && s.signature_timestamp);
+        const hasBuyerSignature = verifiedSignatures.some(s => s.signature_type === 'buyer');
+        const hasSellerSignature = verifiedSignatures.some(s => s.signature_type === 'seller');
 
         let pdfPath = null;
         // Si les deux signatures sont présentes, générer le PDF
@@ -954,9 +1082,9 @@ app.post('/api/offers/:id/sign', async (req, res) => {
             const announcement = await polygonService.getPolygonById(offer.announcement_id);
             
             if (announcement) {
-                // Générer le PDF
+                // Générer le PDF avec les signatures vérifiées
                 try {
-                    pdfPath = await pdfService.generateContractPDF(offer, announcement, signatures);
+                    pdfPath = await pdfService.generateContractPDF(offer, announcement, verifiedSignatures);
                     
                     // Mettre à jour les signatures avec le chemin du PDF
                     await offerService.updateSignaturePdfPath(req.params.id, pdfPath);

@@ -116,6 +116,47 @@ class OfferService {
                 console.error('❌ Erreur création table offer_signatures:', err);
             } else {
                 console.log('✅ Table offer_signatures initialisée');
+                
+                // Migration: Ajouter les colonnes email_verification_token et email_verified si elles n'existent pas
+                this.migrateSignaturesTable();
+            }
+        });
+    }
+    
+    migrateSignaturesTable() {
+        // Vérifier si les colonnes existent déjà
+        this.db.all("PRAGMA table_info(offer_signatures)", (err, columns) => {
+            if (err) {
+                console.error('❌ Erreur vérification colonnes offer_signatures:', err);
+                return;
+            }
+            
+            const columnNames = columns.map(col => col.name);
+            const needsEmailVerificationToken = !columnNames.includes('email_verification_token');
+            const needsEmailVerified = !columnNames.includes('email_verified');
+            
+            if (needsEmailVerificationToken || needsEmailVerified) {
+                console.log('🔄 Migration: Ajout des colonnes email_verification_token et email_verified à offer_signatures...');
+                
+                if (needsEmailVerificationToken) {
+                    this.db.run("ALTER TABLE offer_signatures ADD COLUMN email_verification_token TEXT", (err) => {
+                        if (err) {
+                            console.error('❌ Erreur ajout colonne email_verification_token:', err);
+                        } else {
+                            console.log('✅ Colonne email_verification_token ajoutée');
+                        }
+                    });
+                }
+                
+                if (needsEmailVerified) {
+                    this.db.run("ALTER TABLE offer_signatures ADD COLUMN email_verified INTEGER DEFAULT 0", (err) => {
+                        if (err) {
+                            console.error('❌ Erreur ajout colonne email_verified:', err);
+                        } else {
+                            console.log('✅ Colonne email_verified ajoutée');
+                        }
+                    });
+                }
             }
         });
     }

@@ -84,8 +84,6 @@ try {
     };
 }
 
-const emailService = new EmailService();
-
 // Créer le serveur HTTP
 const server = http.createServer(app);
 

@@ -70,6 +70,21 @@ class OfferService {
             )
         `;
 
+        // Table pour les signatures électroniques
+        const createSignaturesTable = `
+            CREATE TABLE IF NOT EXISTS offer_signatures (
+                id TEXT PRIMARY KEY,
+                offer_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                user_email TEXT NOT NULL,
+                signature_type TEXT NOT NULL,
+                signature_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                pdf_path TEXT,
+                FOREIGN KEY (offer_id) REFERENCES offers(id)
+            )
+        `;
+
         this.db.run(createOffersTable, (err) => {
             if (err) {
                 console.error('❌ Erreur création table offers:', err);
@@ -91,6 +106,14 @@ class OfferService {
                 console.error('❌ Erreur création table offer_history:', err);
             } else {
                 console.log('✅ Table offer_history initialisée');
+            }
+        });
+
+        this.db.run(createSignaturesTable, (err) => {
+            if (err) {
+                console.error('❌ Erreur création table offer_signatures:', err);
+            } else {
+                console.log('✅ Table offer_signatures initialisée');
             }
         });
     }
@@ -516,6 +539,73 @@ class OfferService {
                 console.error('❌ Erreur création contre-proposition:', error);
                 reject(error);
             }
+        });
+    }
+
+    /**
+     * Ajouter une signature électronique
+     */
+    async addSignature(signatureData) {
+        return new Promise((resolve, reject) => {
+            const id = uuidv4();
+            const query = `
+                INSERT INTO offer_signatures (
+                    id, offer_id, user_id, user_name, user_email, 
+                    signature_type, signature_timestamp, pdf_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+
+            this.db.run(query, [
+                id,
+                signatureData.offerId,
+                signatureData.userId,
+                signatureData.userName,
+                signatureData.userEmail,
+                signatureData.signatureType, // 'buyer' ou 'seller'
+                signatureData.signatureTimestamp || new Date().toISOString(),
+                signatureData.pdfPath || null
+            ], (err) => {
+                if (err) {
+                    console.error('❌ Erreur ajout signature:', err);
+                    reject(err);
+                } else {
+                    resolve({ id, ...signatureData });
+                }
+            });
+        });
+    }
+
+    /**
+     * Récupérer les signatures d'une offre
+     */
+    async getSignaturesByOfferId(offerId) {
+        return new Promise((resolve, reject) => {
+            const query = `SELECT * FROM offer_signatures WHERE offer_id = ? ORDER BY signature_timestamp ASC`;
+            this.db.all(query, [offerId], (err, rows) => {
+                if (err) {
+                    console.error('❌ Erreur récupération signatures:', err);
+                    reject(err);
+                } else {
+                    resolve(rows);
+                }
+            });
+        });
+    }
+
+    /**
+     * Mettre à jour le chemin du PDF pour une signature
+     */
+    async updateSignaturePdfPath(offerId, pdfPath) {
+        return new Promise((resolve, reject) => {
+            const query = `UPDATE offer_signatures SET pdf_path = ? WHERE offer_id = ?`;
+            this.db.run(query, [pdfPath, offerId], (err) => {
+                if (err) {
+                    console.error('❌ Erreur mise à jour PDF path:', err);
+                    reject(err);
+                } else {
+                    resolve(true);
+                }
+            });
         });
     }
 

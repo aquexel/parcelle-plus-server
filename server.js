@@ -20,6 +20,7 @@ const UserService = require('./services/UserService');
 const OfferService = require('./services/OfferService');
 const PriceAlertService = require('./services/PriceAlertService');
 const EmailService = require('./services/EmailService');
+const PDFService = require('./services/PDFService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -41,6 +42,7 @@ const messageService = new MessageService();
 const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
+const pdfService = new PDFService();
 
 // PushNotificationService optionnel (nécessite firebase-admin)
 console.log('🔍 Tentative de chargement PushNotificationService...');
@@ -861,7 +863,7 @@ app.get('/api/offers/user/:userId', async (req, res) => {
     }
 });
 
-// Accepter une proposition
+// Accepter une proposition (sans signature, juste changer le statut)
 app.post('/api/offers/:id/accept', async (req, res) => {
     try {
         const { actorId, actorName } = req.body;
@@ -884,6 +886,126 @@ app.post('/api/offers/:id/accept', async (req, res) => {
         res.json(offer);
     } catch (error) {
         console.error('❌ Erreur acceptation proposition:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Ajouter une signature électronique à une offre acceptée
+app.post('/api/offers/:id/sign', async (req, res) => {
+    try {
+        const { actorId, actorName, actorEmail, signatureType } = req.body;
+        
+        if (!actorId || !actorName || !actorEmail || !signatureType) {
+            return res.status(400).json({ 
+                error: 'actorId, actorName, actorEmail et signatureType sont requis' 
+            });
+        }
+
+        // Récupérer l'offre
+        const offer = await offerService.getOfferById(req.params.id);
+        if (!offer) {
+            return res.status(404).json({ error: 'Proposition non trouvée' });
+        }
+
+        // Vérifier que l'offre est acceptée
+        if (offer.status !== 'accepted') {
+            return res.status(400).json({ error: 'La proposition doit être acceptée avant de pouvoir être signée' });
+        }
+
+        // Vérifier que l'utilisateur peut signer (acheteur ou vendeur)
+        const isBuyer = offer.buyer_id === actorId;
+        const isSeller = offer.seller_id === actorId;
+        
+        if (!isBuyer && !isSeller) {
+            return res.status(403).json({ error: 'Vous n\'êtes pas autorisé à signer cette proposition' });
+        }
+
+        // Vérifier le type de signature
+        const expectedSignatureType = isBuyer ? 'buyer' : 'seller';
+        if (signatureType !== expectedSignatureType) {
+            return res.status(400).json({ error: `Type de signature incorrect. Attendu: ${expectedSignatureType}` });
+        }
+
+        // Vérifier si la signature existe déjà
+        const existingSignatures = await offerService.getSignaturesByOfferId(req.params.id);
+        const existingSignature = existingSignatures.find(s => s.user_id === actorId);
+        if (existingSignature) {
+            return res.status(400).json({ error: 'Vous avez déjà signé cette proposition' });
+        }
+
+        // Ajouter la signature
+        await offerService.addSignature({
+            offerId: req.params.id,
+            userId: actorId,
+            userName: actorName,
+            userEmail: actorEmail,
+            signatureType: signatureType
+        });
+
+        // Récupérer toutes les signatures
+        const signatures = await offerService.getSignaturesByOfferId(req.params.id);
+        const hasBuyerSignature = signatures.some(s => s.signature_type === 'buyer');
+        const hasSellerSignature = signatures.some(s => s.signature_type === 'seller');
+
+        let pdfPath = null;
+        // Si les deux signatures sont présentes, générer le PDF
+        if (hasBuyerSignature && hasSellerSignature) {
+            // Récupérer l'annonce
+            const announcement = await polygonService.getPolygonById(offer.announcement_id);
+            
+            if (announcement) {
+                // Générer le PDF
+                try {
+                    pdfPath = await pdfService.generateContractPDF(offer, announcement, signatures);
+                    
+                    // Mettre à jour les signatures avec le chemin du PDF
+                    await offerService.updateSignaturePdfPath(req.params.id, pdfPath);
+                    
+                    console.log(`✅ PDF généré pour la proposition ${req.params.id}: ${pdfPath}`);
+                } catch (pdfError) {
+                    console.error('❌ Erreur génération PDF:', pdfError);
+                    // Ne pas bloquer la signature si le PDF échoue
+                }
+            }
+        }
+
+        console.log(`✅ Signature ${signatureType} ajoutée pour la proposition ${req.params.id}`);
+
+        res.json({ 
+            signatureAdded: true,
+            pdfGenerated: pdfPath !== null,
+            pdfPath: pdfPath,
+            allSignaturesComplete: hasBuyerSignature && hasSellerSignature
+        });
+    } catch (error) {
+        console.error('❌ Erreur ajout signature:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Télécharger le PDF d'un contrat signé
+app.get('/api/offers/:id/pdf', async (req, res) => {
+    try {
+        const offerId = req.params.id;
+        
+        // Récupérer les signatures
+        const signatures = await offerService.getSignaturesByOfferId(offerId);
+        if (!signatures || signatures.length === 0) {
+            return res.status(404).json({ error: 'Aucune signature trouvée pour cette proposition' });
+        }
+        
+        // Récupérer le chemin du PDF
+        const pdfPath = signatures[0].pdf_path;
+        if (!pdfPath || !fs.existsSync(pdfPath)) {
+            return res.status(404).json({ error: 'PDF non trouvé. Le contrat n\'a peut-être pas encore été finalisé.' });
+        }
+        
+        // Envoyer le PDF
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="contrat_${offerId}.pdf"`);
+        res.sendFile(path.resolve(pdfPath));
+    } catch (error) {
+        console.error('❌ Erreur téléchargement PDF:', error);
         res.status(500).json({ error: error.message || 'Erreur serveur' });
     }
 });

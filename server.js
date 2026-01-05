@@ -978,6 +978,41 @@ app.post('/api/offers/:id/request-signature-verification', async (req, res) => {
     }
 });
 
+// Récupérer l'état de la signature pour un utilisateur
+app.get('/api/offers/:id/signature-status', async (req, res) => {
+    try {
+        const { userId } = req.query;
+        const offerId = req.params.id;
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'userId est requis' });
+        }
+
+        // Récupérer la signature
+        const signature = await offerService.getSignatureByOfferAndUser(offerId, userId);
+        
+        if (!signature) {
+            return res.json({ 
+                exists: false,
+                emailVerified: false,
+                signed: false
+            });
+        }
+
+        res.json({ 
+            exists: true,
+            emailVerified: signature.email_verified === 1,
+            signed: signature.signature_timestamp != null,
+            signatureType: signature.signature_type,
+            userEmail: signature.user_email,
+            signatureTimestamp: signature.signature_timestamp
+        });
+    } catch (error) {
+        console.error('❌ Erreur récupération état signature:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
 // Vérifier le token d'email pour signature
 app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
     try {

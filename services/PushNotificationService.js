@@ -201,24 +201,30 @@ class PushNotificationService {
      * Enregistrer le token FCM d'un utilisateur
      */
     async registerUserFCMToken(userId, fcmToken) {
+        console.log(`📱 [registerUserFCMToken] Début pour utilisateur: ${userId}`);
         return new Promise((resolve, reject) => {
             const sqlite3 = require('sqlite3').verbose();
             const dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
             
+            console.log(`📱 [registerUserFCMToken] Chemin DB: ${dbPath}`);
+            
             // Vérifier que le fichier de base de données existe
             const fs = require('fs');
             if (!fs.existsSync(dbPath)) {
-                console.error(`❌ Base de données non trouvée: ${dbPath}`);
+                console.error(`❌ [registerUserFCMToken] Base de données non trouvée: ${dbPath}`);
                 reject(new Error(`Base de données non trouvée: ${dbPath}`));
                 return;
             }
             
+            console.log(`📱 [registerUserFCMToken] Base de données trouvée, ouverture...`);
+            
             const db = new sqlite3.Database(dbPath, (err) => {
                 if (err) {
-                    console.error('❌ Erreur ouverture base de données:', err);
+                    console.error('❌ [registerUserFCMToken] Erreur ouverture base de données:', err);
                     reject(err);
                     return;
                 }
+                console.log(`📱 [registerUserFCMToken] Base de données ouverte avec succès`);
             });
             
             // S'assurer que la table existe
@@ -234,40 +240,52 @@ class PushNotificationService {
                 )
             `;
             
+            console.log(`📱 [registerUserFCMToken] Création/vérification table fcm_tokens...`);
+            
             db.run(createTableQuery, (err) => {
                 if (err) {
-                    console.error('❌ Erreur création/vérification table fcm_tokens:', err);
+                    console.error('❌ [registerUserFCMToken] Erreur création/vérification table fcm_tokens:', err);
+                    console.error('❌ [registerUserFCMToken] Détails:', err.message);
+                    console.error('❌ [registerUserFCMToken] Code:', err.code);
                     db.close();
                     reject(err);
                     return;
                 }
                 
+                console.log(`📱 [registerUserFCMToken] Table fcm_tokens vérifiée/créée`);
+                
                 // Vérifier si le token existe déjà
                 const checkQuery = "SELECT id FROM fcm_tokens WHERE fcm_token = ?";
                 
+                console.log(`📱 [registerUserFCMToken] Vérification si token existe déjà...`);
+                
                 db.get(checkQuery, [fcmToken], (err, row) => {
                     if (err) {
-                        console.error('❌ Erreur vérification token FCM:', err);
-                        console.error('❌ Détails erreur:', err.message);
-                        console.error('❌ Code erreur:', err.code);
+                        console.error('❌ [registerUserFCMToken] Erreur vérification token FCM:', err);
+                        console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
+                        console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
                         db.close();
                         reject(err);
                         return;
                     }
                     
+                    console.log(`📱 [registerUserFCMToken] Token existe déjà: ${row ? 'Oui (ID: ' + row.id + ')' : 'Non'}`);
+                    
                     if (row) {
                         // Token existe déjà, mettre à jour l'utilisateur
                         const updateQuery = "UPDATE fcm_tokens SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ?";
                         
+                        console.log(`📱 [registerUserFCMToken] Mise à jour token existant...`);
+                        
                         db.run(updateQuery, [userId, fcmToken], function(err) {
                             if (err) {
-                                console.error('❌ Erreur mise à jour token FCM:', err);
-                                console.error('❌ Détails erreur:', err.message);
-                                console.error('❌ Code erreur:', err.code);
+                                console.error('❌ [registerUserFCMToken] Erreur mise à jour token FCM:', err);
+                                console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
+                                console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
                                 db.close();
                                 reject(err);
                             } else {
-                                console.log(`✅ Token FCM mis à jour pour utilisateur ${userId} (ID existant: ${row.id})`);
+                                console.log(`✅ [registerUserFCMToken] Token FCM mis à jour pour utilisateur ${userId} (ID existant: ${row.id}, changes: ${this.changes})`);
                                 db.close();
                                 resolve(true);
                             }
@@ -276,15 +294,17 @@ class PushNotificationService {
                         // Nouveau token, l'insérer
                         const insertQuery = "INSERT INTO fcm_tokens (user_id, fcm_token) VALUES (?, ?)";
                         
+                        console.log(`📱 [registerUserFCMToken] Insertion nouveau token...`);
+                        
                         db.run(insertQuery, [userId, fcmToken], function(err) {
                             if (err) {
-                                console.error('❌ Erreur insertion token FCM:', err);
-                                console.error('❌ Détails erreur:', err.message);
-                                console.error('❌ Code erreur:', err.code);
+                                console.error('❌ [registerUserFCMToken] Erreur insertion token FCM:', err);
+                                console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
+                                console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
                                 db.close();
                                 reject(err);
                             } else {
-                                console.log(`✅ Token FCM enregistré pour utilisateur ${userId} (Nouveau ID: ${this.lastID})`);
+                                console.log(`✅ [registerUserFCMToken] Token FCM enregistré pour utilisateur ${userId} (Nouveau ID: ${this.lastID}, changes: ${this.changes})`);
                                 db.close();
                                 resolve(true);
                             }

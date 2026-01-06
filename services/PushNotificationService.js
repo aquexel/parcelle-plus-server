@@ -272,24 +272,49 @@ class PushNotificationService {
                     console.log(`📱 [registerUserFCMToken] Token existe déjà: ${row ? 'Oui (ID: ' + row.id + ')' : 'Non'}`);
                     
                     if (row) {
-                        // Token existe déjà, mettre à jour l'utilisateur
-                        const updateQuery = "UPDATE fcm_tokens SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ?";
+                        // Token existe déjà, vérifier si l'utilisateur est déjà le même
+                        const existingUserId = row.user_id || (row.userId || null);
+                        console.log(`📱 [registerUserFCMToken] Token existant trouvé - ID: ${row.id}, User actuel: ${existingUserId}, Nouveau user: ${userId}`);
                         
-                        console.log(`📱 [registerUserFCMToken] Mise à jour token existant...`);
-                        
-                        db.run(updateQuery, [userId, fcmToken], function(err) {
-                            if (err) {
-                                console.error('❌ [registerUserFCMToken] Erreur mise à jour token FCM:', err);
-                                console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
-                                console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
-                                db.close();
-                                reject(err);
-                            } else {
-                                console.log(`✅ [registerUserFCMToken] Token FCM mis à jour pour utilisateur ${userId} (ID existant: ${row.id}, changes: ${this.changes})`);
-                                db.close();
-                                resolve(true);
-                            }
-                        });
+                        if (existingUserId === userId) {
+                            // L'utilisateur est déjà associé à ce token, juste mettre à jour la date
+                            const updateQuery = "UPDATE fcm_tokens SET updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ? AND user_id = ?";
+                            
+                            console.log(`📱 [registerUserFCMToken] Token déjà associé au bon utilisateur, mise à jour timestamp...`);
+                            
+                            db.run(updateQuery, [fcmToken, userId], function(err) {
+                                if (err) {
+                                    console.error('❌ [registerUserFCMToken] Erreur mise à jour timestamp:', err);
+                                    console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
+                                    console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
+                                    db.close();
+                                    reject(err);
+                                } else {
+                                    console.log(`✅ [registerUserFCMToken] Timestamp mis à jour (changes: ${this.changes})`);
+                                    db.close();
+                                    resolve(true);
+                                }
+                            });
+                        } else {
+                            // Token existe mais pour un autre utilisateur, mettre à jour
+                            const updateQuery = "UPDATE fcm_tokens SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ?";
+                            
+                            console.log(`📱 [registerUserFCMToken] Token associé à un autre utilisateur, mise à jour...`);
+                            
+                            db.run(updateQuery, [userId, fcmToken], function(err) {
+                                if (err) {
+                                    console.error('❌ [registerUserFCMToken] Erreur mise à jour token FCM:', err);
+                                    console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
+                                    console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
+                                    db.close();
+                                    reject(err);
+                                } else {
+                                    console.log(`✅ [registerUserFCMToken] Token FCM mis à jour pour utilisateur ${userId} (ID existant: ${row.id}, changes: ${this.changes})`);
+                                    db.close();
+                                    resolve(true);
+                                }
+                            });
+                        }
                     } else {
                         // Nouveau token, l'insérer
                         const insertQuery = "INSERT INTO fcm_tokens (user_id, fcm_token) VALUES (?, ?)";

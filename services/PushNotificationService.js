@@ -69,6 +69,7 @@ class PushNotificationService {
      * Envoyer une notification push pour un nouveau message
      */
     async sendMessageNotification(targetUserId, senderName, messageContent, roomId, senderId) {
+        console.log(`📱 [sendMessageNotification] Début pour utilisateur ${targetUserId}, initialisé: ${this.initialized}`);
         if (!this.initialized) {
             console.log('⚠️ Firebase non initialisé - Notification non envoyée');
             return false;
@@ -77,11 +78,13 @@ class PushNotificationService {
         let fcmToken = null;
         try {
             // Récupérer le token FCM de l'utilisateur cible
+            console.log(`📱 [sendMessageNotification] Récupération token FCM pour ${targetUserId}...`);
             fcmToken = await this.getUserFCMToken(targetUserId);
             if (!fcmToken) {
                 console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${targetUserId}`);
                 return false;
             }
+            console.log(`📱 [sendMessageNotification] Token FCM récupéré: ${fcmToken.substring(0, 20)}...`);
 
             const message = {
                 token: fcmToken,
@@ -108,8 +111,9 @@ class PushNotificationService {
             if (!this.admin) {
                 throw new Error('firebase-admin non disponible');
             }
+            console.log(`📱 [sendMessageNotification] Envoi notification via Firebase...`);
             const response = await this.admin.messaging().send(message);
-            console.log(`✅ Notification envoyée: ${response}`);
+            console.log(`✅ [sendMessageNotification] Notification envoyée avec succès: ${response}`);
             return true;
 
         } catch (error) {

@@ -1438,22 +1438,44 @@ app.post('/api/fcm/register-token', async (req, res) => {
         console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, 20)}...`);
         
         // Enregistrer le token dans la base de données
-        const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
-        
-        if (registered) {
-            console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
-        } else {
-            console.log(`⚠️ Échec enregistrement token FCM pour ${userId}`);
+        try {
+            const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+            
+            if (registered) {
+                console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
+                res.json({ 
+                    success: true,
+                    message: 'Token FCM enregistré avec succès',
+                    userId: userId
+                });
+            } else {
+                console.log(`⚠️ Échec enregistrement token FCM pour ${userId} - registered est false`);
+                res.json({ 
+                    success: false,
+                    message: 'Échec enregistrement token FCM',
+                    userId: userId
+                });
+            }
+        } catch (dbError) {
+            console.error('❌ Erreur base de données lors de l\'enregistrement token FCM:', dbError);
+            console.error('❌ Stack trace:', dbError.stack);
+            // On retourne quand même un 200 pour éviter que l'app réessaie en boucle
+            res.json({ 
+                success: false,
+                message: 'Erreur base de données',
+                error: dbError.message,
+                userId: userId
+            });
         }
-        
-        res.json({ 
-            message: 'Token FCM enregistré avec succès',
-            userId: userId
-        });
         
     } catch (error) {
         console.error('❌ Erreur enregistrement token FCM:', error.message);
-        res.status(500).json({ error: 'Erreur serveur' });
+        console.error('❌ Stack trace:', error.stack);
+        res.status(500).json({ 
+            success: false,
+            error: 'Erreur serveur',
+            message: error.message
+        });
     }
 });
 

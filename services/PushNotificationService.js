@@ -204,50 +204,93 @@ class PushNotificationService {
         return new Promise((resolve, reject) => {
             const sqlite3 = require('sqlite3').verbose();
             const dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
-            const db = new sqlite3.Database(dbPath);
             
-            // Vérifier si le token existe déjà
-            const checkQuery = "SELECT id FROM fcm_tokens WHERE fcm_token = ?";
+            // Vérifier que le fichier de base de données existe
+            const fs = require('fs');
+            if (!fs.existsSync(dbPath)) {
+                console.error(`❌ Base de données non trouvée: ${dbPath}`);
+                reject(new Error(`Base de données non trouvée: ${dbPath}`));
+                return;
+            }
             
-            db.get(checkQuery, [fcmToken], (err, row) => {
+            const db = new sqlite3.Database(dbPath, (err) => {
                 if (err) {
-                    console.error('❌ Erreur vérification token FCM:', err);
+                    console.error('❌ Erreur ouverture base de données:', err);
+                    reject(err);
+                    return;
+                }
+            });
+            
+            // S'assurer que la table existe
+            const createTableQuery = `
+                CREATE TABLE IF NOT EXISTS fcm_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    fcm_token TEXT NOT NULL UNIQUE,
+                    device_info TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, fcm_token)
+                )
+            `;
+            
+            db.run(createTableQuery, (err) => {
+                if (err) {
+                    console.error('❌ Erreur création/vérification table fcm_tokens:', err);
                     db.close();
                     reject(err);
                     return;
                 }
                 
-                if (row) {
-                    // Token existe déjà, mettre à jour l'utilisateur
-                    const updateQuery = "UPDATE fcm_tokens SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ?";
-                    
-                    db.run(updateQuery, [userId, fcmToken], function(err) {
+                // Vérifier si le token existe déjà
+                const checkQuery = "SELECT id FROM fcm_tokens WHERE fcm_token = ?";
+                
+                db.get(checkQuery, [fcmToken], (err, row) => {
+                    if (err) {
+                        console.error('❌ Erreur vérification token FCM:', err);
+                        console.error('❌ Détails erreur:', err.message);
+                        console.error('❌ Code erreur:', err.code);
                         db.close();
-                        
-                        if (err) {
-                            console.error('❌ Erreur mise à jour token FCM:', err);
-                            reject(err);
-                        } else {
-                            console.log(`✅ Token FCM mis à jour pour utilisateur ${userId}`);
-                            resolve(true);
-                        }
-                    });
-                } else {
-                    // Nouveau token, l'insérer
-                    const insertQuery = "INSERT INTO fcm_tokens (user_id, fcm_token) VALUES (?, ?)";
+                        reject(err);
+                        return;
+                    }
                     
-                    db.run(insertQuery, [userId, fcmToken], function(err) {
-                        db.close();
+                    if (row) {
+                        // Token existe déjà, mettre à jour l'utilisateur
+                        const updateQuery = "UPDATE fcm_tokens SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ?";
                         
-                        if (err) {
-                            console.error('❌ Erreur insertion token FCM:', err);
-                            reject(err);
-                        } else {
-                            console.log(`✅ Token FCM enregistré pour utilisateur ${userId}`);
-                            resolve(true);
-                        }
-                    });
-                }
+                        db.run(updateQuery, [userId, fcmToken], function(err) {
+                            if (err) {
+                                console.error('❌ Erreur mise à jour token FCM:', err);
+                                console.error('❌ Détails erreur:', err.message);
+                                console.error('❌ Code erreur:', err.code);
+                                db.close();
+                                reject(err);
+                            } else {
+                                console.log(`✅ Token FCM mis à jour pour utilisateur ${userId} (ID existant: ${row.id})`);
+                                db.close();
+                                resolve(true);
+                            }
+                        });
+                    } else {
+                        // Nouveau token, l'insérer
+                        const insertQuery = "INSERT INTO fcm_tokens (user_id, fcm_token) VALUES (?, ?)";
+                        
+                        db.run(insertQuery, [userId, fcmToken], function(err) {
+                            if (err) {
+                                console.error('❌ Erreur insertion token FCM:', err);
+                                console.error('❌ Détails erreur:', err.message);
+                                console.error('❌ Code erreur:', err.code);
+                                db.close();
+                                reject(err);
+                            } else {
+                                console.log(`✅ Token FCM enregistré pour utilisateur ${userId} (Nouveau ID: ${this.lastID})`);
+                                db.close();
+                                resolve(true);
+                            }
+                        });
+                    }
+                });
             });
         });
     }

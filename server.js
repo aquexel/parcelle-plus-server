@@ -1026,7 +1026,15 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
         const offerId = req.params.id;
         
         if (!token) {
-            return res.status(400).json({ error: 'Token manquant' });
+            return res.status(400).send(`
+                <html>
+                <head><title>Erreur de vérification</title></head>
+                <body style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                    <h1>❌ Token manquant</h1>
+                    <p>Le lien de vérification est invalide. Veuillez réessayer.</p>
+                </body>
+                </html>
+            `);
         }
 
         // Récupérer la signature avec ce token
@@ -1034,7 +1042,15 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
         const signature = signatures.find(s => s.email_verification_token === token && s.email_verified === 0);
         
         if (!signature) {
-            return res.status(400).json({ error: 'Token invalide ou expiré' });
+            return res.status(400).send(`
+                <html>
+                <head><title>Erreur de vérification</title></head>
+                <body style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                    <h1>❌ Token invalide ou expiré</h1>
+                    <p>Ce lien de vérification n'est plus valide. Veuillez demander un nouveau lien.</p>
+                </body>
+                </html>
+            `);
         }
 
         // Vérifier l'email
@@ -1042,14 +1058,73 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
 
         console.log(`✅ Email vérifié pour signature ${signature.signature_type} de la proposition ${offerId}`);
 
-        res.json({ 
-            success: true,
-            message: 'Email vérifié avec succès. Vous pouvez maintenant signer.',
-            signatureType: signature.signature_type
-        });
+        // Rediriger vers le deep link Android qui ouvrira l'application
+        // Si l'app n'est pas installée, afficher une page de succès
+        const deepLink = `parcelleplus://verify-signature-email?token=${token}&offerId=${offerId}`;
+        
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Vérification réussie</title>
+                <script>
+                    // Essayer d'ouvrir l'app Android
+                    window.location.href = "${deepLink}";
+                    
+                    // Si après 2 secondes on est toujours là, afficher la page de succès
+                    setTimeout(function() {
+                        document.getElementById('redirect-message').style.display = 'block';
+                    }, 2000);
+                </script>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        padding: 20px;
+                        text-align: center;
+                        background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+                        color: white;
+                        min-height: 100vh;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin: 0;
+                    }
+                    .container {
+                        background: white;
+                        color: #333;
+                        padding: 40px;
+                        border-radius: 10px;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                        max-width: 500px;
+                    }
+                    h1 { color: #4CAF50; margin-top: 0; }
+                    #redirect-message { display: none; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>✅ Email vérifié avec succès</h1>
+                    <p>Votre adresse email a été vérifiée. Vous pouvez maintenant signer la proposition.</p>
+                    <div id="redirect-message">
+                        <p>Si l'application ParcellePlus ne s'ouvre pas automatiquement, ouvrez-la manuellement.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
     } catch (error) {
         console.error('❌ Erreur vérification email:', error);
-        res.status(500).json({ error: error.message || 'Erreur serveur' });
+        res.status(500).send(`
+            <html>
+            <head><title>Erreur serveur</title></head>
+            <body style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                <h1>❌ Erreur serveur</h1>
+                <p>${error.message || 'Une erreur est survenue lors de la vérification.'}</p>
+            </body>
+            </html>
+        `);
     }
 });
 

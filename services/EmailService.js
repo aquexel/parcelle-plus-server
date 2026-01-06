@@ -192,9 +192,8 @@ class EmailService {
      */
     async sendSignatureVerificationEmail(email, userName, offerId, verificationToken) {
         try {
-            // Utiliser un deep link Android pour ouvrir directement l'app
-            const deepLinkUrl = `parcelleplus://verify-signature-email?token=${verificationToken}&offerId=${offerId}`;
-            // URL web de secours
+            // Utiliser un lien web qui redirige vers le deep link Android
+            // Cela fonctionne mieux dans les emails que le deep link direct
             const webUrl = `${this.baseUrl}/api/offers/${offerId}/verify-signature-email?token=${verificationToken}`;
             
             const mailOptions = {
@@ -229,7 +228,7 @@ class EmailService {
                                 <p>Vous avez demandé à signer électroniquement une proposition sur ParcellePlus.</p>
                                 <p>Pour confirmer votre adresse email et procéder à la signature, veuillez cliquer sur le bouton ci-dessous :</p>
                                 <div style="text-align: center;">
-                                    <a href="${deepLinkUrl}" class="button">Vérifier mon email</a>
+                                    <a href="${webUrl}" class="button" style="display: inline-block; background: #4CAF50; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0;">Vérifier mon email</a>
                                 </div>
                                 <p><small>Si l'application ParcellePlus est installée sur votre appareil, le lien s'ouvrira automatiquement dans l'app.</small></p>
                                 <p>Ou copiez-collez ce lien dans votre navigateur :</p>

@@ -12,6 +12,8 @@ const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 
 // Import des modules de base de données
 const PolygonService = require('./services/PolygonService');
@@ -21,6 +23,7 @@ const OfferService = require('./services/OfferService');
 const PriceAlertService = require('./services/PriceAlertService');
 const EmailService = require('./services/EmailService');
 const PDFService = require('./services/PDFService');
+const PhotoDistributionService = require('./services/PhotoDistributionService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -36,6 +39,38 @@ app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Configuration multer pour upload de photos
+const photosDir = path.join(__dirname, 'photos');
+if (!fs.existsSync(photosDir)) {
+    fs.mkdirSync(photosDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, photosDir);
+    },
+    filename: (req, file, cb) => {
+        const announcementId = req.params.id;
+        const timestamp = Date.now();
+        const index = req.body.index || 0;
+        cb(null, `announcement_${announcementId}_photo_${index}_${timestamp}.jpg`);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 2 * 1024 * 1024 // 2 Mo max
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Seules les images sont autorisées'), false);
+        }
+    }
+});
+
 // Services
 const polygonService = new PolygonService();
 const messageService = new MessageService();
@@ -43,6 +78,7 @@ const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
 const pdfService = new PDFService();
+const photoDistributionService = new PhotoDistributionService();
 const emailService = new EmailService();
 
 // PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
@@ -414,6 +450,197 @@ app.put('/api/polygons/:id', async (req, res) => {
         res.status(500).json({ error: 'Erreur serveur' });
     }
 });
+
+// Upload de photos pour une annonce (tampon temporaire) ou mise à jour
+app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.body.index || '0');
+        const userId = req.body.user_id || req.headers['x-user-id'];
+        const isSeller = req.body.is_seller === 'true' || req.body.is_seller === true;
+        const isUpdate = req.body.update === 'true' || req.body.update === true;
+        
+        if (!req.file) {
+            return res.status(400).json({ error: 'Aucune photo fournie' });
+        }
+        
+        // Vérifier que l'annonce existe
+        const polygon = await polygonService.getPolygonById(announcementId);
+        if (!polygon) {
+            fs.unlinkSync(req.file.path);
+            return res.status(404).json({ error: 'Annonce non trouvée' });
+        }
+        
+        // Si c'est une mise à jour, générer une nouvelle version
+        let photoVersion = null;
+        if (isUpdate && isSeller) {
+            photoVersion = Date.now().toString(); // Nouvelle version basée sur timestamp
+            console.log(`🔄 Mise à jour photo ${photoIndex} pour annonce ${announcementId} (nouvelle version: ${photoVersion})`);
+        }
+        
+        const photoPath = `/photos/${req.file.filename}`;
+        
+        // Enregistrer le serveur comme source de la photo (avec version si mise à jour)
+        const version = await photoDistributionService.registerPhotoSource(
+            announcementId, 
+            photoIndex, 
+            'server', 
+            false, 
+            true, 
+            photoVersion
+        );
+        
+        // Si c'est le vendeur qui upload, l'enregistrer aussi comme source
+        if (userId && isSeller) {
+            await photoDistributionService.registerPhotoSource(
+                announcementId, 
+                photoIndex, 
+                userId, 
+                true, 
+                false, 
+                version || photoVersion
+            );
+        }
+        
+        console.log(`✅ Photo ${photoIndex} ${isUpdate ? 'mise à jour' : 'uploadée'} pour annonce ${announcementId} (version: ${version || '1'})`);
+        
+        res.status(201).json({
+            success: true,
+            photoPath: photoPath,
+            filename: req.file.filename,
+            size: req.file.size,
+            photoIndex: photoIndex,
+            version: version || '1',
+            isUpdate: isUpdate
+        });
+    } catch (error) {
+        console.error('❌ Erreur upload photo:', error);
+        if (req.file && req.file.path) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (e) {
+                // Ignorer
+            }
+        }
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Vérifier la version actuelle d'une photo
+app.get('/api/polygons/:id/photos/:index/version', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const userId = req.query.user_id || req.headers['x-user-id'];
+        
+        const currentVersion = await photoDistributionService.getCurrentPhotoVersion(announcementId, photoIndex);
+        
+        let hasLatest = true;
+        if (userId) {
+            hasLatest = await photoDistributionService.hasLatestPhotoVersion(announcementId, photoIndex, userId);
+        }
+        
+        res.json({
+            success: true,
+            currentVersion: currentVersion || '1',
+            hasLatestVersion: hasLatest,
+            needsUpdate: !hasLatest
+        });
+    } catch (error) {
+        console.error('❌ Erreur vérification version photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Découvrir les sources pour télécharger une photo
+app.get('/api/polygons/:id/photos/:index/sources', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const excludeUserId = req.query.exclude_user_id || null;
+        
+        const sources = await photoDistributionService.findPhotoSources(
+            announcementId, 
+            photoIndex, 
+            excludeUserId
+        );
+        
+        res.json({
+            success: true,
+            sources: sources,
+            count: sources.length
+        });
+    } catch (error) {
+        console.error('❌ Erreur recherche sources photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Enregistrer qu'un client a téléchargé une photo
+app.post('/api/polygons/:id/photos/:index/register-client', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const userId = req.body.user_id || req.headers['x-user-id'];
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'user_id requis' });
+        }
+        
+        await photoDistributionService.registerPhotoClient(announcementId, photoIndex, userId);
+        
+        // Vérifier si le serveur peut supprimer la photo
+        const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
+        
+        res.json({
+            success: true,
+            canCleanupServer: canCleanup
+        });
+    } catch (error) {
+        console.error('❌ Erreur enregistrement client photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Télécharger une photo depuis le serveur (fallback)
+app.get('/api/polygons/:id/photos/:index', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        
+        // Vérifier que le serveur a encore la photo
+        const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
+        if (canCleanup) {
+            // Le serveur peut avoir supprimé la photo, chercher dans les fichiers
+            const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_*.jpg`;
+            const files = fs.readdirSync(photosDir).filter(f => f.startsWith(`announcement_${announcementId}_photo_${photoIndex}_`));
+            
+            if (files.length === 0) {
+                return res.status(404).json({ error: 'Photo non disponible sur le serveur (distribuée)' });
+            }
+            
+            const photoFile = path.join(photosDir, files[0]);
+            res.sendFile(photoFile);
+        } else {
+            // Photo encore sur le serveur, la servir normalement
+            const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_*.jpg`;
+            const files = fs.readdirSync(photosDir).filter(f => f.startsWith(`announcement_${announcementId}_photo_${photoIndex}_`));
+            
+            if (files.length === 0) {
+                return res.status(404).json({ error: 'Photo non trouvée' });
+            }
+            
+            const photoFile = path.join(photosDir, files[0]);
+            res.sendFile(photoFile);
+        }
+    } catch (error) {
+        console.error('❌ Erreur téléchargement photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Servir les photos statiquement
+app.use('/photos', express.static(photosDir));
 
 app.delete('/api/polygons/:id', async (req, res) => {
     try {
@@ -1239,12 +1466,12 @@ app.get('/api/offers/:id/pdf', async (req, res) => {
         // Récupérer le chemin du PDF
         const pdfPath = signatures[0].pdf_path;
         if (!pdfPath || !fs.existsSync(pdfPath)) {
-            return res.status(404).json({ error: 'PDF non trouvé. Le contrat n\'a peut-être pas encore été finalisé.' });
+            return res.status(404).json({ error: 'PDF non trouvé. L\'accord de principe n\'a peut-être pas encore été finalisé.' });
         }
         
         // Envoyer le PDF
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="contrat_${offerId}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="accord_principe_${offerId}.pdf"`);
         res.sendFile(path.resolve(pdfPath));
     } catch (error) {
         console.error('❌ Erreur téléchargement PDF:', error);

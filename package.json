@@ -27,7 +27,8 @@
     "csv-parser": "^3.0.0",
     "dotenv": "^16.3.1",
     "firebase-admin": "^13.6.0",
-    "pdfkit": "^0.14.0"
+    "pdfkit": "^0.14.0",
+    "multer": "^1.4.5-lts.1"
   },
   "engines": {
     "node": ">=20.0.0"

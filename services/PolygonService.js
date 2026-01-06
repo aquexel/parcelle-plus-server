@@ -138,20 +138,22 @@ class PolygonService {
     async getAllPolygons(userId = null, limit = 100) {
         return new Promise((resolve, reject) => {
             let query = `
-                SELECT 
-                    id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe
-                FROM polygons
+                SELECT
+                    p.id, p.user_id, p.title, p.description, p.coordinates, p.surface,
+                    p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe,
+                    COUNT(av.id) as view_count
+                FROM polygons p
+                LEFT JOIN announcement_views av ON p.id = av.announcement_id
             `;
             let params = [];
 
             if (userId) {
-                query += ` WHERE user_id = ?`;
+                query += ` WHERE p.user_id = ?`;
                 params.push(userId);
             }
 
-            query += ` ORDER BY created_at DESC LIMIT ?`;
+            query += ` GROUP BY p.id ORDER BY p.created_at DESC LIMIT ?`;
             params.push(limit);
 
             this.db.all(query, params, (err, rows) => {
@@ -162,7 +164,8 @@ class PolygonService {
                     const polygons = rows.map(row => ({
                         ...row,
                         coordinates: JSON.parse(row.coordinates),
-                        isPublic: row.is_public === 1
+                        isPublic: row.is_public === 1,
+                        viewCount: row.view_count || 0
                     }));
                     console.log(`✅ ${polygons.length} polygones récupérés`);
                     resolve(polygons);
@@ -174,13 +177,16 @@ class PolygonService {
     async getPublicPolygons(limit = 100) {
         return new Promise((resolve, reject) => {
             const query = `
-                SELECT 
-                    id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe
-                FROM polygons
-                WHERE is_public = 1 AND status = 'available'
-                ORDER BY created_at DESC 
+                SELECT
+                    p.id, p.user_id, p.title, p.description, p.coordinates, p.surface,
+                    p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe,
+                    COUNT(av.id) as view_count
+                FROM polygons p
+                LEFT JOIN announcement_views av ON p.id = av.announcement_id
+                WHERE p.is_public = 1 AND p.status = 'available'
+                GROUP BY p.id
+                ORDER BY p.created_at DESC 
                 LIMIT ?
             `;
 
@@ -192,7 +198,8 @@ class PolygonService {
                     const polygons = rows.map(row => ({
                         ...row,
                         coordinates: JSON.parse(row.coordinates),
-                        isPublic: true
+                        isPublic: true,
+                        viewCount: row.view_count || 0
                     }));
                     console.log(`✅ ${polygons.length} polygones publics récupérés`);
                     resolve(polygons);
@@ -205,11 +212,14 @@ class PolygonService {
         return new Promise((resolve, reject) => {
             const query = `
                 SELECT 
-                    id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, is_public, type, classe_dpe
-                FROM polygons 
-                WHERE id = ?
+                    p.id, p.user_id, p.title, p.description, p.coordinates, p.surface, 
+                    p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.zone_plu,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.is_public, p.type, p.classe_dpe,
+                    COUNT(av.id) as view_count
+                FROM polygons p
+                LEFT JOIN announcement_views av ON p.id = av.announcement_id
+                WHERE p.id = ?
+                GROUP BY p.id
             `;
 
             this.db.get(query, [id], (err, row) => {
@@ -220,7 +230,8 @@ class PolygonService {
                     const polygon = {
                         ...row,
                         coordinates: JSON.parse(row.coordinates),
-                        isPublic: row.is_public === 1
+                        isPublic: row.is_public === 1,
+                        viewCount: row.view_count || 0
                     };
                     console.log(`✅ Polygone récupéré: ${id}`);
                     resolve(polygon);
@@ -421,12 +432,15 @@ class PolygonService {
         return new Promise((resolve, reject) => {
             const query = `
                 SELECT 
-                    id, user_id, title, description, coordinates, surface, 
-                    commune, code_insee, price, status, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type
-                FROM polygons 
-                WHERE user_id = ? 
-                ORDER BY created_at DESC 
+                    p.id, p.user_id, p.title, p.description, p.coordinates, p.surface, 
+                    p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type,
+                    COUNT(av.id) as view_count
+                FROM polygons p
+                LEFT JOIN announcement_views av ON p.id = av.announcement_id
+                WHERE p.user_id = ? 
+                GROUP BY p.id
+                ORDER BY p.created_at DESC 
                 LIMIT ?
             `;
 
@@ -438,7 +452,8 @@ class PolygonService {
                     const polygons = rows.map(row => ({
                         ...row,
                         coordinates: JSON.parse(row.coordinates),
-                        isPublic: row.is_public === 1
+                        isPublic: row.is_public === 1,
+                        viewCount: row.view_count || 0
                     }));
                     console.log(`✅ ${polygons.length} polygones récupérés pour l'utilisateur ${userId}`);
                     resolve(polygons);

@@ -70,6 +70,23 @@ class OfferService {
             )
         `;
 
+        // Table pour les signatures électroniques
+        const createSignaturesTable = `
+            CREATE TABLE IF NOT EXISTS offer_signatures (
+                id TEXT PRIMARY KEY,
+                offer_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                user_email TEXT NOT NULL,
+                signature_type TEXT NOT NULL,
+                signature_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                pdf_path TEXT,
+                email_verification_token TEXT,
+                email_verified INTEGER DEFAULT 0,
+                FOREIGN KEY (offer_id) REFERENCES offers(id)
+            )
+        `;
+
         this.db.run(createOffersTable, (err) => {
             if (err) {
                 console.error('❌ Erreur création table offers:', err);
@@ -91,6 +108,55 @@ class OfferService {
                 console.error('❌ Erreur création table offer_history:', err);
             } else {
                 console.log('✅ Table offer_history initialisée');
+            }
+        });
+
+        this.db.run(createSignaturesTable, (err) => {
+            if (err) {
+                console.error('❌ Erreur création table offer_signatures:', err);
+            } else {
+                console.log('✅ Table offer_signatures initialisée');
+                
+                // Migration: Ajouter les colonnes email_verification_token et email_verified si elles n'existent pas
+                this.migrateSignaturesTable();
+            }
+        });
+    }
+    
+    migrateSignaturesTable() {
+        // Vérifier si les colonnes existent déjà
+        this.db.all("PRAGMA table_info(offer_signatures)", (err, columns) => {
+            if (err) {
+                console.error('❌ Erreur vérification colonnes offer_signatures:', err);
+                return;
+            }
+            
+            const columnNames = columns.map(col => col.name);
+            const needsEmailVerificationToken = !columnNames.includes('email_verification_token');
+            const needsEmailVerified = !columnNames.includes('email_verified');
+            
+            if (needsEmailVerificationToken || needsEmailVerified) {
+                console.log('🔄 Migration: Ajout des colonnes email_verification_token et email_verified à offer_signatures...');
+                
+                if (needsEmailVerificationToken) {
+                    this.db.run("ALTER TABLE offer_signatures ADD COLUMN email_verification_token TEXT", (err) => {
+                        if (err) {
+                            console.error('❌ Erreur ajout colonne email_verification_token:', err);
+                        } else {
+                            console.log('✅ Colonne email_verification_token ajoutée');
+                        }
+                    });
+                }
+                
+                if (needsEmailVerified) {
+                    this.db.run("ALTER TABLE offer_signatures ADD COLUMN email_verified INTEGER DEFAULT 0", (err) => {
+                        if (err) {
+                            console.error('❌ Erreur ajout colonne email_verified:', err);
+                        } else {
+                            console.log('✅ Colonne email_verified ajoutée');
+                        }
+                    });
+                }
             }
         });
     }
@@ -516,6 +582,153 @@ class OfferService {
                 console.error('❌ Erreur création contre-proposition:', error);
                 reject(error);
             }
+        });
+    }
+
+    /**
+     * Ajouter une signature électronique (ou créer une entrée en attente de vérification email)
+     */
+    async addSignature(signatureData) {
+        return new Promise((resolve, reject) => {
+            const id = uuidv4();
+            const query = `
+                INSERT INTO offer_signatures (
+                    id, offer_id, user_id, user_name, user_email, 
+                    signature_type, signature_timestamp, pdf_path,
+                    email_verification_token, email_verified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+
+            this.db.run(query, [
+                id,
+                signatureData.offerId,
+                signatureData.userId,
+                signatureData.userName,
+                signatureData.userEmail,
+                signatureData.signatureType, // 'buyer' ou 'seller'
+                signatureData.signatureTimestamp || new Date().toISOString(),
+                signatureData.pdfPath || null,
+                signatureData.emailVerificationToken || null,
+                signatureData.emailVerified || 0
+            ], (err) => {
+                if (err) {
+                    console.error('❌ Erreur ajout signature:', err);
+                    reject(err);
+                } else {
+                    resolve({ id, ...signatureData });
+                }
+            });
+        });
+    }
+
+    /**
+     * Mettre à jour le token de vérification email pour une signature
+     */
+    async updateSignatureVerificationToken(signatureId, verificationToken) {
+        return new Promise((resolve, reject) => {
+            const query = `UPDATE offer_signatures SET email_verification_token = ? WHERE id = ?`;
+            this.db.run(query, [verificationToken, signatureId], (err) => {
+                if (err) {
+                    console.error('❌ Erreur mise à jour token vérification:', err);
+                    reject(err);
+                } else {
+                    resolve(true);
+                }
+            });
+        });
+    }
+
+    /**
+     * Vérifier le token d'email et marquer comme vérifié
+     */
+    async verifySignatureEmail(offerId, userId, verificationToken) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                UPDATE offer_signatures 
+                SET email_verified = 1, email_verification_token = NULL 
+                WHERE offer_id = ? AND user_id = ? AND email_verification_token = ? AND email_verified = 0
+            `;
+            this.db.run(query, [offerId, userId, verificationToken], function(err) {
+                if (err) {
+                    console.error('❌ Erreur vérification email:', err);
+                    reject(err);
+                } else if (this.changes === 0) {
+                    reject(new Error('Token invalide ou déjà utilisé'));
+                } else {
+                    resolve(true);
+                }
+            });
+        });
+    }
+
+    /**
+     * Récupérer une signature par offer_id et user_id
+     */
+    async getSignatureByOfferAndUser(offerId, userId) {
+        return new Promise((resolve, reject) => {
+            const query = `SELECT * FROM offer_signatures WHERE offer_id = ? AND user_id = ?`;
+            this.db.get(query, [offerId, userId], (err, row) => {
+                if (err) {
+                    console.error('❌ Erreur récupération signature:', err);
+                    reject(err);
+                } else {
+                    resolve(row);
+                }
+            });
+        });
+    }
+
+    /**
+     * Finaliser une signature (mettre à jour le timestamp de signature)
+     */
+    async finalizeSignature(offerId, userId) {
+        return new Promise((resolve, reject) => {
+            const now = new Date().toISOString();
+            const query = `UPDATE offer_signatures SET signature_timestamp = ? WHERE offer_id = ? AND user_id = ? AND email_verified = 1`;
+            this.db.run(query, [now, offerId, userId], function(err) {
+                if (err) {
+                    console.error('❌ Erreur finalisation signature:', err);
+                    reject(err);
+                } else if (this.changes === 0) {
+                    reject(new Error('Signature non trouvée ou email non vérifié'));
+                } else {
+                    resolve(true);
+                }
+            });
+        });
+    }
+
+    /**
+     * Récupérer les signatures d'une offre
+     */
+    async getSignaturesByOfferId(offerId) {
+        return new Promise((resolve, reject) => {
+            const query = `SELECT * FROM offer_signatures WHERE offer_id = ? ORDER BY signature_timestamp ASC`;
+            this.db.all(query, [offerId], (err, rows) => {
+                if (err) {
+                    console.error('❌ Erreur récupération signatures:', err);
+                    reject(err);
+                } else {
+                    resolve(rows);
+                }
+            });
+        });
+    }
+
+    /**
+     * Mettre à jour le chemin du PDF pour une signature
+     */
+    async updateSignaturePdfPath(offerId, pdfPath) {
+        return new Promise((resolve, reject) => {
+            const query = `UPDATE offer_signatures SET pdf_path = ? WHERE offer_id = ?`;
+            this.db.run(query, [pdfPath, offerId], (err) => {
+                if (err) {
+                    console.error('❌ Erreur mise à jour PDF path:', err);
+                    reject(err);
+                } else {
+                    resolve(true);
+                }
+            });
         });
     }
 

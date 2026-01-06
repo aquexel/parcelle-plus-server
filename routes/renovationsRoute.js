@@ -86,8 +86,30 @@ module.exports = (req, res) => {
             console.log('[RENOVATIONS] Utilisation de terrains_pc_sans_pa.db');
         } else if (fs.existsSync(DB_COMPLET)) {
             dbPath = DB_COMPLET;
-            tableName = 'terrains_batir_complet';
-            console.log('[RENOVATIONS] Utilisation de terrains_batir_complet.db');
+            // Ouvrir la base pour détecter le nom de la table
+            const dbCheck = new Database(dbPath, { readonly: true });
+            const tables = dbCheck.prepare(`
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name LIKE 'terrains%'
+            `).all();
+            dbCheck.close();
+            
+            // Chercher terrains_batir_complet en priorité, sinon terrains_batir
+            const tableNames = tables.map(t => t.name);
+            if (tableNames.includes('terrains_batir_complet')) {
+                tableName = 'terrains_batir_complet';
+            } else if (tableNames.includes('terrains_batir')) {
+                tableName = 'terrains_batir';
+            } else if (tableNames.length > 0) {
+                tableName = tableNames[0]; // Prendre la première table trouvée
+            } else {
+                console.log('[RENOVATIONS][ERROR] Aucune table terrains trouvée dans terrains_batir_complet.db');
+                return res.status(500).json({
+                    success: false,
+                    error: 'Table de rénovation non trouvée dans la base de données'
+                });
+            }
+            console.log(`[RENOVATIONS] Utilisation de terrains_batir_complet.db avec table: ${tableName}`);
         } else {
             console.log('[RENOVATIONS][WARN] Aucune base de données de rénovation trouvée');
             return res.status(200).json({

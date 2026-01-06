@@ -547,6 +547,12 @@ class UserService {
             throw new Error('Username requis pour créer un compte OAuth');
         }
         
+        // Vérifier à nouveau que l'email n'est pas déjà utilisé (éviter les conditions de course)
+        const emailCheck = this.db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+        if (emailCheck) {
+            throw new Error('Un compte avec cet email existe déjà. Veuillez vous connecter avec votre compte existant.');
+        }
+        
         // Vérifier que le username n'est pas déjà pris
         const usernameTaken = !(await this.isUsernameAvailable(username));
         if (usernameTaken) {

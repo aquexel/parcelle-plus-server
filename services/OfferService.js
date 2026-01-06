@@ -939,10 +939,12 @@ class OfferService {
                     
                     // 2. Supprimer les propositions liées
                     this.db.run(`
-                        DELETE FROM offers WHERE room = ?
+                        DELETE FROM offers WHERE room_id = ?
                     `, [roomId], function(err) {
                         if (err) {
                             console.error('❌ Erreur suppression propositions:', err);
+                            console.error('❌ Détails erreur:', err.message);
+                            console.error('❌ Code erreur:', err.code);
                         } else {
                             console.log(`🗑️ ${this.changes} propositions supprimées`);
                             deletedCount += this.changes;

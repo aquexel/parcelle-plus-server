@@ -12,6 +12,8 @@ const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const http = require('http');
 const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 
 // Import des modules de base de données
 const PolygonService = require('./services/PolygonService');
@@ -21,6 +23,7 @@ const OfferService = require('./services/OfferService');
 const PriceAlertService = require('./services/PriceAlertService');
 const EmailService = require('./services/EmailService');
 const PDFService = require('./services/PDFService');
+const PhotoDistributionService = require('./services/PhotoDistributionService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -36,6 +39,38 @@ app.use(morgan('dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Configuration multer pour upload de photos
+const photosDir = path.join(__dirname, 'photos');
+if (!fs.existsSync(photosDir)) {
+    fs.mkdirSync(photosDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, photosDir);
+    },
+    filename: (req, file, cb) => {
+        const announcementId = req.params.id;
+        const timestamp = Date.now();
+        const index = req.body.index || 0;
+        cb(null, `announcement_${announcementId}_photo_${index}_${timestamp}.jpg`);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 2 * 1024 * 1024 // 2 Mo max
+    },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Seules les images sont autorisées'), false);
+        }
+    }
+});
+
 // Services
 const polygonService = new PolygonService();
 const messageService = new MessageService();
@@ -43,38 +78,32 @@ const userService = new UserService();
 const offerService = new OfferService();
 const priceAlertService = new PriceAlertService();
 const pdfService = new PDFService();
+const photoDistributionService = new PhotoDistributionService();
 const emailService = new EmailService();
 
-// PushNotificationService optionnel (nécessite firebase-admin)
+// PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
 console.log('🔍 Tentative de chargement PushNotificationService...');
 let pushNotificationService;
 try {
-    // Essayer de charger firebase-admin pour vérifier s'il est installé
-    require('firebase-admin');
-    console.log('✅ firebase-admin trouvé, chargement du service...');
-    // Si on arrive ici, firebase-admin est installé, on peut charger le service
+    // Charger le service même si firebase-admin n'est pas installé
+    // Le service peut fonctionner partiellement (enregistrement des tokens) sans Firebase
     const PushNotificationService = require('./services/PushNotificationService');
     pushNotificationService = new PushNotificationService();
     console.log('✅ PushNotificationService instancié');
     
-    // Vérifier si l'initialisation a réussi
+    // Vérifier si l'initialisation Firebase a réussi
     if (pushNotificationService.isInitialized()) {
         console.log('✅ PushNotificationService initialisé - Notifications push activées');
     } else {
-        console.log('⚠️ PushNotificationService créé mais non initialisé (fichier firebase-service-account.json manquant)');
-        console.log('📋 Pour activer les notifications push:');
-        console.log('   1. Téléchargez le fichier firebase-service-account.json depuis Firebase Console');
-        console.log('   2. Placez-le dans le dossier racine du serveur');
+        console.log('⚠️ PushNotificationService créé mais Firebase non initialisé');
+        console.log('📋 L\'enregistrement des tokens FCM fonctionne, mais l\'envoi de notifications nécessite:');
+        console.log('   1. Installation de firebase-admin: npm install firebase-admin');
+        console.log('   2. Téléchargez le fichier firebase-service-account.json depuis Firebase Console');
+        console.log('   3. Placez-le dans le dossier racine du serveur');
     }
 } catch (error) {
     console.log('❌ Erreur lors du chargement PushNotificationService:', error.message);
-    if (error.code === 'MODULE_NOT_FOUND') {
-        console.log('⚠️ PushNotificationService non disponible (firebase-admin non installé)');
-        console.log('📦 Installez firebase-admin: npm install firebase-admin');
-    } else {
-        console.log('⚠️ PushNotificationService non disponible:', error.message);
-        console.log('📋 Stack:', error.stack);
-    }
+    console.log('📋 Stack:', error.stack);
     // Créer un stub pour éviter les erreurs
     pushNotificationService = {
         isInitialized: () => false,
@@ -422,6 +451,197 @@ app.put('/api/polygons/:id', async (req, res) => {
     }
 });
 
+// Upload de photos pour une annonce (tampon temporaire) ou mise à jour
+app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.body.index || '0');
+        const userId = req.body.user_id || req.headers['x-user-id'];
+        const isSeller = req.body.is_seller === 'true' || req.body.is_seller === true;
+        const isUpdate = req.body.update === 'true' || req.body.update === true;
+        
+        if (!req.file) {
+            return res.status(400).json({ error: 'Aucune photo fournie' });
+        }
+        
+        // Vérifier que l'annonce existe
+        const polygon = await polygonService.getPolygonById(announcementId);
+        if (!polygon) {
+            fs.unlinkSync(req.file.path);
+            return res.status(404).json({ error: 'Annonce non trouvée' });
+        }
+        
+        // Si c'est une mise à jour, générer une nouvelle version
+        let photoVersion = null;
+        if (isUpdate && isSeller) {
+            photoVersion = Date.now().toString(); // Nouvelle version basée sur timestamp
+            console.log(`🔄 Mise à jour photo ${photoIndex} pour annonce ${announcementId} (nouvelle version: ${photoVersion})`);
+        }
+        
+        const photoPath = `/photos/${req.file.filename}`;
+        
+        // Enregistrer le serveur comme source de la photo (avec version si mise à jour)
+        const version = await photoDistributionService.registerPhotoSource(
+            announcementId, 
+            photoIndex, 
+            'server', 
+            false, 
+            true, 
+            photoVersion
+        );
+        
+        // Si c'est le vendeur qui upload, l'enregistrer aussi comme source
+        if (userId && isSeller) {
+            await photoDistributionService.registerPhotoSource(
+                announcementId, 
+                photoIndex, 
+                userId, 
+                true, 
+                false, 
+                version || photoVersion
+            );
+        }
+        
+        console.log(`✅ Photo ${photoIndex} ${isUpdate ? 'mise à jour' : 'uploadée'} pour annonce ${announcementId} (version: ${version || '1'})`);
+        
+        res.status(201).json({
+            success: true,
+            photoPath: photoPath,
+            filename: req.file.filename,
+            size: req.file.size,
+            photoIndex: photoIndex,
+            version: version || '1',
+            isUpdate: isUpdate
+        });
+    } catch (error) {
+        console.error('❌ Erreur upload photo:', error);
+        if (req.file && req.file.path) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (e) {
+                // Ignorer
+            }
+        }
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Vérifier la version actuelle d'une photo
+app.get('/api/polygons/:id/photos/:index/version', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const userId = req.query.user_id || req.headers['x-user-id'];
+        
+        const currentVersion = await photoDistributionService.getCurrentPhotoVersion(announcementId, photoIndex);
+        
+        let hasLatest = true;
+        if (userId) {
+            hasLatest = await photoDistributionService.hasLatestPhotoVersion(announcementId, photoIndex, userId);
+        }
+        
+        res.json({
+            success: true,
+            currentVersion: currentVersion || '1',
+            hasLatestVersion: hasLatest,
+            needsUpdate: !hasLatest
+        });
+    } catch (error) {
+        console.error('❌ Erreur vérification version photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Découvrir les sources pour télécharger une photo
+app.get('/api/polygons/:id/photos/:index/sources', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const excludeUserId = req.query.exclude_user_id || null;
+        
+        const sources = await photoDistributionService.findPhotoSources(
+            announcementId, 
+            photoIndex, 
+            excludeUserId
+        );
+        
+        res.json({
+            success: true,
+            sources: sources,
+            count: sources.length
+        });
+    } catch (error) {
+        console.error('❌ Erreur recherche sources photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Enregistrer qu'un client a téléchargé une photo
+app.post('/api/polygons/:id/photos/:index/register-client', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const userId = req.body.user_id || req.headers['x-user-id'];
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'user_id requis' });
+        }
+        
+        await photoDistributionService.registerPhotoClient(announcementId, photoIndex, userId);
+        
+        // Vérifier si le serveur peut supprimer la photo
+        const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
+        
+        res.json({
+            success: true,
+            canCleanupServer: canCleanup
+        });
+    } catch (error) {
+        console.error('❌ Erreur enregistrement client photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Télécharger une photo depuis le serveur (fallback)
+app.get('/api/polygons/:id/photos/:index', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        
+        // Vérifier que le serveur a encore la photo
+        const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
+        if (canCleanup) {
+            // Le serveur peut avoir supprimé la photo, chercher dans les fichiers
+            const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_*.jpg`;
+            const files = fs.readdirSync(photosDir).filter(f => f.startsWith(`announcement_${announcementId}_photo_${photoIndex}_`));
+            
+            if (files.length === 0) {
+                return res.status(404).json({ error: 'Photo non disponible sur le serveur (distribuée)' });
+            }
+            
+            const photoFile = path.join(photosDir, files[0]);
+            res.sendFile(photoFile);
+        } else {
+            // Photo encore sur le serveur, la servir normalement
+            const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_*.jpg`;
+            const files = fs.readdirSync(photosDir).filter(f => f.startsWith(`announcement_${announcementId}_photo_${photoIndex}_`));
+            
+            if (files.length === 0) {
+                return res.status(404).json({ error: 'Photo non trouvée' });
+            }
+            
+            const photoFile = path.join(photosDir, files[0]);
+            res.sendFile(photoFile);
+        }
+    } catch (error) {
+        console.error('❌ Erreur téléchargement photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Servir les photos statiquement
+app.use('/photos', express.static(photosDir));
+
 app.delete('/api/polygons/:id', async (req, res) => {
     try {
         const polygonId = req.params.id;
@@ -651,21 +871,34 @@ app.post('/api/messages', async (req, res) => {
         
         // Envoyer une notification push si le service est disponible
         if (pushNotificationService.isInitialized()) {
+            console.log('📱 PushNotificationService initialisé - Tentative d\'envoi notification');
             try {
                 // Déterminer l'utilisateur cible (celui qui n'a pas envoyé le message)
                 const targetUserId = await determineTargetUserId(messageData.room, messageData.senderId);
+                console.log(`📱 Utilisateur cible déterminé: ${targetUserId}`);
                 if (targetUserId) {
-                    await pushNotificationService.sendMessageNotification(
+                    console.log(`📱 Tentative d'envoi notification push à ${targetUserId} depuis ${messageData.senderName}`);
+                    const notificationSent = await pushNotificationService.sendMessageNotification(
                         targetUserId,
                         messageData.senderName,
                         messageData.content,
                         messageData.room,
                         messageData.senderId
                     );
+                    if (notificationSent) {
+                        console.log(`✅ Notification push envoyée avec succès à ${targetUserId}`);
+                    } else {
+                        console.log(`⚠️ Échec envoi notification push à ${targetUserId} (probablement pas de token FCM enregistré)`);
+                    }
+                } else {
+                    console.log('⚠️ Impossible de déterminer l\'utilisateur cible pour la notification');
                 }
             } catch (pushError) {
                 console.error('❌ Erreur notification push:', pushError.message);
+                console.error('❌ Stack trace:', pushError.stack);
             }
+        } else {
+            console.log('⚠️ PushNotificationService non initialisé - Notification push non envoyée');
         }
         
         console.log('✅ Réponse envoyée avec status 201');
@@ -1020,7 +1253,15 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
         const offerId = req.params.id;
         
         if (!token) {
-            return res.status(400).json({ error: 'Token manquant' });
+            return res.status(400).send(`
+                <html>
+                <head><title>Erreur de vérification</title></head>
+                <body style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                    <h1>❌ Token manquant</h1>
+                    <p>Le lien de vérification est invalide. Veuillez réessayer.</p>
+                </body>
+                </html>
+            `);
         }
 
         // Récupérer la signature avec ce token
@@ -1028,7 +1269,15 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
         const signature = signatures.find(s => s.email_verification_token === token && s.email_verified === 0);
         
         if (!signature) {
-            return res.status(400).json({ error: 'Token invalide ou expiré' });
+            return res.status(400).send(`
+                <html>
+                <head><title>Erreur de vérification</title></head>
+                <body style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                    <h1>❌ Token invalide ou expiré</h1>
+                    <p>Ce lien de vérification n'est plus valide. Veuillez demander un nouveau lien.</p>
+                </body>
+                </html>
+            `);
         }
 
         // Vérifier l'email
@@ -1036,14 +1285,73 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
 
         console.log(`✅ Email vérifié pour signature ${signature.signature_type} de la proposition ${offerId}`);
 
-        res.json({ 
-            success: true,
-            message: 'Email vérifié avec succès. Vous pouvez maintenant signer.',
-            signatureType: signature.signature_type
-        });
+        // Rediriger vers le deep link Android qui ouvrira l'application
+        // Si l'app n'est pas installée, afficher une page de succès
+        const deepLink = `parcelleplus://verify-signature-email?token=${token}&offerId=${offerId}`;
+        
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Vérification réussie</title>
+                <script>
+                    // Essayer d'ouvrir l'app Android
+                    window.location.href = "${deepLink}";
+                    
+                    // Si après 2 secondes on est toujours là, afficher la page de succès
+                    setTimeout(function() {
+                        document.getElementById('redirect-message').style.display = 'block';
+                    }, 2000);
+                </script>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        padding: 20px;
+                        text-align: center;
+                        background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+                        color: white;
+                        min-height: 100vh;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin: 0;
+                    }
+                    .container {
+                        background: white;
+                        color: #333;
+                        padding: 40px;
+                        border-radius: 10px;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                        max-width: 500px;
+                    }
+                    h1 { color: #4CAF50; margin-top: 0; }
+                    #redirect-message { display: none; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>✅ Email vérifié avec succès</h1>
+                    <p>Votre adresse email a été vérifiée. Vous pouvez maintenant signer la proposition.</p>
+                    <div id="redirect-message">
+                        <p>Si l'application ParcellePlus ne s'ouvre pas automatiquement, ouvrez-la manuellement.</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
     } catch (error) {
         console.error('❌ Erreur vérification email:', error);
-        res.status(500).json({ error: error.message || 'Erreur serveur' });
+        res.status(500).send(`
+            <html>
+            <head><title>Erreur serveur</title></head>
+            <body style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                <h1>❌ Erreur serveur</h1>
+                <p>${error.message || 'Une erreur est survenue lors de la vérification.'}</p>
+            </body>
+            </html>
+        `);
     }
 });
 
@@ -1158,12 +1466,12 @@ app.get('/api/offers/:id/pdf', async (req, res) => {
         // Récupérer le chemin du PDF
         const pdfPath = signatures[0].pdf_path;
         if (!pdfPath || !fs.existsSync(pdfPath)) {
-            return res.status(404).json({ error: 'PDF non trouvé. Le contrat n\'a peut-être pas encore été finalisé.' });
+            return res.status(404).json({ error: 'PDF non trouvé. L\'accord de principe n\'a peut-être pas encore été finalisé.' });
         }
         
         // Envoyer le PDF
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="contrat_${offerId}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="accord_principe_${offerId}.pdf"`);
         res.sendFile(path.resolve(pdfPath));
     } catch (error) {
         console.error('❌ Erreur téléchargement PDF:', error);
@@ -1732,25 +2040,66 @@ app.post('/api/fcm/register-token', async (req, res) => {
         }
         
         console.log(`📱 Enregistrement token FCM pour utilisateur: ${userId}`);
-        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, 20)}...`);
+        console.log(`📱 Token FCM complet: ${fcmToken}`);
+        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, Math.min(20, fcmToken.length))}...`);
         
-        // Enregistrer le token dans la base de données
-        const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
-        
-        if (registered) {
-            console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
-        } else {
-            console.log(`⚠️ Échec enregistrement token FCM pour ${userId}`);
+        // Valider le format du token FCM
+        if (fcmToken.length < 50 || fcmToken.includes('HEADER_FID') || fcmToken.includes('ADMIN_UUID')) {
+            console.error(`❌ Token FCM invalide détecté: ${fcmToken}`);
+            return res.status(400).json({
+                success: false,
+                error: 'Token FCM invalide',
+                message: 'Le token FCM fourni n\'est pas valide'
+            });
         }
         
-        res.json({ 
-            message: 'Token FCM enregistré avec succès',
-            userId: userId
-        });
+        // Enregistrer le token dans la base de données
+        try {
+            console.log(`📱 Appel registerUserFCMToken pour ${userId}`);
+            console.log(`📱 Type de pushNotificationService: ${typeof pushNotificationService}`);
+            console.log(`📱 Méthode registerUserFCMToken existe: ${typeof pushNotificationService.registerUserFCMToken}`);
+            const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
+            console.log(`📱 Résultat registerUserFCMToken: ${registered} (type: ${typeof registered})`);
+            
+            if (registered === true) {
+                console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
+                res.json({ 
+                    success: true,
+                    message: 'Token FCM enregistré avec succès',
+                    userId: userId
+                });
+            } else {
+                console.log(`⚠️ Échec enregistrement token FCM pour ${userId} - registered vaut: ${registered}`);
+                console.log(`⚠️ Type de registered: ${typeof registered}`);
+                res.json({ 
+                    success: false,
+                    message: 'Échec enregistrement token FCM',
+                    userId: userId
+                });
+            }
+        } catch (dbError) {
+            console.error('❌ Erreur base de données lors de l\'enregistrement token FCM:', dbError);
+            console.error('❌ Message erreur:', dbError.message);
+            console.error('❌ Code erreur:', dbError.code);
+            console.error('❌ Stack trace:', dbError.stack);
+            // On retourne quand même un 200 pour éviter que l'app réessaie en boucle
+            res.json({ 
+                success: false,
+                message: 'Erreur base de données',
+                error: dbError.message,
+                errorCode: dbError.code,
+                userId: userId
+            });
+        }
         
     } catch (error) {
         console.error('❌ Erreur enregistrement token FCM:', error.message);
-        res.status(500).json({ error: 'Erreur serveur' });
+        console.error('❌ Stack trace:', error.stack);
+        res.status(500).json({ 
+            success: false,
+            error: 'Erreur serveur',
+            message: error.message
+        });
     }
 });
 

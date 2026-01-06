@@ -74,9 +74,10 @@ class PushNotificationService {
             return false;
         }
 
+        let fcmToken = null;
         try {
             // Récupérer le token FCM de l'utilisateur cible
-            const fcmToken = await this.getUserFCMToken(targetUserId);
+            fcmToken = await this.getUserFCMToken(targetUserId);
             if (!fcmToken) {
                 console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${targetUserId}`);
                 return false;
@@ -114,7 +115,7 @@ class PushNotificationService {
         } catch (error) {
             console.error('❌ Erreur envoi notification:', error.message);
             console.error(`❌ Code erreur: ${error.code}`);
-            console.error(`❌ Token utilisé: ${fcmToken}`);
+            console.error(`❌ Token utilisé: ${fcmToken || 'non récupéré'}`);
             console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
                 console.log(`⚠️ Token FCM invalide ou expiré pour ${targetUserId} - Le token doit être réenregistré`);
@@ -380,9 +381,10 @@ class PushNotificationService {
             return false;
         }
 
+        let fcmToken = null;
         try {
             // Récupérer le token FCM de l'utilisateur
-            const fcmToken = await this.getUserFCMToken(userId);
+            fcmToken = await this.getUserFCMToken(userId);
             if (!fcmToken) {
                 console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${userId} - Notification non envoyée`);
                 console.log(`💡 L'utilisateur doit ouvrir l'application pour enregistrer son token FCM`);
@@ -421,7 +423,7 @@ class PushNotificationService {
         } catch (error) {
             console.error(`❌ Erreur envoi notification personnalisée pour ${userId}:`, error.message);
             console.error(`❌ Code erreur: ${error.code}`);
-            console.error(`❌ Token utilisé: ${fcmToken}`);
+            console.error(`❌ Token utilisé: ${fcmToken || 'non récupéré'}`);
             console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
                 console.log(`⚠️ Token FCM invalide ou expiré pour ${userId} - Le token doit être réenregistré`);

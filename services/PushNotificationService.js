@@ -218,31 +218,30 @@ class PushNotificationService {
             
             console.log(`📱 [registerUserFCMToken] Base de données trouvée, ouverture...`);
             
-            const db = new sqlite3.Database(dbPath, (err) => {
+            const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => {
                 if (err) {
                     console.error('❌ [registerUserFCMToken] Erreur ouverture base de données:', err);
                     reject(err);
                     return;
                 }
                 console.log(`📱 [registerUserFCMToken] Base de données ouverte avec succès`);
-            });
-            
-            // S'assurer que la table existe
-            const createTableQuery = `
-                CREATE TABLE IF NOT EXISTS fcm_tokens (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    fcm_token TEXT NOT NULL UNIQUE,
-                    device_info TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, fcm_token)
-                )
-            `;
-            
-            console.log(`📱 [registerUserFCMToken] Création/vérification table fcm_tokens...`);
-            
-            db.run(createTableQuery, (err) => {
+                
+                // S'assurer que la table existe
+                const createTableQuery = `
+                    CREATE TABLE IF NOT EXISTS fcm_tokens (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        fcm_token TEXT NOT NULL UNIQUE,
+                        device_info TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, fcm_token)
+                    )
+                `;
+                
+                console.log(`📱 [registerUserFCMToken] Création/vérification table fcm_tokens...`);
+                
+                db.run(createTableQuery, (err) => {
                 if (err) {
                     console.error('❌ [registerUserFCMToken] Erreur création/vérification table fcm_tokens:', err);
                     console.error('❌ [registerUserFCMToken] Détails:', err.message);
@@ -336,7 +335,8 @@ class PushNotificationService {
                         });
                     }
                 });
-            });
+                }); // Fermeture du callback de db.run(createTableQuery)
+            }); // Fermeture du callback de sqlite3.Database
         });
     }
 

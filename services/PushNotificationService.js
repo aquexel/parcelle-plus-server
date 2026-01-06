@@ -118,7 +118,15 @@ class PushNotificationService {
             console.error(`❌ Token utilisé: ${fcmToken || 'non récupéré'}`);
             console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
-                console.log(`⚠️ Token FCM invalide ou expiré pour ${targetUserId} - Le token doit être réenregistré`);
+                console.log(`⚠️ Token FCM invalide ou expiré pour ${targetUserId} - Suppression du token de la base de données`);
+                // Supprimer le token invalide de la base de données
+                if (fcmToken) {
+                    try {
+                        await this.deleteUserFCMToken(targetUserId, fcmToken);
+                    } catch (deleteError) {
+                        console.error(`❌ Erreur lors de la suppression du token invalide:`, deleteError.message);
+                    }
+                }
             }
             return false;
         }
@@ -199,6 +207,48 @@ class PushNotificationService {
         });
         
         db.close();
+    }
+
+    /**
+     * Supprimer un token FCM invalide de la base de données
+     */
+    async deleteUserFCMToken(userId, fcmToken) {
+        return new Promise((resolve, reject) => {
+            const sqlite3 = require('sqlite3').verbose();
+            const dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
+            const fs = require('fs');
+            
+            if (!fs.existsSync(dbPath)) {
+                console.error(`❌ [deleteUserFCMToken] Base de données non trouvée: ${dbPath}`);
+                reject(new Error(`Base de données non trouvée: ${dbPath}`));
+                return;
+            }
+            
+            const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => {
+                if (err) {
+                    console.error('❌ [deleteUserFCMToken] Erreur ouverture base de données:', err);
+                    reject(err);
+                    return;
+                }
+                
+                const deleteQuery = "DELETE FROM fcm_tokens WHERE user_id = ? AND fcm_token = ?";
+                db.run(deleteQuery, [userId, fcmToken], function(err) {
+                    if (err) {
+                        console.error('❌ [deleteUserFCMToken] Erreur suppression token:', err);
+                        db.close();
+                        reject(err);
+                    } else {
+                        if (this.changes > 0) {
+                            console.log(`✅ [deleteUserFCMToken] Token FCM invalide supprimé pour utilisateur ${userId} (${this.changes} ligne(s) supprimée(s))`);
+                        } else {
+                            console.log(`ℹ️ [deleteUserFCMToken] Token FCM non trouvé pour suppression (utilisateur: ${userId})`);
+                        }
+                        db.close();
+                        resolve(this.changes > 0);
+                    }
+                });
+            });
+        });
     }
 
     /**
@@ -426,7 +476,15 @@ class PushNotificationService {
             console.error(`❌ Token utilisé: ${fcmToken || 'non récupéré'}`);
             console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
-                console.log(`⚠️ Token FCM invalide ou expiré pour ${userId} - Le token doit être réenregistré`);
+                console.log(`⚠️ Token FCM invalide ou expiré pour ${userId} - Suppression du token de la base de données`);
+                // Supprimer le token invalide de la base de données
+                if (fcmToken) {
+                    try {
+                        await this.deleteUserFCMToken(userId, fcmToken);
+                    } catch (deleteError) {
+                        console.error(`❌ Erreur lors de la suppression du token invalide:`, deleteError.message);
+                    }
+                }
             }
             return false;
         }

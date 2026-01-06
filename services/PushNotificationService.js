@@ -1,13 +1,30 @@
-const admin = require('firebase-admin');
 const path = require('path');
+
+// Charger firebase-admin de manière conditionnelle
+let admin = null;
+try {
+    admin = require('firebase-admin');
+} catch (error) {
+    // firebase-admin n'est pas installé, on continuera sans
+    console.log('⚠️ firebase-admin non disponible - L\'enregistrement des tokens FCM fonctionnera, mais l\'envoi de notifications nécessitera firebase-admin');
+}
 
 class PushNotificationService {
     constructor() {
         this.initialized = false;
+        this.admin = admin; // Stocker la référence à admin
         this.initializeFirebase();
     }
 
     initializeFirebase() {
+        // Si firebase-admin n'est pas disponible, on ne peut pas initialiser Firebase
+        if (!admin) {
+            console.log('⚠️ firebase-admin non installé - Enregistrement des tokens FCM activé, envoi de notifications désactivé');
+            // Initialiser quand même la table pour permettre l'enregistrement des tokens
+            this.initializeFCMTable();
+            return;
+        }
+
         try {
             // Chemin vers le fichier de clé de service Firebase
             const serviceAccountPath = path.join(__dirname, '..', 'firebase-service-account.json');
@@ -20,6 +37,8 @@ class PushNotificationService {
                 console.log('   1. Créez un projet Firebase');
                 console.log('   2. Téléchargez le fichier de clé de service');
                 console.log('   3. Placez-le dans le dossier racine du serveur');
+                // Initialiser quand même la table pour permettre l'enregistrement des tokens
+                this.initializeFCMTable();
                 return;
             }
 
@@ -41,7 +60,7 @@ class PushNotificationService {
             console.error('❌ Erreur initialisation Firebase:', error.message);
             console.log('⚠️ Notifications push désactivées');
             
-            // Initialiser quand même la table pour les tests
+            // Initialiser quand même la table pour permettre l'enregistrement des tokens
             this.initializeFCMTable();
         }
     }
@@ -85,7 +104,10 @@ class PushNotificationService {
                 }
             };
 
-            const response = await admin.messaging().send(message);
+            if (!this.admin) {
+                throw new Error('firebase-admin non disponible');
+            }
+            const response = await this.admin.messaging().send(message);
             console.log(`✅ Notification envoyée: ${response}`);
             return true;
 
@@ -134,7 +156,10 @@ class PushNotificationService {
                 }
             };
 
-            const response = await admin.messaging().send(message);
+            if (!this.admin) {
+                throw new Error('firebase-admin non disponible');
+            }
+            const response = await this.admin.messaging().send(message);
             console.log(`✅ Notification proposition envoyée: ${response}`);
             return true;
 
@@ -386,7 +411,10 @@ class PushNotificationService {
                 }
             };
 
-            const response = await admin.messaging().send(message);
+            if (!this.admin) {
+                throw new Error('firebase-admin non disponible');
+            }
+            const response = await this.admin.messaging().send(message);
             console.log(`✅ Notification personnalisée envoyée avec succès (messageId: ${response}) pour utilisateur ${userId}`);
             return true;
 

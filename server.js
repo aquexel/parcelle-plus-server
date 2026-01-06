@@ -45,36 +45,29 @@ const priceAlertService = new PriceAlertService();
 const pdfService = new PDFService();
 const emailService = new EmailService();
 
-// PushNotificationService optionnel (nécessite firebase-admin)
+// PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
 console.log('🔍 Tentative de chargement PushNotificationService...');
 let pushNotificationService;
 try {
-    // Essayer de charger firebase-admin pour vérifier s'il est installé
-    require('firebase-admin');
-    console.log('✅ firebase-admin trouvé, chargement du service...');
-    // Si on arrive ici, firebase-admin est installé, on peut charger le service
+    // Charger le service même si firebase-admin n'est pas installé
+    // Le service peut fonctionner partiellement (enregistrement des tokens) sans Firebase
     const PushNotificationService = require('./services/PushNotificationService');
     pushNotificationService = new PushNotificationService();
     console.log('✅ PushNotificationService instancié');
     
-    // Vérifier si l'initialisation a réussi
+    // Vérifier si l'initialisation Firebase a réussi
     if (pushNotificationService.isInitialized()) {
         console.log('✅ PushNotificationService initialisé - Notifications push activées');
     } else {
-        console.log('⚠️ PushNotificationService créé mais non initialisé (fichier firebase-service-account.json manquant)');
-        console.log('📋 Pour activer les notifications push:');
-        console.log('   1. Téléchargez le fichier firebase-service-account.json depuis Firebase Console');
-        console.log('   2. Placez-le dans le dossier racine du serveur');
+        console.log('⚠️ PushNotificationService créé mais Firebase non initialisé');
+        console.log('📋 L\'enregistrement des tokens FCM fonctionne, mais l\'envoi de notifications nécessite:');
+        console.log('   1. Installation de firebase-admin: npm install firebase-admin');
+        console.log('   2. Téléchargez le fichier firebase-service-account.json depuis Firebase Console');
+        console.log('   3. Placez-le dans le dossier racine du serveur');
     }
 } catch (error) {
     console.log('❌ Erreur lors du chargement PushNotificationService:', error.message);
-    if (error.code === 'MODULE_NOT_FOUND') {
-        console.log('⚠️ PushNotificationService non disponible (firebase-admin non installé)');
-        console.log('📦 Installez firebase-admin: npm install firebase-admin');
-    } else {
-        console.log('⚠️ PushNotificationService non disponible:', error.message);
-        console.log('📋 Stack:', error.stack);
-    }
+    console.log('📋 Stack:', error.stack);
     // Créer un stub pour éviter les erreurs
     pushNotificationService = {
         isInitialized: () => false,

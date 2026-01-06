@@ -1750,6 +1750,8 @@ app.post('/api/fcm/register-token', async (req, res) => {
         // Enregistrer le token dans la base de données
         try {
             console.log(`📱 Appel registerUserFCMToken pour ${userId}`);
+            console.log(`📱 Type de pushNotificationService: ${typeof pushNotificationService}`);
+            console.log(`📱 Méthode registerUserFCMToken existe: ${typeof pushNotificationService.registerUserFCMToken}`);
             const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
             console.log(`📱 Résultat registerUserFCMToken: ${registered} (type: ${typeof registered})`);
             

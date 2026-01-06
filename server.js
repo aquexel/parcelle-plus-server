@@ -651,21 +651,34 @@ app.post('/api/messages', async (req, res) => {
         
         // Envoyer une notification push si le service est disponible
         if (pushNotificationService.isInitialized()) {
+            console.log('📱 PushNotificationService initialisé - Tentative d\'envoi notification');
             try {
                 // Déterminer l'utilisateur cible (celui qui n'a pas envoyé le message)
                 const targetUserId = await determineTargetUserId(messageData.room, messageData.senderId);
+                console.log(`📱 Utilisateur cible déterminé: ${targetUserId}`);
                 if (targetUserId) {
-                    await pushNotificationService.sendMessageNotification(
+                    console.log(`📱 Tentative d'envoi notification push à ${targetUserId} depuis ${messageData.senderName}`);
+                    const notificationSent = await pushNotificationService.sendMessageNotification(
                         targetUserId,
                         messageData.senderName,
                         messageData.content,
                         messageData.room,
                         messageData.senderId
                     );
+                    if (notificationSent) {
+                        console.log(`✅ Notification push envoyée avec succès à ${targetUserId}`);
+                    } else {
+                        console.log(`⚠️ Échec envoi notification push à ${targetUserId} (probablement pas de token FCM enregistré)`);
+                    }
+                } else {
+                    console.log('⚠️ Impossible de déterminer l\'utilisateur cible pour la notification');
                 }
             } catch (pushError) {
                 console.error('❌ Erreur notification push:', pushError.message);
+                console.error('❌ Stack trace:', pushError.stack);
             }
+        } else {
+            console.log('⚠️ PushNotificationService non initialisé - Notification push non envoyée');
         }
         
         console.log('✅ Réponse envoyée avec status 201');

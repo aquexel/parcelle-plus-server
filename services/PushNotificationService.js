@@ -254,8 +254,8 @@ class PushNotificationService {
                 
                 console.log(`📱 [registerUserFCMToken] Table fcm_tokens vérifiée/créée`);
                 
-                // Vérifier si le token existe déjà
-                const checkQuery = "SELECT id FROM fcm_tokens WHERE fcm_token = ?";
+                // Vérifier si le token existe déjà (récupérer aussi user_id pour comparer)
+                const checkQuery = "SELECT id, user_id FROM fcm_tokens WHERE fcm_token = ?";
                 
                 console.log(`📱 [registerUserFCMToken] Vérification si token existe déjà...`);
                 
@@ -269,11 +269,11 @@ class PushNotificationService {
                         return;
                     }
                     
-                    console.log(`📱 [registerUserFCMToken] Token existe déjà: ${row ? 'Oui (ID: ' + row.id + ')' : 'Non'}`);
+                    console.log(`📱 [registerUserFCMToken] Token existe déjà: ${row ? 'Oui (ID: ' + row.id + ', User: ' + row.user_id + ')' : 'Non'}`);
                     
                     if (row) {
                         // Token existe déjà, vérifier si l'utilisateur est déjà le même
-                        const existingUserId = row.user_id || (row.userId || null);
+                        const existingUserId = row.user_id;
                         console.log(`📱 [registerUserFCMToken] Token existant trouvé - ID: ${row.id}, User actuel: ${existingUserId}, Nouveau user: ${userId}`);
                         
                         if (existingUserId === userId) {

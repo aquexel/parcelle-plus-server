@@ -91,6 +91,12 @@ class PushNotificationService {
 
         } catch (error) {
             console.error('❌ Erreur envoi notification:', error.message);
+            console.error(`❌ Code erreur: ${error.code}`);
+            console.error(`❌ Token utilisé: ${fcmToken}`);
+            console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
+            if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
+                console.log(`⚠️ Token FCM invalide ou expiré pour ${targetUserId} - Le token doit être réenregistré`);
+            }
             return false;
         }
     }
@@ -386,6 +392,9 @@ class PushNotificationService {
 
         } catch (error) {
             console.error(`❌ Erreur envoi notification personnalisée pour ${userId}:`, error.message);
+            console.error(`❌ Code erreur: ${error.code}`);
+            console.error(`❌ Token utilisé: ${fcmToken}`);
+            console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
                 console.log(`⚠️ Token FCM invalide ou expiré pour ${userId} - Le token doit être réenregistré`);
             }

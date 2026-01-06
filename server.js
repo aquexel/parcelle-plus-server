@@ -1745,7 +1745,18 @@ app.post('/api/fcm/register-token', async (req, res) => {
         }
         
         console.log(`📱 Enregistrement token FCM pour utilisateur: ${userId}`);
-        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, 20)}...`);
+        console.log(`📱 Token FCM complet: ${fcmToken}`);
+        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, Math.min(20, fcmToken.length))}...`);
+        
+        // Valider le format du token FCM
+        if (fcmToken.length < 50 || fcmToken.includes('HEADER_FID') || fcmToken.includes('ADMIN_UUID')) {
+            console.error(`❌ Token FCM invalide détecté: ${fcmToken}`);
+            return res.status(400).json({
+                success: false,
+                error: 'Token FCM invalide',
+                message: 'Le token FCM fourni n\'est pas valide'
+            });
+        }
         
         // Enregistrer le token dans la base de données
         try {

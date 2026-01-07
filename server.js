@@ -635,6 +635,12 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
         console.log(`📂 Répertoire photos: ${photosDir}`);
         console.log(`🔎 Pattern recherché: ${photoPattern}*.jpg`);
         console.log(`📋 Total fichiers dans photosDir: ${allFiles.length}`);
+        
+        // Afficher tous les fichiers pour debug
+        if (allFiles.length > 0) {
+            console.log(`📁 Tous les fichiers dans photosDir: ${allFiles.join(', ')}`);
+        }
+        
         console.log(`✅ Fichiers correspondants trouvés: ${matchingFiles.length}`);
         if (matchingFiles.length > 0) {
             console.log(`   Fichiers: ${matchingFiles.join(', ')}`);
@@ -1253,14 +1259,22 @@ app.get('/api/offers/:id/signature-status', async (req, res) => {
             return res.status(400).json({ error: 'userId est requis' });
         }
 
-        // Récupérer la signature
+        // Récupérer la signature de l'utilisateur actuel
         const signature = await offerService.getSignatureByOfferAndUser(offerId, userId);
+        
+        // Récupérer toutes les signatures pour vérifier si les deux sont complètes
+        const allSignatures = await offerService.getSignaturesByOfferId(offerId);
+        const verifiedSignatures = allSignatures.filter(s => s.email_verified === 1 && s.signature_timestamp);
+        const hasBuyerSignature = verifiedSignatures.some(s => s.signature_type === 'buyer');
+        const hasSellerSignature = verifiedSignatures.some(s => s.signature_type === 'seller');
+        const allSignaturesComplete = hasBuyerSignature && hasSellerSignature;
         
         if (!signature) {
             return res.json({ 
                 exists: false,
                 emailVerified: false,
-                signed: false
+                signed: false,
+                allSignaturesComplete: allSignaturesComplete
             });
         }
 
@@ -1270,7 +1284,10 @@ app.get('/api/offers/:id/signature-status', async (req, res) => {
             signed: signature.signature_timestamp != null,
             signatureType: signature.signature_type,
             userEmail: signature.user_email,
-            signatureTimestamp: signature.signature_timestamp
+            signatureTimestamp: signature.signature_timestamp,
+            allSignaturesComplete: allSignaturesComplete,
+            hasBuyerSignature: hasBuyerSignature,
+            hasSellerSignature: hasSellerSignature
         });
     } catch (error) {
         console.error('❌ Erreur récupération état signature:', error);

@@ -79,7 +79,7 @@ class OfferService {
                 user_name TEXT NOT NULL,
                 user_email TEXT NOT NULL,
                 signature_type TEXT NOT NULL,
-                signature_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                signature_timestamp DATETIME DEFAULT NULL,
                 pdf_path TEXT,
                 email_verification_token TEXT,
                 email_verified INTEGER DEFAULT 0,
@@ -158,6 +158,19 @@ class OfferService {
                     });
                 }
             }
+            
+            // Migration: Nettoyer les signatures où email n'est pas vérifié mais qui ont un timestamp
+            // (ces signatures ont été créées avec l'ancien comportement où un timestamp était créé automatiquement)
+            this.db.run(
+                "UPDATE offer_signatures SET signature_timestamp = NULL WHERE email_verified = 0 AND signature_timestamp IS NOT NULL",
+                (err) => {
+                    if (err) {
+                        console.error('❌ Erreur nettoyage signatures invalides:', err);
+                    } else {
+                        console.log('✅ Migration: Signatures invalides nettoyées (timestamp supprimé pour signatures non vérifiées)');
+                    }
+                }
+            );
         });
     }
 
@@ -606,7 +619,7 @@ class OfferService {
                 signatureData.userName,
                 signatureData.userEmail,
                 signatureData.signatureType, // 'buyer' ou 'seller'
-                signatureData.signatureTimestamp || new Date().toISOString(),
+                signatureData.signatureTimestamp || null, // NULL par défaut, sera défini lors de finalizeSignature
                 signatureData.pdfPath || null,
                 signatureData.emailVerificationToken || null,
                 signatureData.emailVerified || 0

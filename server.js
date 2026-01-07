@@ -2148,13 +2148,9 @@ app.post('/api/fcm/register-token', async (req, res) => {
             });
         }
         
-        console.log(`📱 Enregistrement token FCM pour utilisateur: ${userId}`);
-        console.log(`📱 Token FCM complet: ${fcmToken}`);
-        console.log(`📱 Token FCM (premiers 20 caractères): ${fcmToken.substring(0, Math.min(20, fcmToken.length))}...`);
-        
         // Valider le format du token FCM
         if (fcmToken.length < 50 || fcmToken.includes('HEADER_FID') || fcmToken.includes('ADMIN_UUID')) {
-            console.error(`❌ Token FCM invalide détecté: ${fcmToken}`);
+            console.error(`❌ Token FCM invalide détecté pour utilisateur: ${userId}`);
             return res.status(400).json({
                 success: false,
                 error: 'Token FCM invalide',
@@ -2164,22 +2160,16 @@ app.post('/api/fcm/register-token', async (req, res) => {
         
         // Enregistrer le token dans la base de données
         try {
-            console.log(`📱 Appel registerUserFCMToken pour ${userId}`);
-            console.log(`📱 Type de pushNotificationService: ${typeof pushNotificationService}`);
-            console.log(`📱 Méthode registerUserFCMToken existe: ${typeof pushNotificationService.registerUserFCMToken}`);
             const registered = await pushNotificationService.registerUserFCMToken(userId, fcmToken);
-            console.log(`📱 Résultat registerUserFCMToken: ${registered} (type: ${typeof registered})`);
             
             if (registered === true) {
-                console.log(`✅ Token FCM enregistré avec succès pour ${userId}`);
                 res.json({ 
                     success: true,
                     message: 'Token FCM enregistré avec succès',
                     userId: userId
                 });
             } else {
-                console.log(`⚠️ Échec enregistrement token FCM pour ${userId} - registered vaut: ${registered}`);
-                console.log(`⚠️ Type de registered: ${typeof registered}`);
+                console.error(`⚠️ Échec enregistrement token FCM pour ${userId}`);
                 res.json({ 
                     success: false,
                     message: 'Échec enregistrement token FCM',
@@ -2187,10 +2177,7 @@ app.post('/api/fcm/register-token', async (req, res) => {
                 });
             }
         } catch (dbError) {
-            console.error('❌ Erreur base de données lors de l\'enregistrement token FCM:', dbError);
-            console.error('❌ Message erreur:', dbError.message);
-            console.error('❌ Code erreur:', dbError.code);
-            console.error('❌ Stack trace:', dbError.stack);
+            console.error('❌ Erreur base de données lors de l\'enregistrement token FCM:', dbError.message);
             // On retourne quand même un 200 pour éviter que l'app réessaie en boucle
             res.json({ 
                 success: false,

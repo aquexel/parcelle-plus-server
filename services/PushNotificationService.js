@@ -287,30 +287,24 @@ class PushNotificationService {
      * Enregistrer le token FCM d'un utilisateur
      */
     async registerUserFCMToken(userId, fcmToken) {
-        console.log(`📱 [registerUserFCMToken] Début pour utilisateur: ${userId}`);
         return new Promise((resolve, reject) => {
             const sqlite3 = require('sqlite3').verbose();
             const dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
             
-            console.log(`📱 [registerUserFCMToken] Chemin DB: ${dbPath}`);
-            
             // Vérifier que le fichier de base de données existe
             const fs = require('fs');
             if (!fs.existsSync(dbPath)) {
-                console.error(`❌ [registerUserFCMToken] Base de données non trouvée: ${dbPath}`);
+                console.error(`❌ Base de données non trouvée: ${dbPath}`);
                 reject(new Error(`Base de données non trouvée: ${dbPath}`));
                 return;
             }
             
-            console.log(`📱 [registerUserFCMToken] Base de données trouvée, ouverture...`);
-            
             const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => {
                 if (err) {
-                    console.error('❌ [registerUserFCMToken] Erreur ouverture base de données:', err);
+                    console.error('❌ Erreur ouverture base de données FCM:', err.message);
                     reject(err);
                     return;
                 }
-                console.log(`📱 [registerUserFCMToken] Base de données ouverte avec succès`);
                 
                 // S'assurer que la table existe
                 const createTableQuery = `
@@ -325,57 +319,39 @@ class PushNotificationService {
                     )
                 `;
                 
-                console.log(`📱 [registerUserFCMToken] Création/vérification table fcm_tokens...`);
-                
                 db.run(createTableQuery, (err) => {
                 if (err) {
-                    console.error('❌ [registerUserFCMToken] Erreur création/vérification table fcm_tokens:', err);
-                    console.error('❌ [registerUserFCMToken] Détails:', err.message);
-                    console.error('❌ [registerUserFCMToken] Code:', err.code);
+                    console.error('❌ Erreur création table fcm_tokens:', err.message);
                     db.close();
                     reject(err);
                     return;
                 }
                 
-                console.log(`📱 [registerUserFCMToken] Table fcm_tokens vérifiée/créée`);
-                
                 // Vérifier si le token existe déjà (récupérer aussi user_id pour comparer)
                 const checkQuery = "SELECT id, user_id FROM fcm_tokens WHERE fcm_token = ?";
                 
-                console.log(`📱 [registerUserFCMToken] Vérification si token existe déjà...`);
-                
                 db.get(checkQuery, [fcmToken], (err, row) => {
                     if (err) {
-                        console.error('❌ [registerUserFCMToken] Erreur vérification token FCM:', err);
-                        console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
-                        console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
+                        console.error('❌ Erreur vérification token FCM:', err.message);
                         db.close();
                         reject(err);
                         return;
                     }
                     
-                    console.log(`📱 [registerUserFCMToken] Token existe déjà: ${row ? 'Oui (ID: ' + row.id + ', User: ' + row.user_id + ')' : 'Non'}`);
-                    
                     if (row) {
                         // Token existe déjà, vérifier si l'utilisateur est déjà le même
                         const existingUserId = row.user_id;
-                        console.log(`📱 [registerUserFCMToken] Token existant trouvé - ID: ${row.id}, User actuel: ${existingUserId}, Nouveau user: ${userId}`);
                         
                         if (existingUserId === userId) {
                             // L'utilisateur est déjà associé à ce token, juste mettre à jour la date
                             const updateQuery = "UPDATE fcm_tokens SET updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ? AND user_id = ?";
                             
-                            console.log(`📱 [registerUserFCMToken] Token déjà associé au bon utilisateur, mise à jour timestamp...`);
-                            
                             db.run(updateQuery, [fcmToken, userId], function(err) {
                                 if (err) {
-                                    console.error('❌ [registerUserFCMToken] Erreur mise à jour timestamp:', err);
-                                    console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
-                                    console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
+                                    console.error('❌ Erreur mise à jour timestamp FCM:', err.message);
                                     db.close();
                                     reject(err);
                                 } else {
-                                    console.log(`✅ [registerUserFCMToken] Timestamp mis à jour (changes: ${this.changes})`);
                                     db.close();
                                     resolve(true);
                                 }
@@ -384,17 +360,12 @@ class PushNotificationService {
                             // Token existe mais pour un autre utilisateur, mettre à jour
                             const updateQuery = "UPDATE fcm_tokens SET user_id = ?, updated_at = CURRENT_TIMESTAMP WHERE fcm_token = ?";
                             
-                            console.log(`📱 [registerUserFCMToken] Token associé à un autre utilisateur, mise à jour...`);
-                            
                             db.run(updateQuery, [userId, fcmToken], function(err) {
                                 if (err) {
-                                    console.error('❌ [registerUserFCMToken] Erreur mise à jour token FCM:', err);
-                                    console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
-                                    console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
+                                    console.error('❌ Erreur mise à jour token FCM:', err.message);
                                     db.close();
                                     reject(err);
                                 } else {
-                                    console.log(`✅ [registerUserFCMToken] Token FCM mis à jour pour utilisateur ${userId} (ID existant: ${row.id}, changes: ${this.changes})`);
                                     db.close();
                                     resolve(true);
                                 }
@@ -404,17 +375,12 @@ class PushNotificationService {
                         // Nouveau token, l'insérer
                         const insertQuery = "INSERT INTO fcm_tokens (user_id, fcm_token) VALUES (?, ?)";
                         
-                        console.log(`📱 [registerUserFCMToken] Insertion nouveau token...`);
-                        
                         db.run(insertQuery, [userId, fcmToken], function(err) {
                             if (err) {
-                                console.error('❌ [registerUserFCMToken] Erreur insertion token FCM:', err);
-                                console.error('❌ [registerUserFCMToken] Détails erreur:', err.message);
-                                console.error('❌ [registerUserFCMToken] Code erreur:', err.code);
+                                console.error('❌ Erreur insertion token FCM:', err.message);
                                 db.close();
                                 reject(err);
                             } else {
-                                console.log(`✅ [registerUserFCMToken] Token FCM enregistré pour utilisateur ${userId} (Nouveau ID: ${this.lastID}, changes: ${this.changes})`);
                                 db.close();
                                 resolve(true);
                             }

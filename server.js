@@ -479,6 +479,19 @@ app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) =>
         }
         
         const photoPath = `/photos/${req.file.filename}`;
+        const fullPath = req.file.path;
+        
+        // Vérifier que le fichier existe bien sur le disque
+        const fileExists = fs.existsSync(fullPath);
+        const fileStats = fileExists ? fs.statSync(fullPath) : null;
+        
+        console.log(`📤 Upload photo: annonce=${announcementId}, index=${photoIndex}`);
+        console.log(`   📁 Nom fichier: ${req.file.filename}`);
+        console.log(`   📁 Chemin complet: ${fullPath}`);
+        console.log(`   ✅ Fichier existe: ${fileExists}`);
+        if (fileStats) {
+            console.log(`   📊 Taille: ${(fileStats.size / 1024).toFixed(2)} KB`);
+        }
         
         // Enregistrer le serveur comme source de la photo (avec version si mise à jour)
         const version = await photoDistributionService.registerPhotoSource(
@@ -608,33 +621,52 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
         const announcementId = req.params.id;
         const photoIndex = parseInt(req.params.index);
         
+        console.log(`🔍 Requête photo: annonce=${announcementId}, index=${photoIndex}`);
+        
         // Vérifier que le serveur a encore la photo
         const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
-        if (canCleanup) {
-            // Le serveur peut avoir supprimé la photo, chercher dans les fichiers
-            const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_*.jpg`;
-            const files = fs.readdirSync(photosDir).filter(f => f.startsWith(`announcement_${announcementId}_photo_${photoIndex}_`));
-            
-            if (files.length === 0) {
-                return res.status(404).json({ error: 'Photo non disponible sur le serveur (distribuée)' });
-            }
-            
-            const photoFile = path.join(photosDir, files[0]);
-            res.sendFile(photoFile);
+        console.log(`📊 Photo ${announcementId}/photo_${photoIndex} - canCleanup: ${canCleanup}`);
+        
+        // Chercher les fichiers correspondants
+        const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_`;
+        const allFiles = fs.readdirSync(photosDir);
+        const matchingFiles = allFiles.filter(f => f.startsWith(photoPattern) && f.endsWith('.jpg'));
+        
+        console.log(`📂 Répertoire photos: ${photosDir}`);
+        console.log(`🔎 Pattern recherché: ${photoPattern}*.jpg`);
+        console.log(`📋 Total fichiers dans photosDir: ${allFiles.length}`);
+        console.log(`✅ Fichiers correspondants trouvés: ${matchingFiles.length}`);
+        if (matchingFiles.length > 0) {
+            console.log(`   Fichiers: ${matchingFiles.join(', ')}`);
         } else {
-            // Photo encore sur le serveur, la servir normalement
-            const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_*.jpg`;
-            const files = fs.readdirSync(photosDir).filter(f => f.startsWith(`announcement_${announcementId}_photo_${photoIndex}_`));
-            
-            if (files.length === 0) {
-                return res.status(404).json({ error: 'Photo non trouvée' });
+            // Afficher les fichiers qui commencent par "announcement_" pour debug
+            const announcementFiles = allFiles.filter(f => f.startsWith(`announcement_${announcementId}_`));
+            console.log(`⚠️ Aucun fichier trouvé avec le pattern. Fichiers pour cette annonce: ${announcementFiles.length}`);
+            if (announcementFiles.length > 0) {
+                console.log(`   Fichiers existants: ${announcementFiles.slice(0, 10).join(', ')}${announcementFiles.length > 10 ? '...' : ''}`);
             }
-            
-            const photoFile = path.join(photosDir, files[0]);
-            res.sendFile(photoFile);
         }
+        
+        if (matchingFiles.length === 0) {
+            return res.status(404).json({ 
+                error: 'Photo non trouvée',
+                announcementId: announcementId,
+                photoIndex: photoIndex,
+                pattern: photoPattern,
+                totalFiles: allFiles.length,
+                matchingFiles: 0
+            });
+        }
+        
+        // Prendre le fichier le plus récent si plusieurs versions existent
+        const photoFile = path.join(photosDir, matchingFiles[0]);
+        const stats = fs.statSync(photoFile);
+        console.log(`✅ Envoi photo: ${matchingFiles[0]} (${(stats.size / 1024).toFixed(2)} KB)`);
+        
+        res.sendFile(photoFile);
     } catch (error) {
         console.error('❌ Erreur téléchargement photo:', error);
+        console.error('❌ Stack:', error.stack);
         res.status(500).json({ error: error.message || 'Erreur serveur' });
     }
 });

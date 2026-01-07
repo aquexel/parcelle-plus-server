@@ -393,6 +393,7 @@ class PriceAlertService {
                 AND pa.max_surface >= ?
                 AND pa.max_price >= ?
                 AND (pa.commune = '' OR pa.commune = ?)
+                AND pa.user_id != ?
                 AND an.id IS NULL
             `;
 
@@ -401,7 +402,8 @@ class PriceAlertService {
                 announcement.surface,
                 announcement.surface,
                 announcement.price,
-                announcement.commune || ''
+                announcement.commune || '',
+                announcement.userId || announcement.user_id || ''
             ];
 
             this.db.all(query, params, (err, rows) => {

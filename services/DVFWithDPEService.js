@@ -86,7 +86,6 @@ async function searchTransactionsWithDPE(lat, lon, radiusMeters, typeFilter = 'a
                 console.error('❌ Erreur recherche transactions:', err);
                 reject(err);
             } else {
-                console.log(`📊 Transactions trouvées : ${rows.length} (dont ${rows.filter(r => r.classe_dpe).length} avec DPE)`);
                 resolve(rows);
             }
         });
@@ -119,13 +118,6 @@ function calculerPrixMedianParClasse(transactions) {
             : prix[mid];
     }
     
-    console.log('\n📊 Prix médian par classe DPE:');
-    DPE_ORDER.forEach(classe => {
-        if (medianes[classe]) {
-            console.log(`   ${classe}: ${Math.round(medianes[classe])}€/m² (${prixParClasse[classe].length} transactions)`);
-        }
-    });
-    
     return { medianes, counts: Object.fromEntries(Object.entries(prixParClasse).map(([k, v]) => [k, v.length])) };
 }
 
@@ -142,7 +134,6 @@ function calculerEcartsEntreClasses(medianes) {
         if (medianes[classeActuelle] && medianes[classeInferieure]) {
             const ecart = (medianes[classeInferieure] - medianes[classeActuelle]) / medianes[classeActuelle];
             ecarts[`${classeActuelle}->${classeInferieure}`] = ecart;
-            console.log(`   📉 ${classeActuelle} → ${classeInferieure}: ${(ecart * 100).toFixed(1)}%`);
         }
     }
     
@@ -196,8 +187,6 @@ function getFacteurAjustement(classeSource, classeCible, ecarts, medianes) {
  * Ajuster toutes les transactions vers un DPE cible
  */
 function ajusterTransactionsVersDPE(transactions, dpeCible, ecarts, medianes) {
-    console.log(`\n🎯 Ajustement des transactions vers DPE ${dpeCible}...`);
-    
     const transactionsAjustees = transactions.map(txn => {
         const facteur = getFacteurAjustement(txn.classe_dpe, dpeCible, ecarts, medianes);
         const prixM2Ajuste = txn.prix_m2_local * facteur;
@@ -207,12 +196,6 @@ function ajusterTransactionsVersDPE(transactions, dpeCible, ecarts, medianes) {
             prix_m2_ajuste: prixM2Ajuste,
             facteur_ajustement: facteur
         };
-    });
-    
-    // Afficher quelques exemples
-    console.log('\n📝 Exemples d\'ajustements:');
-    transactionsAjustees.slice(0, 5).forEach((txn, i) => {
-        console.log(`   ${i+1}. DPE ${txn.classe_dpe} → ${dpeCible}: ${Math.round(txn.prix_m2_local)}€/m² → ${Math.round(txn.prix_m2_ajuste)}€/m² (×${txn.facteur_ajustement.toFixed(3)})`);
     });
     
     return transactionsAjustees;
@@ -236,21 +219,11 @@ function calculerMediane(valeurs) {
  * Fonction principale : Estimation avec pondération DPE
  */
 async function estimateWithDPE(lat, lon, dpeCible, typeFilter, radiusMeters, monthsBack = 24) {
-    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('🏠 ESTIMATION AVEC PONDÉRATION DPE');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`📍 Position: ${lat}, ${lon}`);
-    console.log(`🎯 DPE cible: ${dpeCible || 'Non spécifié'}`);
-    console.log(`🏢 Type: ${typeFilter}`);
-    console.log(`📏 Rayon: ${radiusMeters}m`);
-    console.log(`📅 Période: ${monthsBack} mois`);
-    
     try {
         // 1. Récupérer les transactions avec DPE
         const transactions = await searchTransactionsWithDPE(lat, lon, radiusMeters, typeFilter, monthsBack);
         
         if (transactions.length === 0) {
-            console.log('⚠️ Aucune transaction trouvée');
             return {
                 prixMoyenM2: 0,
                 prixMedianM2: 0,
@@ -263,11 +236,9 @@ async function estimateWithDPE(lat, lon, dpeCible, typeFilter, radiusMeters, mon
         }
         
         const transactionsAvecDPE = transactions.filter(t => t.classe_dpe);
-        console.log(`✅ ${transactionsAvecDPE.length}/${transactions.length} transactions avec DPE`);
         
         // Si pas de DPE cible ou pas assez de transactions avec DPE, calcul classique
         if (!dpeCible || transactionsAvecDPE.length < 3) {
-            console.log('⚠️ Pas assez de transactions avec DPE, calcul classique...');
             const prixM2List = transactions.map(t => t.prix_m2_local).filter(p => p > 0);
             const prixMedian = calculerMediane(prixM2List);
             
@@ -284,33 +255,23 @@ async function estimateWithDPE(lat, lon, dpeCible, typeFilter, radiusMeters, mon
         }
         
         // 2. Calculer les prix médians par classe DPE
-        console.log('\n📊 ÉTAPE 1: Calcul des prix médians par classe DPE...');
         const { medianes, counts } = calculerPrixMedianParClasse(transactionsAvecDPE);
         
         // 3. Calculer les écarts entre classes
-        console.log('\n📉 ÉTAPE 2: Calcul des écarts entre classes DPE...');
         const ecarts = calculerEcartsEntreClasses(medianes);
         
         // 4. Ajuster les transactions vers le DPE cible
-        console.log('\n🔧 ÉTAPE 3: Ajustement des transactions...');
         const transactionsAjustees = ajusterTransactionsVersDPE(transactionsAvecDPE, dpeCible, ecarts, medianes);
         
         // 5. Calculer la médiane ajustée
         const prixM2Ajustes = transactionsAjustees.map(t => t.prix_m2_ajuste);
         const prixMedianAjuste = calculerMediane(prixM2Ajustes);
         
-        console.log('\n💰 RÉSULTAT FINAL:');
-        console.log(`   Prix/m² médian ajusté (DPE ${dpeCible}): ${Math.round(prixMedianAjuste)}€/m²`);
-        console.log(`   Basé sur ${transactionsAjustees.length} transactions avec DPE`);
-        
         // 6. Calculer la fiabilité
         const fiabilite = Math.min(100, Math.round(
             (transactionsAjustees.length / 15) * 100 * // Nombre de transactions
             (Object.keys(medianes).length / 7) // Diversité des classes DPE
         ));
-        
-        console.log(`   Fiabilité: ${fiabilite}%`);
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         
         return {
             prixMoyenM2: Math.round(prixMedianAjuste),

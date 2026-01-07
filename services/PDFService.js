@@ -308,7 +308,6 @@ class PDFService {
                 doc.end();
 
                 stream.on('finish', () => {
-                    console.log(`✅ PDF généré: ${filepath}`);
                     resolve(filepath);
                 });
 

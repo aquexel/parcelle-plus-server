@@ -82,28 +82,18 @@ const photoDistributionService = new PhotoDistributionService();
 const emailService = new EmailService();
 
 // PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
-console.log('🔍 Tentative de chargement PushNotificationService...');
 let pushNotificationService;
 try {
     // Charger le service même si firebase-admin n'est pas installé
     // Le service peut fonctionner partiellement (enregistrement des tokens) sans Firebase
     const PushNotificationService = require('./services/PushNotificationService');
     pushNotificationService = new PushNotificationService();
-    console.log('✅ PushNotificationService instancié');
     
     // Vérifier si l'initialisation Firebase a réussi
     if (pushNotificationService.isInitialized()) {
-        console.log('✅ PushNotificationService initialisé - Notifications push activées');
     } else {
-        console.log('⚠️ PushNotificationService créé mais Firebase non initialisé');
-        console.log('📋 L\'enregistrement des tokens FCM fonctionne, mais l\'envoi de notifications nécessite:');
-        console.log('   1. Installation de firebase-admin: npm install firebase-admin');
-        console.log('   2. Téléchargez le fichier firebase-service-account.json depuis Firebase Console');
-        console.log('   3. Placez-le dans le dossier racine du serveur');
     }
 } catch (error) {
-    console.log('❌ Erreur lors du chargement PushNotificationService:', error.message);
-    console.log('📋 Stack:', error.stack);
     // Créer un stub pour éviter les erreurs
     pushNotificationService = {
         isInitialized: () => false,
@@ -158,8 +148,6 @@ wss.on('connection', (ws, req) => {
     };
     
     clients.set(clientId, clientInfo);
-    console.log(`🔌 Client connecté: ${clientId} (${clientInfo.ip})`);
-    console.log(`👥 Clients connectés: ${clients.size}`);
 
     // Envoyer un message de bienvenue
     ws.send(JSON.stringify({
@@ -174,7 +162,6 @@ wss.on('connection', (ws, req) => {
             
             // Ne pas logger les pings pour éviter de polluer les logs
             if (message.type !== 'ping') {
-                console.log(`📨 Message reçu de ${clientId}:`, message);
             }
             
             switch (message.type) {
@@ -203,8 +190,6 @@ wss.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         clients.delete(clientId);
-        console.log(`🔌 Client déconnecté: ${clientId}`);
-        console.log(`👥 Clients connectés: ${clients.size}`);
     });
 });
 
@@ -291,7 +276,6 @@ app.get('/api/polygons/user/:userId', async (req, res) => {
         const { userId } = req.params;
         const { limit = 100 } = req.query;
         
-        console.log(`🔒 Récupération polygones pour l'utilisateur: ${userId}`);
         const polygons = await polygonService.getPolygonsByUser(userId, limit);
         res.json(polygons);
     } catch (error) {
@@ -341,7 +325,6 @@ app.post('/api/polygons', async (req, res) => {
             const matchingAlerts = await priceAlertService.checkAnnouncementForAlerts(savedPolygon);
             
             if (matchingAlerts.length > 0) {
-                console.log(`🔔 ${matchingAlerts.length} alertes correspondent à la nouvelle annonce`);
                 
                 // Envoyer une notification à chaque acheteur concerné
                 for (const alert of matchingAlerts) {
@@ -397,18 +380,14 @@ app.post('/api/polygons', async (req, res) => {
                             );
                             
                             if (notificationSent) {
-                                console.log(`✅ Notification FCM envoyée avec succès à l'utilisateur ${alert.userId} pour l'alerte ${alert.id}`);
                             } else {
-                                console.log(`⚠️ Échec envoi notification FCM à l'utilisateur ${alert.userId} pour l'alerte ${alert.id} (token FCM manquant ou erreur)`);
                             }
                         } catch (notificationError) {
                             console.error(`❌ Erreur lors de l'envoi de la notification FCM à ${alert.userId}:`, notificationError.message);
                         }
                     } else {
-                        console.log(`⚠️ PushNotificationService non initialisé - Notification FCM non envoyée pour l'alerte ${alert.id}`);
                     }
                     
-                    console.log(`✅ Notification enregistrée: alerte ${alert.id}, annonce ${savedPolygon.id}`);
                 }
             }
         } catch (alertError) {
@@ -494,7 +473,6 @@ app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) =>
         let photoVersion = null;
         if (isUpdate && isSeller) {
             photoVersion = Date.now().toString(); // Nouvelle version basée sur timestamp
-            console.log(`🔄 Mise à jour photo ${photoIndex} pour annonce ${announcementId} (nouvelle version: ${photoVersion})`);
         }
         
         const photoPath = `/photos/${req.file.filename}`;
@@ -504,12 +482,7 @@ app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) =>
         const fileExists = fs.existsSync(fullPath);
         const fileStats = fileExists ? fs.statSync(fullPath) : null;
         
-        console.log(`📤 Upload photo: annonce=${announcementId}, index=${photoIndex}`);
-        console.log(`   📁 Nom fichier: ${req.file.filename}`);
-        console.log(`   📁 Chemin complet: ${fullPath}`);
-        console.log(`   ✅ Fichier existe: ${fileExists}`);
         if (fileStats) {
-            console.log(`   📊 Taille: ${(fileStats.size / 1024).toFixed(2)} KB`);
         }
         
         // Enregistrer le serveur comme source de la photo (avec version si mise à jour)
@@ -534,7 +507,6 @@ app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) =>
             );
         }
         
-        console.log(`✅ Photo ${photoIndex} ${isUpdate ? 'mise à jour' : 'uploadée'} pour annonce ${announcementId} (version: ${version || '1'})`);
         
         res.status(201).json({
             success: true,
@@ -673,7 +645,6 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
         
         if (matchingFiles.length === 0) {
             // Le serveur n'a plus la photo, enregistrer une demande silencieuse (P2P)
-            console.log(`⚠️ Photo non trouvée sur serveur, recherche sources P2P: ${announcementId}/${photoIndex}`);
             
             const sources = await photoDistributionService.findPhotoSources(announcementId, photoIndex);
             
@@ -682,12 +653,10 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
                 const nonServerSource = sources.find(s => s.isSeller && !s.isServer) || sources.find(s => !s.isServer);
                 
                 if (nonServerSource) {
-                    console.log(`📋 Enregistrement demande silencieuse P2P: client ${nonServerSource.userId} pour photo ${announcementId}/${photoIndex}`);
                     
                     // Enregistrer une demande silencieuse dans la base de données
                     try {
                         await photoDistributionService.registerSilentPhotoRequest(announcementId, photoIndex, nonServerSource.userId);
-                        console.log(`✅ Demande silencieuse enregistrée - le client ${nonServerSource.userId} ré-uploadera automatiquement`);
                     } catch (reqError) {
                         console.error('❌ Erreur enregistrement demande silencieuse:', reqError);
                     }
@@ -718,7 +687,6 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
         // Prendre le fichier le plus récent si plusieurs versions existent
         const photoFile = path.join(photosDir, matchingFiles[0]);
         const stats = fs.statSync(photoFile);
-        console.log(`✅ Envoi photo: ${matchingFiles[0]} (${(stats.size / 1024).toFixed(2)} KB)`);
         
         res.sendFile(photoFile);
     } catch (error) {
@@ -734,11 +702,9 @@ app.use('/photos', express.static(photosDir));
 app.delete('/api/polygons/:id', async (req, res) => {
     try {
         const polygonId = req.params.id;
-        console.log(`🗑️ Suppression polygone ${polygonId}`);
         
         // Supprimer d'abord les conversations et offres liées
         const cleanup = await offerService.deleteConversationsAndOffersByAnnouncement(polygonId);
-        console.log(`📊 Nettoyage: ${cleanup.conversationsDeleted} conversations, ${cleanup.offersDeleted} offres, ${cleanup.messagesDeleted} messages`);
         
         // Puis supprimer le polygone
         const deleted = await polygonService.deletePolygon(polygonId);
@@ -776,7 +742,6 @@ app.post('/api/announcements/:id/view', async (req, res) => {
 
         // Enregistrer chaque vue (même utilisateur peut voir plusieurs fois)
         const view = await polygonService.recordView(announcementId, viewerId, viewerType);
-        console.log(`👁️ Vue enregistrée pour annonce ${announcementId} par ${viewerId}`);
         res.status(201).json({ success: true, view });
     } catch (error) {
         console.error('❌ Erreur enregistrement vue:', error);
@@ -801,7 +766,6 @@ app.get('/api/sellers/:sellerId/stats', async (req, res) => {
     try {
         const { sellerId } = req.params;
         const stats = await polygonService.getSellerStats(sellerId);
-        console.log(`📊 Statistiques vendeur ${sellerId}:`, stats);
         res.json(stats);
     } catch (error) {
         console.error('❌ Erreur récupération statistiques vendeur:', error);
@@ -821,7 +785,6 @@ app.post('/api/price-alerts', async (req, res) => {
         }
         
         const alert = await priceAlertService.createAlert(alertData);
-        console.log(`✅ Alerte créée: ${alert.id} pour utilisateur ${alert.userId}`);
         res.status(201).json(alert);
     } catch (error) {
         console.error('❌ Erreur création alerte:', error);
@@ -919,7 +882,6 @@ app.get('/api/messages', async (req, res) => {
 });
 
 app.post('/api/messages', async (req, res) => {
-    console.log('📨 POST /api/messages - Données reçues:', req.body);
     try {
         const messageData = req.body;
         
@@ -931,7 +893,6 @@ app.post('/api/messages', async (req, res) => {
                     const targetUser = await userService.getUserById(targetUserId);
                     if (targetUser && targetUser.username) {
                         messageData.targetUserName = targetUser.username;
-                        console.log(`👤 Username de l'interlocuteur récupéré: ${targetUser.username}`);
                     }
                 }
             } catch (userError) {
@@ -940,9 +901,7 @@ app.post('/api/messages', async (req, res) => {
             }
         }
         
-        console.log('📡 Appel messageService.saveMessage avec:', messageData);
         const savedMessage = await messageService.saveMessage(messageData);
-        console.log('✅ Message sauvegardé:', savedMessage);
         
         // Diffuser le message via WebSocket
         const broadcastMessage = {
@@ -960,13 +919,10 @@ app.post('/api/messages', async (req, res) => {
         
         // Envoyer une notification push si le service est disponible
         if (pushNotificationService.isInitialized()) {
-            console.log('📱 PushNotificationService initialisé - Tentative d\'envoi notification');
             try {
                 // Déterminer l'utilisateur cible (celui qui n'a pas envoyé le message)
                 const targetUserId = await determineTargetUserId(messageData.room, messageData.senderId);
-                console.log(`📱 Utilisateur cible déterminé: ${targetUserId}`);
                 if (targetUserId) {
-                    console.log(`📱 Tentative d'envoi notification push à ${targetUserId} depuis ${messageData.senderName}`);
                     const notificationSent = await pushNotificationService.sendMessageNotification(
                         targetUserId,
                         messageData.senderName,
@@ -975,22 +931,17 @@ app.post('/api/messages', async (req, res) => {
                         messageData.senderId
                     );
                     if (notificationSent) {
-                        console.log(`✅ Notification push envoyée avec succès à ${targetUserId}`);
                     } else {
-                        console.log(`⚠️ Échec envoi notification push à ${targetUserId} (probablement pas de token FCM enregistré)`);
                     }
                 } else {
-                    console.log('⚠️ Impossible de déterminer l\'utilisateur cible pour la notification');
                 }
             } catch (pushError) {
                 console.error('❌ Erreur notification push:', pushError.message);
                 console.error('❌ Stack trace:', pushError.stack);
             }
         } else {
-            console.log('⚠️ PushNotificationService non initialisé - Notification push non envoyée');
         }
         
-        console.log('✅ Réponse envoyée avec status 201');
         res.status(201).json(savedMessage);
     } catch (error) {
         console.error('❌ ERREUR DÉTAILLÉE sauvegarde message:', error);
@@ -1020,7 +971,6 @@ app.post('/api/conversations/link-announcement', async (req, res) => {
             initialMessageId
         });
 
-        console.log(`✅ Annonce ${announcementId} liée à la conversation ${roomId}`);
         res.status(201).json(link);
     } catch (error) {
         console.error('❌ Erreur liaison annonce-conversation:', error);
@@ -1032,10 +982,8 @@ app.post('/api/conversations/link-announcement', async (req, res) => {
 app.get('/api/conversations/user/:userId', async (req, res) => {
     try {
         const userId = req.params.userId;
-        console.log(`🔍 Récupération conversations pour utilisateur: ${userId}`);
         
         const conversations = await offerService.getUserConversations(userId);
-        console.log(`✅ ${conversations.length} conversations trouvées pour ${userId}`);
         
         res.json(conversations);
     } catch (error) {
@@ -1071,21 +1019,17 @@ app.delete('/api/conversations/delete-for-announcement', async (req, res) => {
             });
         }
         
-        console.log(`🗑️ Suppression conversation pour annonce: ${announcementId}`);
-        console.log(`   Acheteur: ${buyerId}, Vendeur: ${sellerId}`);
         
         // Supprimer la conversation via OfferService
         const result = await offerService.deleteConversationForAnnouncement(announcementId, buyerId, sellerId);
         
         if (result.success) {
-            console.log(`✅ Conversation supprimée avec succès pour annonce ${announcementId}`);
             res.json({ 
                 success: true, 
                 message: 'Conversation supprimée avec succès',
                 deletedCount: result.deletedCount 
             });
         } else {
-            console.log(`❌ Erreur suppression conversation: ${result.error}`);
             res.status(500).json({ 
                 success: false, 
                 error: result.error || 'Erreur lors de la suppression de la conversation' 
@@ -1105,7 +1049,6 @@ app.delete('/api/conversations/delete-for-announcement', async (req, res) => {
 app.post('/api/offers', async (req, res) => {
     try {
         const offerData = req.body;
-        console.log('💰 POST /api/offers - Création proposition:', offerData);
 
         // Validation des données
         const required = ['announcementId', 'buyerId', 'buyerName', 'sellerId', 'sellerName', 
@@ -1122,14 +1065,12 @@ app.post('/api/offers', async (req, res) => {
         
         // Vérifier si c'est une erreur de proposition dupliquée
         if (savedOffer.error && savedOffer.code === 'DUPLICATE_OFFER') {
-            console.log('❌ Proposition dupliquée refusée');
             return res.status(409).json({
                 error: savedOffer.error,
                 code: savedOffer.code
             });
         }
         
-        console.log('✅ Proposition créée:', savedOffer.id);
 
         // Notifier via WebSocket
         broadcastNotification({
@@ -1196,7 +1137,6 @@ app.post('/api/offers/:id/accept', async (req, res) => {
         }
 
         const offer = await offerService.acceptOffer(req.params.id, actorId, actorName);
-        console.log(`✅ Proposition ${req.params.id} acceptée par ${actorName}`);
 
         // Notifier via WebSocket
         broadcastNotification({
@@ -1288,7 +1228,6 @@ app.post('/api/offers/:id/request-signature-verification', async (req, res) => {
             return res.status(500).json({ error: 'Erreur lors de l\'envoi de l\'email de vérification' });
         }
 
-        console.log(`✅ Email de vérification envoyé pour signature ${signatureType} de la proposition ${req.params.id}`);
 
         res.json({ 
             success: true,
@@ -1383,7 +1322,6 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
         // Vérifier l'email
         await offerService.verifySignatureEmail(offerId, signature.user_id, token);
 
-        console.log(`✅ Email vérifié pour signature ${signature.signature_type} de la proposition ${offerId}`);
 
         // Rediriger vers le deep link Android qui ouvrira l'application
         // Si l'app n'est pas installée, afficher une page de succès
@@ -1536,7 +1474,6 @@ app.post('/api/offers/:id/sign', async (req, res) => {
                     // Mettre à jour les signatures avec le chemin du PDF
                     await offerService.updateSignaturePdfPath(req.params.id, pdfPath);
                     
-                    console.log(`✅ PDF généré pour la proposition ${req.params.id}: ${pdfPath}`);
                 } catch (pdfError) {
                     console.error('❌ Erreur génération PDF:', pdfError);
                     // Ne pas bloquer la signature si le PDF échoue
@@ -1544,7 +1481,6 @@ app.post('/api/offers/:id/sign', async (req, res) => {
             }
         }
 
-        console.log(`✅ Signature ${signatureType} ajoutée pour la proposition ${req.params.id}`);
 
         res.json({ 
             signatureAdded: true,
@@ -1597,7 +1533,6 @@ app.post('/api/offers/:id/reject', async (req, res) => {
         }
 
         const offer = await offerService.rejectOffer(req.params.id, actorId, actorName, reason);
-        console.log(`❌ Proposition ${req.params.id} refusée par ${actorName}`);
 
         // Notifier via WebSocket
         broadcastNotification({
@@ -1616,10 +1551,8 @@ app.post('/api/offers/:id/reject', async (req, res) => {
 app.post('/api/offers/:id/counter', async (req, res) => {
     try {
         const counterOfferData = req.body;
-        console.log('🔄 POST /api/offers/:id/counter - Contre-proposition:', counterOfferData);
 
         const counterOffer = await offerService.createCounterOffer(req.params.id, counterOfferData);
-        console.log(`✅ Contre-proposition créée: ${counterOffer.id}`);
 
         // Notifier via WebSocket
         broadcastNotification({
@@ -1661,9 +1594,7 @@ app.get('/api/offers/stats/:userId', async (req, res) => {
 // Récupérer toutes les rooms
 app.get('/api/rooms', async (req, res) => {
     try {
-        console.log('🏠 GET /api/rooms - Récupération des rooms');
         const rooms = await messageService.getAllRooms();
-        console.log(`✅ ${rooms.length} rooms récupérées`);
         res.json(rooms);
     } catch (error) {
         console.error('❌ Erreur récupération rooms:', error);
@@ -1675,9 +1606,7 @@ app.get('/api/rooms', async (req, res) => {
 app.post('/api/rooms', async (req, res) => {
     try {
         const roomData = req.body;
-        console.log('🏠 POST /api/rooms - Création room:', roomData);
         const savedRoom = await messageService.createRoom(roomData);
-        console.log('✅ Room créée:', savedRoom);
         res.status(201).json(savedRoom);
     } catch (error) {
         console.error('❌ Erreur création room:', error);
@@ -1689,14 +1618,11 @@ app.post('/api/rooms', async (req, res) => {
 app.delete('/api/rooms/:roomId', async (req, res) => {
     try {
         const roomId = req.params.roomId;
-        console.log('🗑️ DELETE /api/rooms - Suppression room:', roomId);
         
         const success = await messageService.deleteRoom(roomId);
         if (success) {
-            console.log('✅ Room supprimée:', roomId);
             res.status(204).send(); // No content
         } else {
-            console.log('❌ Room non trouvée:', roomId);
             res.status(404).json({ error: 'Room non trouvée' });
         }
     } catch (error) {
@@ -1733,13 +1659,10 @@ app.post('/api/auth/register', async (req, res) => {
             );
             
             if (emailSent) {
-                console.log(`✅ Email de confirmation envoyé à ${newUser.email}`);
             } else {
-                console.log(`⚠️ Email de confirmation non envoyé à ${newUser.email} (SMTP non configuré ou erreur)`);
             }
         } catch (emailError) {
             console.error(`⚠️ Erreur envoi email de confirmation: ${emailError.message}`);
-            console.log(`ℹ️ L'inscription est validée malgré l'erreur d'envoi d'email`);
             // L'inscription continue même si l'email échoue
         }
         
@@ -1808,7 +1731,6 @@ app.post('/api/auth/resend-verification', async (req, res) => {
             throw new Error('Impossible d\'envoyer l\'email de confirmation. Veuillez vérifier la configuration SMTP.');
         }
         
-        console.log(`✅ Email de confirmation renvoyé à ${result.user.email}`);
         
         res.status(200).json({
             message: 'Email de confirmation renvoyé',
@@ -1846,7 +1768,6 @@ app.post('/api/auth/forgot-password', async (req, res) => {
                 throw new Error('Impossible d\'envoyer l\'email de réinitialisation. Veuillez vérifier la configuration SMTP.');
             }
             
-            console.log(`✅ Email de réinitialisation envoyé à ${result.user.email}`);
         }
         
         // Toujours retourner le même message pour des raisons de sécurité
@@ -2033,7 +1954,6 @@ app.post('/api/users/:userId/update-email', async (req, res) => {
         const { userId } = req.params;
         const { newEmail, password } = req.body;
         
-        console.log(`📧 Demande de modification d'email pour utilisateur ${userId}`);
         
         // Validation des paramètres
         if (!newEmail || !password) {
@@ -2208,9 +2128,6 @@ app.post('/api/fcm/send-notification', async (req, res) => {
             });
         }
         
-        console.log(`🔔 Envoi notification FCM pour utilisateur: ${userId}`);
-        console.log(`📝 Titre: ${title}`);
-        console.log(`📄 Corps: ${body}`);
         
         // Utiliser le service de notifications push existant
         const success = await pushNotificationService.sendCustomNotification(userId, title, body, data);
@@ -2439,12 +2356,6 @@ app.use((err, req, res, next) => {
 
 // Démarrage du serveur
 server.listen(PORT, '0.0.0.0', () => {
-    console.log('🚀 ========================================');
-    console.log(`🚀 Serveur ParcellePlus démarré sur le port ${PORT}`);
-    console.log(`🚀 URL publique: http://149.202.33.164:${PORT}`);
-    console.log(`🚀 WebSocket: ws://149.202.33.164:${PORT}`);
-    console.log('🚀 Services: Polygons, Messages, Users, DVF+DPE');
-    console.log('🚀 ========================================');
     
     // Nettoyage automatique des sessions expirées toutes les heures
     setInterval(() => {
@@ -2456,14 +2367,12 @@ server.listen(PORT, '0.0.0.0', () => {
 
 // Gestion propre de l'arrêt
 process.on('SIGTERM', () => {
-    console.log('🛑 Arrêt du serveur...');
     server.close(() => {
         // Fermer les connexions aux bases de données
         polygonService.close();
         messageService.close();
         userService.close();
         offerService.close();
-        console.log('🛑 Serveur arrêté.');
         process.exit(0);
     });
 });

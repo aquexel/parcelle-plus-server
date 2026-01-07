@@ -25,7 +25,6 @@ class EmailService {
         
         // Si BASE_URL n'est pas configuré et qu'on utilise l'IP par défaut, l'utiliser telle quelle
         if (!process.env.BASE_URL && !process.env.DOMAIN_URL) {
-            console.log('ℹ️ Utilisation de l\'URL par défaut pour les emails: http://149.202.33.164:3000');
         }
     }
     
@@ -109,7 +108,6 @@ class EmailService {
             };
             
             const info = await this.transporter.sendMail(mailOptions);
-            console.log(`✅ Email de confirmation envoyé à ${email}:`, info.messageId);
             return true;
         } catch (error) {
             console.error(`❌ Erreur envoi email à ${email}:`, error.message);
@@ -179,7 +177,6 @@ class EmailService {
             };
             
             const info = await this.transporter.sendMail(mailOptions);
-            console.log(`✅ Email de réinitialisation envoyé à ${email}:`, info.messageId);
             return true;
         } catch (error) {
             console.error(`❌ Erreur envoi email de réinitialisation à ${email}:`, error.message);
@@ -260,7 +257,6 @@ class EmailService {
             };
             
             const info = await this.transporter.sendMail(mailOptions);
-            console.log(`✅ Email de vérification signature envoyé à ${email}:`, info.messageId);
             return true;
         } catch (error) {
             console.error(`❌ Erreur envoi email vérification signature à ${email}:`, error.message);

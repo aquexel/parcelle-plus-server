@@ -621,37 +621,13 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
         const announcementId = req.params.id;
         const photoIndex = parseInt(req.params.index);
         
-        console.log(`🔍 Requête photo: annonce=${announcementId}, index=${photoIndex}`);
-        
         // Vérifier que le serveur a encore la photo
         const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
-        console.log(`📊 Photo ${announcementId}/photo_${photoIndex} - canCleanup: ${canCleanup}`);
         
         // Chercher les fichiers correspondants
         const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_`;
         const allFiles = fs.readdirSync(photosDir);
         const matchingFiles = allFiles.filter(f => f.startsWith(photoPattern) && f.endsWith('.jpg'));
-        
-        console.log(`📂 Répertoire photos: ${photosDir}`);
-        console.log(`🔎 Pattern recherché: ${photoPattern}*.jpg`);
-        console.log(`📋 Total fichiers dans photosDir: ${allFiles.length}`);
-        
-        // Afficher tous les fichiers pour debug
-        if (allFiles.length > 0) {
-            console.log(`📁 Tous les fichiers dans photosDir: ${allFiles.join(', ')}`);
-        }
-        
-        console.log(`✅ Fichiers correspondants trouvés: ${matchingFiles.length}`);
-        if (matchingFiles.length > 0) {
-            console.log(`   Fichiers: ${matchingFiles.join(', ')}`);
-        } else {
-            // Afficher les fichiers qui commencent par "announcement_" pour debug
-            const announcementFiles = allFiles.filter(f => f.startsWith(`announcement_${announcementId}_`));
-            console.log(`⚠️ Aucun fichier trouvé avec le pattern. Fichiers pour cette annonce: ${announcementFiles.length}`);
-            if (announcementFiles.length > 0) {
-                console.log(`   Fichiers existants: ${announcementFiles.slice(0, 10).join(', ')}${announcementFiles.length > 10 ? '...' : ''}`);
-            }
-        }
         
         if (matchingFiles.length === 0) {
             return res.status(404).json({ 

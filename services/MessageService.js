@@ -166,7 +166,6 @@ class MessageService {
                     reject(err);
                 } else {
                     const messages = rows.reverse();
-                    console.log(`✅ ${messages.length} messages récupérés pour la room ${room}`);
                     resolve(messages);
                 }
             });

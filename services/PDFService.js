@@ -24,44 +24,44 @@ class PDFService {
             try {
                 const filename = `accord_principe_${offer.id}_${Date.now()}.pdf`;
                 const filepath = path.join(this.pdfsDir, filename);
-                const doc = new PDFDocument({ margin: 50 });
+                const doc = new PDFDocument({ margin: 30 }); // Marges réduites
 
                 const stream = fs.createWriteStream(filepath);
                 doc.pipe(stream);
 
                 // En-tête
-                doc.fontSize(20)
+                doc.fontSize(16)
                    .fillColor('#2E7D32')
                    .text('ACCORD DE PRINCIPE', { align: 'center' })
-                   .moveDown();
-
-                doc.fontSize(14)
-                   .fillColor('#424242')
-                   .text('Acceptation mutuelle d\'une proposition de transaction immobilière', { align: 'center' })
-                   .moveDown();
-
-                doc.fontSize(12)
-                   .fillColor('#000000')
-                   .text(`Document généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' })
-                   .moveDown(2);
-
-                // Section Annonce
-                doc.fontSize(16)
-                   .fillColor('#1565C0')
-                   .text('DÉTAILS DE L\'ANNONCE', { underline: true })
-                   .moveDown();
+                   .moveDown(0.3);
 
                 doc.fontSize(11)
+                   .fillColor('#424242')
+                   .text('Acceptation mutuelle d\'une proposition de transaction immobilière', { align: 'center' })
+                   .moveDown(0.3);
+
+                doc.fontSize(9)
+                   .fillColor('#000000')
+                   .text(`Document généré le ${new Date().toLocaleDateString('fr-FR')}`, { align: 'center' })
+                   .moveDown(0.8);
+
+                // Section Annonce
+                doc.fontSize(12)
+                   .fillColor('#1565C0')
+                   .text('DÉTAILS DE L\'ANNONCE', { underline: true })
+                   .moveDown(0.3);
+
+                doc.fontSize(9)
                    .fillColor('#000000')
                    .text(`Titre: ${announcement.title || 'Non spécifié'}`, { continued: false })
-                   .text(`Description: ${announcement.description || 'Non spécifiée'}`)
-                   .moveDown();
+                   .text(`Description: ${(announcement.description || 'Non spécifiée').substring(0, 100)}${(announcement.description && announcement.description.length > 100) ? '...' : ''}`)
+                   .moveDown(0.5);
 
                 // Informations du bien
-                doc.fontSize(14)
+                doc.fontSize(12)
                    .fillColor('#1565C0')
                    .text('CARACTÉRISTIQUES DU BIEN', { underline: true })
-                   .moveDown();
+                   .moveDown(0.3);
 
                 const details = [];
                 details.push(`Localisation: ${announcement.commune || 'Non spécifiée'} (${announcement.code_insee || 'N/A'})`);
@@ -133,182 +133,147 @@ class PDFService {
                     details.push(`Classe DPE: ${announcement.classe_dpe}`);
                 }
 
-                doc.fontSize(11)
+                doc.fontSize(9)
                    .fillColor('#000000')
-                   .text(details.join('\n'))
-                   .moveDown();
+                   .text(details.join(' | '), { lineGap: 2 })
+                   .moveDown(0.5);
 
                 // Section Prix
-                doc.fontSize(14)
+                doc.fontSize(12)
                    .fillColor('#1565C0')
                    .text('CONDITIONS FINANCIÈRES', { underline: true })
-                   .moveDown();
+                   .moveDown(0.3);
 
-                doc.fontSize(11)
+                doc.fontSize(9)
                    .fillColor('#000000')
-                   .text(`Prix initial: ${offer.original_price.toFixed(2)} €`, { continued: false })
-                   .text(`Prix proposé et accepté: ${offer.proposed_price.toFixed(2)} €`, { continued: false })
-                   .text(`Différence: ${(offer.proposed_price - offer.original_price).toFixed(2)} €`)
-                   .moveDown();
+                   .text(`Prix initial: ${offer.original_price.toFixed(2)} € | Prix proposé et accepté: ${offer.proposed_price.toFixed(2)} € | Différence: ${(offer.proposed_price - offer.original_price).toFixed(2)} €`)
+                   .moveDown(0.5);
 
                 if (offer.proposed_surface && offer.proposed_surface !== announcement.surface) {
-                    doc.text(`Surface proposée: ${offer.proposed_surface.toFixed(2)} m² (différente de l'originale)`)
-                       .moveDown();
+                    doc.fontSize(9)
+                       .text(`Surface proposée: ${offer.proposed_surface.toFixed(2)} m² (différente de l'originale)`)
+                       .moveDown(0.3);
                 }
 
                 // Section Signatures
-                doc.fontSize(14)
+                doc.fontSize(12)
                    .fillColor('#1565C0')
                    .text('SIGNATURES ÉLECTRONIQUES', { underline: true })
-                   .moveDown();
+                   .moveDown(0.3);
 
                 const buyerSignature = signatures.find(s => s.signature_type === 'buyer');
                 const sellerSignature = signatures.find(s => s.signature_type === 'seller');
 
                 if (buyerSignature) {
-                    doc.fontSize(11)
+                    doc.fontSize(8)
                        .fillColor('#000000')
-                       .text(`Acheteur: ${buyerSignature.user_name}`, { continued: false })
-                       .text(`Email: ${buyerSignature.user_email}`, { continued: false })
-                       .text(`Signé le: ${new Date(buyerSignature.signature_timestamp).toLocaleString('fr-FR')}`)
-                       .moveDown();
+                       .text(`Acheteur: ${buyerSignature.user_name} | Email: ${buyerSignature.user_email} | Signé le: ${new Date(buyerSignature.signature_timestamp).toLocaleString('fr-FR')}`)
+                       .moveDown(0.3);
                 }
 
                 if (sellerSignature) {
-                    doc.fontSize(11)
+                    doc.fontSize(8)
                        .fillColor('#000000')
-                       .text(`Vendeur: ${sellerSignature.user_name}`, { continued: false })
-                       .text(`Email: ${sellerSignature.user_email}`, { continued: false })
-                       .text(`Signé le: ${new Date(sellerSignature.signature_timestamp).toLocaleString('fr-FR')}`)
-                       .moveDown();
+                       .text(`Vendeur: ${sellerSignature.user_name} | Email: ${sellerSignature.user_email} | Signé le: ${new Date(sellerSignature.signature_timestamp).toLocaleString('fr-FR')}`)
+                       .moveDown(0.3);
                 }
 
                 // Message de la proposition si présent
                 if (offer.message) {
-                    doc.fontSize(14)
+                    doc.fontSize(12)
                        .fillColor('#1565C0')
                        .text('MESSAGE ASSOCIÉ', { underline: true })
-                       .moveDown();
+                       .moveDown(0.3);
 
-                    doc.fontSize(11)
+                    doc.fontSize(8)
                        .fillColor('#000000')
-                       .text(offer.message, { align: 'justify' })
-                       .moveDown();
+                       .text(offer.message.substring(0, 200) + (offer.message.length > 200 ? '...' : ''), { align: 'justify', lineGap: 2 })
+                       .moveDown(0.5);
                 }
 
-                // Pied de page - Section juridique avec articles de loi
-                // Calculer la hauteur nécessaire pour le pied de page (environ 210 points)
-                const footerHeight = 210;
+                // Pied de page - Section juridique avec articles de loi (version compacte)
                 const currentY = doc.y;
-                const marginBottom = 50;
-                const spaceNeeded = footerHeight + marginBottom;
-                
-                // Vérifier l'espace disponible sur la page actuelle
                 const pageHeight = doc.page.height;
+                const marginBottom = 30;
+                const footerHeight = 130; // Hauteur réduite pour le pied de page
                 const availableSpace = pageHeight - currentY - marginBottom;
                 
-                // Si pas assez d'espace, créer une nouvelle page
-                if (availableSpace < spaceNeeded) {
-                    doc.addPage();
-                }
+                // Calculer la position du pied de page pour qu'il tienne sur la page
+                const footerStartY = pageHeight - footerHeight - marginBottom;
+                doc.y = footerStartY - 5;
                 
-                // Recalculer avec la page actuelle (peut être la nouvelle page)
-                const currentPageHeight = doc.page.height;
-                const footerStartY = currentPageHeight - footerHeight;
-                
-                // S'assurer qu'on est bien positionné avant de dessiner le pied de page
-                doc.y = footerStartY - 10; // Petit espace avant le séparateur
-                
-                doc.moveTo(50, footerStartY)
-                   .lineTo(doc.page.width - 50, footerStartY)
+                doc.moveTo(30, footerStartY)
+                   .lineTo(doc.page.width - 30, footerStartY)
                    .stroke();
 
-                // Fonction helper pour ajouter du texte avec gestion automatique du débordement
-                let yOffset = 5;
+                // Version ultra-compacte du pied de page
+                let yOffset = 4;
                 
-                doc.fontSize(9)
+                doc.fontSize(7)
                    .fillColor('#2E7D32')
-                   .text('DISPOSITIONS JURIDIQUES ET RÉFÉRENCES LÉGALES', 
-                         50, footerStartY + yOffset, { align: 'center', width: doc.page.width - 100 });
-                yOffset += 13;
+                   .text('DISPOSITIONS JURIDIQUES', 
+                         30, footerStartY + yOffset, { align: 'center', width: doc.page.width - 60 });
+                yOffset += 8;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#424242')
-                   .text('Nature de l\'accord:', 
-                         50, footerStartY + yOffset, { width: doc.page.width - 100 });
-                yOffset += 9;
+                   .text('Nature:', 30, footerStartY + yOffset, { width: doc.page.width - 60 });
+                yOffset += 6;
 
-                // Texte qui peut s'étaler sur plusieurs lignes automatiquement
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#757575')
-                   .text('Cet accord de principe constitue un engagement préliminaire entre les parties, fixant certains éléments essentiels (bien, prix) d\'un contrat futur. Il peut constituer un contrat en lui-même s\'il remplit les conditions du Code civil (art. 1108 : consentement, capacité, objet licite et certain).', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, lineGap: 3 });
-                yOffset += 25;
+                   .text('Accord préliminaire fixant les éléments essentiels (bien, prix). Peut constituer un contrat si conditions Code civil art. 1108 remplies.', 
+                         30, footerStartY + yOffset, { align: 'left', width: doc.page.width - 60, lineGap: 1 });
+                yOffset += 12;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#424242')
-                   .text('Force obligatoire:', 
-                         50, footerStartY + yOffset, { width: doc.page.width - 100 });
-                yOffset += 9;
+                   .text('Force obligatoire:', 30, footerStartY + yOffset, { width: doc.page.width - 60 });
+                yOffset += 6;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#757575')
-                   .text('Conformément à l\'article 1134 du Code civil, les conventions légalement formées tiennent lieu de loi à ceux qui les ont faites. Elles doivent être exécutées de bonne foi (art. 1134, al. 3).', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, lineGap: 3 });
-                yOffset += 18;
+                   .text('Art. 1134 C. civ.: conventions légalement formées = force de loi. Exécution de bonne foi (art. 1134 al. 3).', 
+                         30, footerStartY + yOffset, { align: 'left', width: doc.page.width - 60, lineGap: 1 });
+                yOffset += 10;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#424242')
-                   .text('Absence de transfert de propriété:', 
-                         50, footerStartY + yOffset, { width: doc.page.width - 100 });
-                yOffset += 9;
+                   .text('Transfert de propriété:', 30, footerStartY + yOffset, { width: doc.page.width - 60 });
+                yOffset += 6;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#757575')
-                   .text('Selon l\'article 1582 du Code civil, la vente est parfaite dès que les parties sont convenues de la chose et du prix. Cependant, conformément à l\'article 1583, l\'accord de principe ne transfère pas immédiatement la propriété.', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, lineGap: 3 });
-                yOffset += 18;
+                   .text('Art. 1582 C. civ.: vente parfaite dès accord sur chose et prix. Art. 1583: pas de transfert immédiat. IMPORTANT: Formalisation via compromis puis acte authentique notarié requis (art. 1588-1589).', 
+                         30, footerStartY + yOffset, { align: 'left', width: doc.page.width - 60, lineGap: 1 });
+                yOffset += 12;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#424242')
-                   .text('IMPORTANT : Cet accord de principe devra être formalisé par un compromis de vente établi chez un notaire.', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, underline: false });
-                yOffset += 9;
+                   .text('Signature électronique:', 30, footerStartY + yOffset, { width: doc.page.width - 60 });
+                yOffset += 6;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#757575')
-                   .text('Le transfert définitif de propriété nécessitera ensuite un acte authentique de vente chez un notaire, conformément à l\'article 1589 du Code civil relatif aux promesses de vente et à l\'article 1588 concernant les ventes d\'immeubles qui requièrent un acte authentique.', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, lineGap: 3 });
-                yOffset += 20;
+                   .text('Art. 1366-1367 C. civ.: écrit électronique = même force probante que papier. Signature identifie auteur et manifeste consentement.', 
+                         30, footerStartY + yOffset, { align: 'left', width: doc.page.width - 60, lineGap: 1 });
+                yOffset += 10;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#424242')
-                   .text('Signature électronique:', 
-                         50, footerStartY + yOffset, { width: doc.page.width - 100 });
-                yOffset += 9;
+                   .text('Formalisation:', 30, footerStartY + yOffset, { width: doc.page.width - 60 });
+                yOffset += 6;
 
-                doc.fontSize(7)
+                doc.fontSize(5)
                    .fillColor('#757575')
-                   .text('Conformément à l\'article 1366 du Code civil, l\'écrit électronique a la même force probante que l\'écrit sur support papier. L\'article 1367 prévoit que la signature électronique identifie son auteur et manifeste son consentement aux obligations résultant de l\'acte auquel elle s\'attache.', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, lineGap: 3 });
-                yOffset += 20;
+                   .text('Obligation négocier de bonne foi pour compromis puis acte authentique (art. 1104, 1135 C. civ.).', 
+                         30, footerStartY + yOffset, { align: 'left', width: doc.page.width - 60, lineGap: 1 });
+                yOffset += 8;
 
-                doc.fontSize(7)
-                   .fillColor('#424242')
-                   .text('Obligation de négocier et formalisation:', 
-                         50, footerStartY + yOffset, { width: doc.page.width - 100 });
-                yOffset += 9;
-
-                doc.fontSize(7)
-                   .fillColor('#757575')
-                   .text('Les parties s\'engagent à négocier de bonne foi en vue de conclure un compromis de vente chez un notaire, puis un acte authentique de vente définitif, conformément aux articles 1104 et 1135 du Code civil relatifs à la bonne foi dans les contrats.', 
-                         50, footerStartY + yOffset, { align: 'left', width: doc.page.width - 100, lineGap: 3 });
-                yOffset += 18;
-
-                doc.fontSize(8)
+                doc.fontSize(6)
                    .fillColor('#2E7D32')
                    .text(`Référence: ${offer.id}`, 
-                         50, footerStartY + yOffset, { align: 'center', width: doc.page.width - 100 });
+                         30, footerStartY + yOffset, { align: 'center', width: doc.page.width - 60 });
 
                 doc.end();
 

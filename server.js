@@ -1407,11 +1407,17 @@ app.get('/api/offers/:id/verify-signature-email', async (req, res) => {
 // Ajouter une signature électronique à une offre acceptée (après vérification email)
 app.post('/api/offers/:id/sign', async (req, res) => {
     try {
-        const { actorId, actorName, actorEmail, signatureType } = req.body;
+        const { actorId, actorName, actorEmail, signatureType, prenom, nom, dateNaissance, adresse } = req.body;
         
         if (!actorId || !actorName || !actorEmail || !signatureType) {
             return res.status(400).json({ 
                 error: 'actorId, actorName, actorEmail et signatureType sont requis' 
+            });
+        }
+        
+        if (!prenom || !nom || !dateNaissance || !adresse) {
+            return res.status(400).json({ 
+                error: 'prenom, nom, dateNaissance et adresse sont requis' 
             });
         }
 
@@ -1456,8 +1462,8 @@ app.post('/api/offers/:id/sign', async (req, res) => {
             return res.status(400).json({ error: 'Vous avez déjà signé cette proposition' });
         }
 
-        // Finaliser la signature (mettre à jour le timestamp)
-        await offerService.finalizeSignature(req.params.id, actorId);
+        // Finaliser la signature (mettre à jour le timestamp et les informations personnelles)
+        await offerService.finalizeSignature(req.params.id, actorId, prenom, nom, dateNaissance, adresse);
 
         // Récupérer toutes les signatures (uniquement celles vérifiées et finalisées)
         const signatures = await offerService.getSignaturesByOfferId(req.params.id);

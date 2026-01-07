@@ -83,6 +83,10 @@ class OfferService {
                 pdf_path TEXT,
                 email_verification_token TEXT,
                 email_verified INTEGER DEFAULT 0,
+                prenom TEXT,
+                nom TEXT,
+                date_naissance TEXT,
+                adresse TEXT,
                 FOREIGN KEY (offer_id) REFERENCES offers(id)
             )
         `;
@@ -171,6 +175,27 @@ class OfferService {
                     }
                 }
             );
+            
+            // Migration: Ajouter les colonnes pour les informations personnelles si elles n'existent pas
+            const columnsToAdd = [
+                { name: 'prenom', type: 'TEXT' },
+                { name: 'nom', type: 'TEXT' },
+                { name: 'date_naissance', type: 'TEXT' },
+                { name: 'adresse', type: 'TEXT' }
+            ];
+            
+            columnsToAdd.forEach(column => {
+                this.db.run(
+                    `ALTER TABLE offer_signatures ADD COLUMN ${column.name} ${column.type}`,
+                    (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            console.error(`❌ Erreur ajout colonne ${column.name}:`, err);
+                        } else if (!err) {
+                            console.log(`✅ Colonne ${column.name} ajoutée à offer_signatures`);
+                        }
+                    }
+                );
+            });
         });
     }
 
@@ -692,13 +717,13 @@ class OfferService {
     }
 
     /**
-     * Finaliser une signature (mettre à jour le timestamp de signature)
+     * Finaliser une signature (mettre à jour le timestamp de signature et les informations personnelles)
      */
-    async finalizeSignature(offerId, userId) {
+    async finalizeSignature(offerId, userId, prenom = null, nom = null, dateNaissance = null, adresse = null) {
         return new Promise((resolve, reject) => {
             const now = new Date().toISOString();
-            const query = `UPDATE offer_signatures SET signature_timestamp = ? WHERE offer_id = ? AND user_id = ? AND email_verified = 1`;
-            this.db.run(query, [now, offerId, userId], function(err) {
+            const query = `UPDATE offer_signatures SET signature_timestamp = ?, prenom = ?, nom = ?, date_naissance = ?, adresse = ? WHERE offer_id = ? AND user_id = ? AND email_verified = 1`;
+            this.db.run(query, [now, prenom, nom, dateNaissance, adresse, offerId, userId], function(err) {
                 if (err) {
                     console.error('❌ Erreur finalisation signature:', err);
                     reject(err);

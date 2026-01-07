@@ -201,7 +201,6 @@ class PolygonService {
                         isPublic: true,
                         viewCount: row.view_count || 0
                     }));
-                    console.log(`✅ ${polygons.length} polygones publics récupérés`);
                     resolve(polygons);
                 }
             });

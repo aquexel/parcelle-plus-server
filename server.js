@@ -305,15 +305,12 @@ app.get('/api/polygons/public', async (req, res) => {
     try {
         const { limit = 100 } = req.query;
         
-        console.log(`🌐 Récupération polygones publics`);
         // Récupérer tous les polygones et filtrer les publics
         const allPolygons = await polygonService.getAllPolygons(null, limit);
         const publicPolygons = allPolygons.filter(p => 
             (p.is_public === 1 || p.is_public === true || p.isPublic === true) && 
             (p.status === 'active' || p.status === 'available')
         );
-        console.log(`✅ ${publicPolygons.length} polygones publics trouvés sur ${allPolygons.length} total`);
-        console.log('🔍 Debug polygones:', allPolygons.map(p => ({title: p.title, is_public: p.is_public, status: p.status})));
         res.json(publicPolygons);
     } catch (error) {
         console.error('❌ Erreur récupération polygones publics:', error);

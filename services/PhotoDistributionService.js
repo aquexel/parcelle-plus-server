@@ -52,6 +52,21 @@ class PhotoDistributionService {
             )
         `;
         
+        // Table pour les demandes silencieuses de photos (P2P)
+        const createPhotoRequestsTable = `
+            CREATE TABLE IF NOT EXISTS photo_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                announcement_id TEXT NOT NULL,
+                photo_index INTEGER NOT NULL,
+                requested_from_user_id TEXT NOT NULL,
+                requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                fulfilled INTEGER DEFAULT 0,
+                fulfilled_at DATETIME,
+                FOREIGN KEY (announcement_id) REFERENCES polygons(id) ON DELETE CASCADE,
+                UNIQUE(announcement_id, photo_index, requested_from_user_id)
+            )
+        `;
+        
         // Index pour améliorer les performances
         const createIndexes = [
             `CREATE INDEX IF NOT EXISTS idx_photo_clients_announcement ON photo_clients(announcement_id, photo_index)`,
@@ -59,7 +74,9 @@ class PhotoDistributionService {
             `CREATE INDEX IF NOT EXISTS idx_photo_clients_last_seen ON photo_clients(last_seen)`,
             `CREATE INDEX IF NOT EXISTS idx_photo_clients_version ON photo_clients(announcement_id, photo_index, photo_version)`,
             `CREATE INDEX IF NOT EXISTS idx_photo_versions_announcement ON photo_versions(announcement_id, photo_index)`,
-            `CREATE INDEX IF NOT EXISTS idx_photo_versions_current ON photo_versions(announcement_id, photo_index, is_current)`
+            `CREATE INDEX IF NOT EXISTS idx_photo_versions_current ON photo_versions(announcement_id, photo_index, is_current)`,
+            `CREATE INDEX IF NOT EXISTS idx_photo_requests_user ON photo_requests(requested_from_user_id, fulfilled)`,
+            `CREATE INDEX IF NOT EXISTS idx_photo_requests_announcement ON photo_requests(announcement_id, photo_index)`
         ];
         
         this.db.run(createPhotoClientsTable, (err) => {
@@ -75,19 +92,28 @@ class PhotoDistributionService {
                     } else {
                         console.log('✅ Table photo_versions initialisée');
                         
-                        // Créer les index
-                        createIndexes.forEach(indexQuery => {
-                            this.db.run(indexQuery, (err) => {
-                                if (err && !err.message.includes('already exists')) {
-                                    console.error('❌ Erreur création index:', err);
-                                }
-                            });
-                        });
-                        
-                        // Ajouter la colonne photo_version si elle n'existe pas (migration)
-                        this.db.run(`ALTER TABLE photo_clients ADD COLUMN photo_version TEXT DEFAULT '1'`, (err) => {
-                            if (err && !err.message.includes('duplicate column')) {
-                                // Colonne existe déjà, pas de problème
+                        // Créer la table des demandes silencieuses
+                        this.db.run(createPhotoRequestsTable, (err) => {
+                            if (err) {
+                                console.error('❌ Erreur création table photo_requests:', err);
+                            } else {
+                                console.log('✅ Table photo_requests initialisée');
+                                
+                                // Créer les index
+                                createIndexes.forEach(indexQuery => {
+                                    this.db.run(indexQuery, (err) => {
+                                        if (err && !err.message.includes('already exists')) {
+                                            console.error('❌ Erreur création index:', err);
+                                        }
+                                    });
+                                });
+                                
+                                // Ajouter la colonne photo_version si elle n'existe pas (migration)
+                                this.db.run(`ALTER TABLE photo_clients ADD COLUMN photo_version TEXT DEFAULT '1'`, (err) => {
+                                    if (err && !err.message.includes('duplicate column')) {
+                                        // Colonne existe déjà, pas de problème
+                                    }
+                                });
                             }
                         });
                     }
@@ -451,6 +477,85 @@ class PhotoDistributionService {
         } catch (error) {
             console.error('❌ Erreur nettoyage automatique:', error);
         }
+    }
+    
+    /**
+     * Enregistre une demande silencieuse de photo (P2P)
+     */
+    registerSilentPhotoRequest(announcementId, photoIndex, requestedFromUserId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                INSERT OR IGNORE INTO photo_requests 
+                (announcement_id, photo_index, requested_from_user_id, requested_at, fulfilled)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, 0)
+            `;
+            
+            this.db.run(query, [announcementId, photoIndex, requestedFromUserId], function(err) {
+                if (err) {
+                    console.error('❌ Erreur enregistrement demande silencieuse:', err);
+                    reject(err);
+                } else {
+                    if (this.changes > 0) {
+                        console.log(`📋 Demande silencieuse enregistrée: ${announcementId}/${photoIndex} depuis ${requestedFromUserId}`);
+                    }
+                    resolve(this.changes > 0);
+                }
+            });
+        });
+    }
+    
+    /**
+     * Récupère les demandes de photos en attente pour un utilisateur
+     */
+    getPendingPhotoRequests(userId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT pr.announcement_id, pr.photo_index, pr.requested_at
+                FROM photo_requests pr
+                INNER JOIN photo_clients pc ON 
+                    pc.announcement_id = pr.announcement_id AND 
+                    pc.photo_index = pr.photo_index AND
+                    pc.client_user_id = pr.requested_from_user_id AND
+                    pc.has_photo = 1
+                WHERE pr.requested_from_user_id = ? AND pr.fulfilled = 0
+                ORDER BY pr.requested_at ASC
+            `;
+            
+            this.db.all(query, [userId], (err, rows) => {
+                if (err) {
+                    console.error('❌ Erreur récupération demandes silencieuses:', err);
+                    reject(err);
+                } else {
+                    resolve(rows.map(row => ({
+                        announcementId: row.announcement_id,
+                        photoIndex: row.photo_index,
+                        requestedAt: row.requested_at
+                    })));
+                }
+            });
+        });
+    }
+    
+    /**
+     * Marque une demande comme satisfaite
+     */
+    markRequestFulfilled(announcementId, photoIndex, userId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                UPDATE photo_requests 
+                SET fulfilled = 1, fulfilled_at = CURRENT_TIMESTAMP
+                WHERE announcement_id = ? AND photo_index = ? AND requested_from_user_id = ?
+            `;
+            
+            this.db.run(query, [announcementId, photoIndex, userId], function(err) {
+                if (err) {
+                    console.error('❌ Erreur marquage demande comme satisfaite:', err);
+                    reject(err);
+                } else {
+                    resolve(this.changes > 0);
+                }
+            });
+        });
     }
     
     /**

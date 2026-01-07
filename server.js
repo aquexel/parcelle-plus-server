@@ -451,6 +451,28 @@ app.put('/api/polygons/:id', async (req, res) => {
     }
 });
 
+// Marquer une demande de photo comme satisfaite
+app.post('/api/polygons/:id/photos/:index/mark-fulfilled', async (req, res) => {
+    try {
+        const announcementId = req.params.id;
+        const photoIndex = parseInt(req.params.index);
+        const userId = req.body.user_id || req.headers['x-user-id'];
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'user_id requis' });
+        }
+        
+        await photoDistributionService.markRequestFulfilled(announcementId, photoIndex, userId);
+        
+        res.json({
+            success: true
+        });
+    } catch (error) {
+        console.error('❌ Erreur marquage demande comme satisfaite:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
 // Upload de photos pour une annonce (tampon temporaire) ou mise à jour
 app.post('/api/polygons/:id/photos', upload.single('photo'), async (req, res) => {
     try {
@@ -605,12 +627,38 @@ app.post('/api/polygons/:id/photos/:index/register-client', async (req, res) => 
         // Vérifier si le serveur peut supprimer la photo
         const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
         
+        // Vérifier s'il y a des demandes silencieuses pour cet utilisateur
+        const pendingRequests = await photoDistributionService.getPendingPhotoRequests(userId);
+        
         res.json({
             success: true,
-            canCleanupServer: canCleanup
+            canCleanupServer: canCleanup,
+            pendingPhotoRequests: pendingRequests // Retourner les demandes silencieuses
         });
     } catch (error) {
         console.error('❌ Erreur enregistrement client photo:', error);
+        res.status(500).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Récupérer les demandes de photos en attente pour un utilisateur (endpoint dédié)
+app.get('/api/photos/pending-requests', async (req, res) => {
+    try {
+        const userId = req.query.user_id || req.headers['x-user-id'];
+        
+        if (!userId) {
+            return res.status(400).json({ error: 'user_id requis' });
+        }
+        
+        const pendingRequests = await photoDistributionService.getPendingPhotoRequests(userId);
+        
+        res.json({
+            success: true,
+            requests: pendingRequests,
+            count: pendingRequests.length
+        });
+    } catch (error) {
+        console.error('❌ Erreur récupération demandes silencieuses:', error);
         res.status(500).json({ error: error.message || 'Erreur serveur' });
     }
 });
@@ -621,22 +669,52 @@ app.get('/api/polygons/:id/photos/:index', async (req, res) => {
         const announcementId = req.params.id;
         const photoIndex = parseInt(req.params.index);
         
-        // Vérifier que le serveur a encore la photo
-        const canCleanup = await photoDistributionService.canCleanupServerPhoto(announcementId, photoIndex);
-        
         // Chercher les fichiers correspondants
         const photoPattern = `announcement_${announcementId}_photo_${photoIndex}_`;
         const allFiles = fs.readdirSync(photosDir);
         const matchingFiles = allFiles.filter(f => f.startsWith(photoPattern) && f.endsWith('.jpg'));
         
         if (matchingFiles.length === 0) {
+            // Le serveur n'a plus la photo, enregistrer une demande silencieuse (P2P)
+            console.log(`⚠️ Photo non trouvée sur serveur, recherche sources P2P: ${announcementId}/${photoIndex}`);
+            
+            const sources = await photoDistributionService.findPhotoSources(announcementId, photoIndex);
+            
+            if (sources && sources.length > 0) {
+                // Trouver une source non-serveur (vendeur ou autre client) - priorité au vendeur
+                const nonServerSource = sources.find(s => s.isSeller && !s.isServer) || sources.find(s => !s.isServer);
+                
+                if (nonServerSource) {
+                    console.log(`📋 Enregistrement demande silencieuse P2P: client ${nonServerSource.userId} pour photo ${announcementId}/${photoIndex}`);
+                    
+                    // Enregistrer une demande silencieuse dans la base de données
+                    try {
+                        await photoDistributionService.registerSilentPhotoRequest(announcementId, photoIndex, nonServerSource.userId);
+                        console.log(`✅ Demande silencieuse enregistrée - le client ${nonServerSource.userId} ré-uploadera automatiquement`);
+                    } catch (reqError) {
+                        console.error('❌ Erreur enregistrement demande silencieuse:', reqError);
+                    }
+                }
+                
+                // Retourner 404 - le client devra réessayer après que la photo soit ré-uploadée
+                return res.status(404).json({ 
+                    error: 'Photo non trouvée sur serveur',
+                    announcementId: announcementId,
+                    photoIndex: photoIndex,
+                    sourcesAvailable: sources.length > 0,
+                    p2pRequestRegistered: nonServerSource != null
+                });
+            }
+            
+            // Aucune source disponible
             return res.status(404).json({ 
                 error: 'Photo non trouvée',
                 announcementId: announcementId,
                 photoIndex: photoIndex,
                 pattern: photoPattern,
                 totalFiles: allFiles.length,
-                matchingFiles: 0
+                matchingFiles: 0,
+                sourcesAvailable: false
             });
         }
         

@@ -295,7 +295,43 @@ app.get('/api/polygons/public', async (req, res) => {
             (p.is_public === 1 || p.is_public === true || p.isPublic === true) && 
             (p.status === 'active' || p.status === 'available')
         );
-        res.json(publicPolygons);
+        
+        // Ajouter le nombre de photos pour chaque polygone (via système P2P)
+        const polygonsWithPhotos = await Promise.all(publicPolygons.map(async (polygon) => {
+            let photoCount = 0;
+            try {
+                // Utiliser le service P2P pour compter les photos disponibles
+                photoCount = await photoDistributionService.getAnnouncementPhotoCount(polygon.id);
+            } catch (err) {
+                // Si erreur P2P, essayer de compter depuis le serveur comme fallback
+                try {
+                    const photoPattern = `announcement_${polygon.id}_photo_`;
+                    if (fs.existsSync(photosDir)) {
+                        const allFiles = fs.readdirSync(photosDir);
+                        const photoIndices = new Set();
+                        allFiles.forEach(file => {
+                            if (file.startsWith(photoPattern) && file.endsWith('.jpg')) {
+                                const match = file.match(new RegExp(`announcement_${polygon.id}_photo_(\\d+)_`));
+                                if (match && match[1]) {
+                                    photoIndices.add(parseInt(match[1]));
+                                }
+                            }
+                        });
+                        photoCount = photoIndices.size;
+                    }
+                } catch (fsErr) {
+                    // Ignorer les erreurs de lecture du dossier photos
+                }
+            }
+            
+            return {
+                ...polygon,
+                photoCount: photoCount,
+                photo_urls: photoCount > 0 ? Array.from({ length: photoCount }, (_, i) => `/api/polygons/${polygon.id}/photos/${i}`) : []
+            };
+        }));
+        
+        res.json(polygonsWithPhotos);
     } catch (error) {
         console.error('❌ Erreur récupération polygones publics:', error);
         res.status(500).json({ error: 'Erreur serveur' });

@@ -83,21 +83,18 @@ class PhotoDistributionService {
             if (err) {
                 console.error('❌ Erreur création table photo_clients:', err);
             } else {
-                console.log('✅ Table photo_clients initialisée');
                 
                 // Créer la table des versions
                 this.db.run(createPhotoVersionsTable, (err) => {
                     if (err) {
                         console.error('❌ Erreur création table photo_versions:', err);
                     } else {
-                        console.log('✅ Table photo_versions initialisée');
                         
                         // Créer la table des demandes silencieuses
                         this.db.run(createPhotoRequestsTable, (err) => {
                             if (err) {
                                 console.error('❌ Erreur création table photo_requests:', err);
                             } else {
-                                console.log('✅ Table photo_requests initialisée');
                                 
                                 // Créer les index
                                 createIndexes.forEach(indexQuery => {
@@ -159,7 +156,6 @@ class PhotoDistributionService {
                 console.error('❌ Erreur enregistrement source photo:', err);
                 reject(err);
             } else {
-                console.log(`✅ Photo ${announcementId}/photo_${photoIndex} (v${version}) enregistrée - Source: ${isServer ? 'serveur' : isSeller ? 'vendeur' : 'client'} ${userId}`);
                 resolve(version);
             }
         });
@@ -196,7 +192,6 @@ class PhotoDistributionService {
                         console.error('❌ Erreur création version photo:', err);
                         reject(err);
                     } else {
-                        console.log(`✅ Nouvelle version ${version} créée pour photo ${announcementId}/photo_${photoIndex}`);
                         
                         // Notifier les clients qui ont une ancienne version
                         this.notifyClientsOfPhotoUpdate(announcementId, photoIndex, version);
@@ -280,7 +275,6 @@ class PhotoDistributionService {
     notifyClientsOfPhotoUpdate(announcementId, photoIndex, newVersion) {
         this.getClientsNeedingUpdate(announcementId, photoIndex, newVersion).then(clientIds => {
             if (clientIds.length > 0) {
-                console.log(`📢 ${clientIds.length} client(s) notifié(s) de la mise à jour photo ${announcementId}/photo_${photoIndex} (v${newVersion})`);
                 // TODO: Implémenter notification WebSocket ou push notification
             }
         }).catch(err => {
@@ -399,7 +393,6 @@ class PhotoDistributionService {
                     console.error('❌ Erreur marquage photo serveur supprimée:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ Photo ${announcementId}/photo_${photoIndex} marquée comme supprimée du serveur`);
                     resolve();
                 }
             });
@@ -429,12 +422,34 @@ class PhotoDistributionService {
     }
     
     /**
+     * Compte le nombre de photos disponibles pour une annonce (via P2P)
+     * Retourne le nombre de photo_index distincts qui ont au moins une source
+     */
+    getAnnouncementPhotoCount(announcementId) {
+        return new Promise((resolve, reject) => {
+            const query = `
+                SELECT COUNT(DISTINCT photo_index) as count
+                FROM photo_clients
+                WHERE announcement_id = ? AND has_photo = 1
+            `;
+            
+            this.db.get(query, [announcementId], (err, row) => {
+                if (err) {
+                    console.error('❌ Erreur comptage photos annonce:', err);
+                    reject(err);
+                } else {
+                    resolve(row ? row.count : 0);
+                }
+            });
+        });
+    }
+    
+    /**
      * Nettoyage automatique : supprime les photos du serveur si assez de clients les ont
      * IMPORTANT: Le vendeur conserve toujours ses photos localement et reste une source
      */
     async cleanupOldPhotos() {
         try {
-            console.log('🧹 Nettoyage automatique des photos serveur...');
             
             // Récupérer toutes les photos du serveur (pas les vendeurs - ils gardent toujours leurs photos)
             const query = `
@@ -461,17 +476,13 @@ class PhotoDistributionService {
                             // Marquer comme supprimé (le fichier sera supprimé par le serveur)
                             await this.markServerPhotoRemoved(row.announcement_id, row.photo_index);
                             cleanedCount++;
-                            console.log(`✅ Photo ${row.announcement_id}/photo_${row.photo_index} supprimée du serveur (${sources.length} source(s) restante(s))`);
                         } else {
-                            console.log(`⚠️ Photo ${row.announcement_id}/photo_${row.photo_index} conservée sur serveur (aucune autre source)`);
                         }
                     }
                 }
                 
                 if (cleanedCount > 0) {
-                    console.log(`✅ ${cleanedCount} photo(s) marquée(s) pour suppression du serveur (vendeurs conservent leurs photos)`);
                 } else {
-                    console.log('ℹ️ Aucune photo à nettoyer');
                 }
             });
         } catch (error) {
@@ -496,7 +507,6 @@ class PhotoDistributionService {
                     reject(err);
                 } else {
                     if (this.changes > 0) {
-                        console.log(`📋 Demande silencieuse enregistrée: ${announcementId}/${photoIndex} depuis ${requestedFromUserId}`);
                     }
                     resolve(this.changes > 0);
                 }
@@ -572,7 +582,6 @@ class PhotoDistributionService {
             this.cleanupOldPhotos();
         }, 60 * 60 * 1000);
         
-        console.log('✅ Scheduler de nettoyage photo démarré');
     }
 }
 

@@ -2491,7 +2491,7 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             const Database = require('better-sqlite3');
             const db = new Database(reiDbPath, { readonly: true });
             
-            // Requête pour récupérer les données REI de la commune avec tarifs VLF (utiliser noms de colonnes avec underscores)
+            // Requête pour récupérer les données REI de la commune avec tarifs VLF, TEOM et GEMAPI (utiliser noms de colonnes avec underscores)
             const stmt = db.prepare(`
                 SELECT 
                     code_commune as codeCommune,
@@ -2507,6 +2507,12 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
                     base_nette_tse as baseNetteTSE,
                     taux_tse as tauxTSE,
                     montant_reel_tse as montantReelTSE,
+                    base_nette_gemapi as baseNetteGEMAPI,
+                    taux_gemapi as tauxGEMAPI,
+                    montant_reel_gemapi as montantReelGEMAPI,
+                    base_nette_teom as baseNetteTEOM,
+                    taux_teom as tauxTEOM,
+                    montant_reel_teom as montantReelTEOM,
                     vlf_categorie5_appartement as vlfCategorie5Appartement,
                     vlf_categorie5_maison as vlfCategorie5Maison,
                     annee
@@ -2542,6 +2548,12 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
                         base_nette_tse as baseNetteTSE,
                         taux_tse as tauxTSE,
                         montant_reel_tse as montantReelTSE,
+                        base_nette_gemapi as baseNetteGEMAPI,
+                        taux_gemapi as tauxGEMAPI,
+                        montant_reel_gemapi as montantReelGEMAPI,
+                        base_nette_teom as baseNetteTEOM,
+                        taux_teom as tauxTEOM,
+                        montant_reel_teom as montantReelTEOM,
                         vlf_categorie5_appartement as vlfCategorie5Appartement,
                         vlf_categorie5_maison as vlfCategorie5Maison,
                         annee
@@ -2571,7 +2583,7 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
         
         console.log(`✅ Données REI trouvées: ${donneesRei.nomCommune} (${donneesRei.codeDepartement}) - Année ${donneesRei.annee}`);
         
-        // Retourner les données nécessaires avec tarifs VLF (format JSON)
+        // Retourner les données nécessaires avec tarifs VLF, TEOM et GEMAPI (format JSON)
         res.json({
             codeCommune: donneesRei.codeCommune,
             codeDepartement: donneesRei.codeDepartement,
@@ -2587,6 +2599,12 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             baseNetteTSE: donneesRei.baseNetteTSE,
             tauxTSE: donneesRei.tauxTSE,
             montantReelTSE: donneesRei.montantReelTSE,
+            baseNetteGEMAPI: donneesRei.baseNetteGEMAPI || null,
+            tauxGEMAPI: donneesRei.tauxGEMAPI || null,
+            montantReelGEMAPI: donneesRei.montantReelGEMAPI || null,
+            baseNetteTEOM: donneesRei.baseNetteTEOM || null,
+            tauxTEOM: donneesRei.tauxTEOM || null,
+            montantReelTEOM: donneesRei.montantReelTEOM || null,
             vlfCategorie5Appartement: donneesRei.vlfCategorie5Appartement || null,
             vlfCategorie5Maison: donneesRei.vlfCategorie5Maison || null
         });

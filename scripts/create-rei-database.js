@@ -80,6 +80,8 @@ function getReiCsvUrl(year) {
 
 // Colonnes à extraire du CSV (indices dans le fichier)
 // D'après l'analyse : DEP=0, COM=2, LIBCOM=4, E11=69, E12=70, E13=72, E31=81, E32=82, E33=84, E51=87, E52=88, E53=89
+// TEOM: F61=126 (base), F62=127 (taux), F63=128 (montant)
+// GEMAPI: E51gGEMAPI=99 (base), E52gGEMAPI=100 (taux), E53gGEMAPI=101 (montant)
 const COLUMNS_MAP = {
     'DEP': 0,           // Département
     'COM': 2,           // Code commune
@@ -92,7 +94,13 @@ const COLUMNS_MAP = {
     'E33': 84,          // Montant réel départemental/EPCI (€)
     'E51': 87,          // Base nette TSE (€)
     'E52': 88,          // Taux TSE (%)
-    'E53': 89           // Montant réel TSE (€)
+    'E53': 89,          // Montant réel TSE (€)
+    'E51gGEMAPI': 99,   // Base nette GEMAPI (€)
+    'E52gGEMAPI': 100,  // Taux GEMAPI (%)
+    'E53gGEMAPI': 101,  // Montant réel GEMAPI (€)
+    'F61': 126,         // Base nette TEOM (€)
+    'F62': 127,         // Taux TEOM (%)
+    'F63': 128          // Montant réel TEOM (€)
 };
 
 // Fonction pour parser un nombre (gère les virgules et espaces français)
@@ -592,6 +600,12 @@ async function createReiDatabase() {
                 base_nette_tse REAL,
                 taux_tse REAL,
                 montant_reel_tse REAL,
+                base_nette_gemapi REAL,
+                taux_gemapi REAL,
+                montant_reel_gemapi REAL,
+                base_nette_teom REAL,
+                taux_teom REAL,
+                montant_reel_teom REAL,
                 vlf_categorie5_appartement REAL,
                 vlf_categorie5_maison REAL,
                 annee INTEGER,
@@ -643,15 +657,17 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
     let isHeader = true;
     const year = fileInfo.year;
     
-    // Préparer la requête d'insertion avec colonnes VLF (transaction pour performance)
+    // Préparer la requête d'insertion avec colonnes VLF, TEOM et GEMAPI (transaction pour performance)
     const insertStmt = db.prepare(`
         INSERT INTO rei_communes (
             code_commune, code_departement, code_commune_insee, nom_commune,
             base_nette_commune, taux_commune, montant_reel_commune,
             base_nette_departement, taux_departement, montant_reel_departement,
             base_nette_tse, taux_tse, montant_reel_tse,
+            base_nette_gemapi, taux_gemapi, montant_reel_gemapi,
+            base_nette_teom, taux_teom, montant_reel_teom,
             vlf_categorie5_appartement, vlf_categorie5_maison, annee
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     // Interface readline pour lire ligne par ligne (efficace pour gros fichiers)
@@ -682,8 +698,8 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
         // Parser la ligne (point-virgule comme séparateur)
         const values = line.split(';');
         
-        // Vérifier qu'on a assez de colonnes
-        if (values.length < 90) {
+        // Vérifier qu'on a assez de colonnes (F63 est à l'indice 128, donc besoin d'au moins 129 colonnes)
+        if (values.length < 129) {
             return; // Ignorer les lignes incomplètes
         }
         
@@ -699,7 +715,7 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
         
         const codeCommune = dep + com;
         
-        // Parser les nombres (colonnes E)
+        // Parser les nombres (colonnes E pour TFPB)
         const e11 = parseNumber(values[COLUMNS_MAP.E11]);
         const e12 = parseNumber(values[COLUMNS_MAP.E12]);
         const e13 = parseNumber(values[COLUMNS_MAP.E13]);
@@ -710,12 +726,22 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
         const e52 = parseNumber(values[COLUMNS_MAP.E52]);
         const e53 = parseNumber(values[COLUMNS_MAP.E53]);
         
+        // Parser les nombres (colonnes GEMAPI pour propriétés bâties)
+        const e51gGEMAPI = parseNumber(values[COLUMNS_MAP.E51gGEMAPI]);
+        const e52gGEMAPI = parseNumber(values[COLUMNS_MAP.E52gGEMAPI]);
+        const e53gGEMAPI = parseNumber(values[COLUMNS_MAP.E53gGEMAPI]);
+        
+        // Parser les nombres (colonnes F pour TEOM)
+        const f61 = parseNumber(values[COLUMNS_MAP.F61]);
+        const f62 = parseNumber(values[COLUMNS_MAP.F62]);
+        const f63 = parseNumber(values[COLUMNS_MAP.F63]);
+        
         // Récupérer les tarifs VLF pour cette commune (catégorie 5)
         const vlfTarifs = vlfTarifsMap[codeCommune] || {};
         const vlfAppartement = vlfTarifs.appartement || null;
         const vlfMaison = vlfTarifs.maison || null;
         
-        // Ajouter à la liste avec l'année et les tarifs VLF
+        // Ajouter à la liste avec l'année, les tarifs VLF, TEOM et GEMAPI
         rows.push({
             codeCommune,
             dep,
@@ -724,6 +750,8 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
             e11, e12, e13,
             e31, e32, e33,
             e51, e52, e53,
+            e51gGEMAPI, e52gGEMAPI, e53gGEMAPI,
+            f61, f62, f63,
             vlfAppartement,
             vlfMaison,
             year: year // Utiliser l'année du fichier en cours
@@ -877,6 +905,8 @@ function insertBatchSync(db, stmt, rows) {
                 row.e11, row.e12, row.e13,
                 row.e31, row.e32, row.e33,
                 row.e51, row.e52, row.e53,
+                row.e51gGEMAPI, row.e52gGEMAPI, row.e53gGEMAPI,  // GEMAPI
+                row.f61, row.f62, row.f63,  // TEOM
                 row.vlfAppartement,  // vlf_categorie5_appartement
                 row.vlfMaison,       // vlf_categorie5_maison
                 row.year || mainYear || getCurrentYear()

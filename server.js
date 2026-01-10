@@ -2500,6 +2500,158 @@ app.get('/api/rei/info', async (req, res) => {
     }
 });
 
+// Obtenir les données REI pour une commune spécifique (code INSEE 5 chiffres)
+// Retourne uniquement les données nécessaires pour le calcul de taxe foncière
+app.get('/api/rei/commune/:codeCommune', async (req, res) => {
+    try {
+        const codeCommune = req.params.codeCommune;
+        
+        // Valider le format du code commune (5 chiffres)
+        if (!/^\d{5}$/.test(codeCommune)) {
+            return res.status(400).json({ 
+                error: 'Code commune invalide',
+                message: 'Le code commune doit être composé de 5 chiffres (format INSEE)'
+            });
+        }
+        
+        console.log(`🔍 Recherche données REI pour commune: ${codeCommune}`);
+        
+        // Calculer dynamiquement N et N-1 à partir de la date actuelle du serveur
+        const serverDate = new Date();
+        const currentYear = serverDate.getFullYear();
+        const previousYear = currentYear - 1;
+        
+        // Chercher d'abord l'année N (date serveur), puis N-1 si N n'existe pas
+        let reiDbPath = path.join(__dirname, 'database', `rei_${currentYear}.db`);
+        let selectedYear = currentYear;
+        
+        if (!fs.existsSync(reiDbPath)) {
+            reiDbPath = path.join(__dirname, 'database', `rei_${previousYear}.db`);
+            selectedYear = previousYear;
+        }
+        
+        if (!fs.existsSync(reiDbPath)) {
+            return res.status(404).json({ 
+                error: 'Base REI non disponible',
+                message: `Aucune base REI trouvée pour ${currentYear} ni ${previousYear}`,
+                codeCommune: codeCommune
+            });
+        }
+        
+        // Utiliser better-sqlite3 pour interroger la base (si disponible, sinon sqlite3)
+        let donneesRei = null;
+        try {
+            const Database = require('better-sqlite3');
+            const db = new Database(reiDbPath, { readonly: true });
+            
+            // Requête pour récupérer les données REI de la commune
+            const stmt = db.prepare(`
+                SELECT 
+                    codeCommune,
+                    codeDepartement,
+                    codeCommuneInsee,
+                    nomCommune,
+                    baseNetteCommune,
+                    tauxCommune,
+                    montantReelCommune,
+                    baseNetteDepartement,
+                    tauxDepartement,
+                    montantReelDepartement,
+                    baseNetteTSE,
+                    tauxTSE,
+                    montantReelTSE,
+                    annee,
+                    nombreArticlesCommune
+                FROM rei_communes 
+                WHERE codeCommune = ? 
+                ORDER BY annee DESC 
+                LIMIT 1
+            `);
+            
+            donneesRei = stmt.get(codeCommune);
+            db.close();
+            
+        } catch (sqliteError) {
+            // Fallback sur sqlite3 si better-sqlite3 échoue
+            console.warn('⚠️ better-sqlite3 non disponible, utilisation de sqlite3');
+            const sqlite3 = require('sqlite3').verbose();
+            
+            donneesRei = await new Promise((resolve, reject) => {
+                const db = new sqlite3.Database(reiDbPath, sqlite3.OPEN_READONLY);
+                
+                db.get(`
+                    SELECT 
+                        codeCommune,
+                        codeDepartement,
+                        codeCommuneInsee,
+                        nomCommune,
+                        baseNetteCommune,
+                        tauxCommune,
+                        montantReelCommune,
+                        baseNetteDepartement,
+                        tauxDepartement,
+                        montantReelDepartement,
+                        baseNetteTSE,
+                        tauxTSE,
+                        montantReelTSE,
+                        annee,
+                        nombreArticlesCommune
+                    FROM rei_communes 
+                    WHERE codeCommune = ? 
+                    ORDER BY annee DESC 
+                    LIMIT 1
+                `, [codeCommune], (err, row) => {
+                    db.close();
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(row);
+                    }
+                });
+            });
+        }
+        
+        if (!donneesRei) {
+            console.log(`⚠️ Aucune donnée REI trouvée pour la commune ${codeCommune}`);
+            return res.status(404).json({ 
+                error: 'Commune non trouvée',
+                message: `Aucune donnée REI disponible pour la commune ${codeCommune}`,
+                codeCommune: codeCommune,
+                year: selectedYear
+            });
+        }
+        
+        console.log(`✅ Données REI trouvées: ${donneesRei.nomCommune} (${donneesRei.codeDepartement}) - Année ${donneesRei.annee}`);
+        
+        // Retourner uniquement les données nécessaires (format JSON)
+        res.json({
+            codeCommune: donneesRei.codeCommune,
+            codeDepartement: donneesRei.codeDepartement,
+            codeCommuneInsee: donneesRei.codeCommuneInsee,
+            nomCommune: donneesRei.nomCommune,
+            annee: donneesRei.annee,
+            baseNetteCommune: donneesRei.baseNetteCommune,
+            tauxCommune: donneesRei.tauxCommune,
+            montantReelCommune: donneesRei.montantReelCommune,
+            baseNetteDepartement: donneesRei.baseNetteDepartement,
+            tauxDepartement: donneesRei.tauxDepartement,
+            montantReelDepartement: donneesRei.montantReelDepartement,
+            baseNetteTSE: donneesRei.baseNetteTSE,
+            tauxTSE: donneesRei.tauxTSE,
+            montantReelTSE: donneesRei.montantReelTSE,
+            nombreArticlesCommune: donneesRei.nombreArticlesCommune
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur récupération données REI:', error);
+        res.status(500).json({ 
+            error: 'Erreur serveur',
+            message: error.message,
+            codeCommune: req.params.codeCommune
+        });
+    }
+});
+
 // Gestion des erreurs
 app.use((err, req, res, next) => {
     console.error('❌ Erreur serveur:', err);

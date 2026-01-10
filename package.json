@@ -15,23 +15,25 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "morgan": "^1.10.0",
-    "uuid": "^9.0.1",
-    "ws": "^8.14.2",
-    "better-sqlite3": "^9.2.2",
-    "sqlite3": "^5.1.6",
     "bcryptjs": "^2.4.3",
-    "nodemailer": "^7.0.12",
+    "cors": "^2.8.5",
     "csv-parser": "^3.0.0",
     "dotenv": "^16.3.1",
+    "express": "^4.18.2",
     "firebase-admin": "^13.6.0",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^7.0.12",
     "pdfkit": "^0.14.0",
-    "multer": "^1.4.5-lts.1"
+    "sqlite3": "^5.1.7",
+    "uuid": "^9.0.1",
+    "ws": "^8.14.2"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "sql.js": "^1.13.0",
+    "yauzl": "^3.2.0"
   }
 }
-

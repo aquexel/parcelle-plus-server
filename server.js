@@ -2384,6 +2384,122 @@ app.get('/api/safer/prix', saferRoute);
 const terrainsBatirRoute = require('./routes/terrainsBatirRoute');
 app.get('/api/terrains-batir/search', terrainsBatirRoute);
 
+// ========== ROUTE REI (TAXE FONCIERE) ==========
+
+// Télécharger la base SQLite REI optimisée pour le calcul de taxe foncière
+// Recherche d'abord l'année N (date serveur), puis N-1 si N n'existe pas
+app.get('/api/rei/download', async (req, res) => {
+    try {
+        // Calculer dynamiquement N et N-1 à partir de la date actuelle du serveur
+        const serverDate = new Date();
+        const currentYear = serverDate.getFullYear();
+        const previousYear = currentYear - 1;
+        
+        console.log(`📅 Recherche base REI - Date serveur: ${serverDate.toLocaleDateString('fr-FR')}`);
+        console.log(`   Année N (${currentYear}), Année N-1 (${previousYear})`);
+        
+        // Chercher d'abord l'année N (date serveur)
+        let reiDbPath = path.join(__dirname, 'database', `rei_${currentYear}.db`);
+        let selectedYear = currentYear;
+        
+        if (!fs.existsSync(reiDbPath)) {
+            // Chercher l'année N-1 (date serveur - 1)
+            console.log(`⚠️ Base REI ${currentYear} non trouvée, recherche année ${previousYear} (N-1)...`);
+            reiDbPath = path.join(__dirname, 'database', `rei_${previousYear}.db`);
+            selectedYear = previousYear;
+        }
+        
+        // Vérifier que le fichier existe
+        if (!fs.existsSync(reiDbPath)) {
+            console.warn(`⚠️ Base REI non trouvée: ${reiDbPath}`);
+            return res.status(404).json({ 
+                error: 'Base REI non disponible',
+                message: `Aucune base REI trouvée pour ${currentYear} ni ${previousYear}. Exécutez: node scripts/create-rei-database.js`
+            });
+        }
+        
+        // Obtenir les stats du fichier
+        const stats = fs.statSync(reiDbPath);
+        const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        
+        console.log(`📥 Téléchargement base REI ${selectedYear}: ${fileSizeMB} MB`);
+        
+        // Définir les headers pour le téléchargement
+        res.setHeader('Content-Type', 'application/x-sqlite3');
+        res.setHeader('Content-Disposition', `attachment; filename="rei_${selectedYear}.db"`);
+        res.setHeader('Content-Length', stats.size);
+        res.setHeader('X-REI-Year', selectedYear.toString()); // Header pour indiquer l'année
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache 1 heure
+        
+        // Envoyer le fichier
+        res.sendFile(path.resolve(reiDbPath));
+        
+    } catch (error) {
+        console.error('❌ Erreur téléchargement base REI:', error);
+        res.status(500).json({ 
+            error: 'Erreur serveur',
+            message: error.message 
+        });
+    }
+});
+
+// Obtenir les informations sur la base REI (taille, date de mise à jour, année, etc.)
+// Recherche d'abord l'année N (date serveur), puis N-1 si N n'existe pas
+app.get('/api/rei/info', async (req, res) => {
+    try {
+        // Calculer dynamiquement N et N-1 à partir de la date actuelle du serveur
+        const serverDate = new Date();
+        const currentYear = serverDate.getFullYear();
+        const previousYear = currentYear - 1;
+        
+        // Chercher d'abord l'année N (date serveur)
+        let reiDbPath = path.join(__dirname, 'database', `rei_${currentYear}.db`);
+        let selectedYear = currentYear;
+        
+        if (!fs.existsSync(reiDbPath)) {
+            // Chercher l'année N-1 (date serveur - 1)
+            reiDbPath = path.join(__dirname, 'database', `rei_${previousYear}.db`);
+            selectedYear = previousYear;
+        }
+        
+        if (!fs.existsSync(reiDbPath)) {
+            return res.status(404).json({ 
+                available: false,
+                message: `Aucune base REI trouvée pour ${currentYear} (N) ni ${previousYear} (N-1)`,
+                serverDate: serverDate.toISOString(),
+                currentYear: currentYear,
+                previousYear: previousYear,
+                searchedFiles: [
+                    `rei_${currentYear}.db`,
+                    `rei_${previousYear}.db`
+                ]
+            });
+        }
+        
+        const stats = fs.statSync(reiDbPath);
+        const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        const lastModified = stats.mtime.toISOString();
+        
+        res.json({
+            available: true,
+            filename: `rei_${selectedYear}.db`,
+            year: selectedYear,
+            sizeMB: parseFloat(fileSizeMB),
+            sizeBytes: stats.size,
+            lastModified: lastModified,
+            downloadUrl: '/api/rei/download',
+            isCurrentYear: selectedYear === currentYear
+        });
+        
+    } catch (error) {
+        console.error('❌ Erreur récupération infos REI:', error);
+        res.status(500).json({ 
+            error: 'Erreur serveur',
+            message: error.message 
+        });
+    }
+});
+
 // Gestion des erreurs
 app.use((err, req, res, next) => {
     console.error('❌ Erreur serveur:', err);

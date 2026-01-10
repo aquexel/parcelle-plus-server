@@ -488,6 +488,10 @@ function extractCsvFromZip(zipPath, targetPath, year) {
 let reiFiles = [];
 let mainYear = null; // Année principale (la plus récente)
 
+// Map pour stocker les tarifs VLF par commune (code commune -> { appartement: tarif, maison: tarif })
+// Format: { "40088": { appartement: 5.18, maison: 4.12 } }
+let vlfTarifsMap = {};
+
 // Fonction principale
 async function createReiDatabase() {
     // Calculer dynamiquement N, N-1, N-2 à partir de la date du serveur
@@ -553,6 +557,12 @@ async function createReiDatabase() {
         console.log(`🗑️  Ancienne base supprimée: ${path.basename(dbFile)}`);
     }
     
+    // Charger les tarifs VLF depuis le CSV des tarifs
+    console.log(`\n📊 Chargement des tarifs VLF (catégorie 5)...`);
+    await loadVlfTarifs();
+    const tarifsCount = Object.keys(vlfTarifsMap).length;
+    console.log(`✅ ${tarifsCount} communes avec tarifs VLF chargés`);
+    
     // Créer la base SQLite
     console.log(`\n📦 Création base SQLite: ${path.basename(dbFile)}`);
     const db = new sqlite3.Database(dbFile);
@@ -565,8 +575,8 @@ async function createReiDatabase() {
         db.run("PRAGMA cache_size = -32000"); // 32 MB
         db.run("PRAGMA temp_store = MEMORY");
         
-        // Créer la table
-        const createTable = `
+            // Créer la table avec colonnes VLF
+            const createTable = `
             CREATE TABLE IF NOT EXISTS rei_communes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code_commune TEXT NOT NULL,
@@ -582,6 +592,8 @@ async function createReiDatabase() {
                 base_nette_tse REAL,
                 taux_tse REAL,
                 montant_reel_tse REAL,
+                vlf_categorie5_appartement REAL,
+                vlf_categorie5_maison REAL,
                 annee INTEGER,
                 date_import INTEGER DEFAULT (strftime('%s', 'now'))
             )
@@ -631,14 +643,15 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
     let isHeader = true;
     const year = fileInfo.year;
     
-    // Préparer la requête d'insertion (transaction pour performance)
+    // Préparer la requête d'insertion avec colonnes VLF (transaction pour performance)
     const insertStmt = db.prepare(`
         INSERT INTO rei_communes (
             code_commune, code_departement, code_commune_insee, nom_commune,
             base_nette_commune, taux_commune, montant_reel_commune,
             base_nette_departement, taux_departement, montant_reel_departement,
-            base_nette_tse, taux_tse, montant_reel_tse, annee
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            base_nette_tse, taux_tse, montant_reel_tse,
+            vlf_categorie5_appartement, vlf_categorie5_maison, annee
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     // Interface readline pour lire ligne par ligne (efficace pour gros fichiers)
@@ -697,7 +710,12 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
         const e52 = parseNumber(values[COLUMNS_MAP.E52]);
         const e53 = parseNumber(values[COLUMNS_MAP.E53]);
         
-        // Ajouter à la liste avec l'année
+        // Récupérer les tarifs VLF pour cette commune (catégorie 5)
+        const vlfTarifs = vlfTarifsMap[codeCommune] || {};
+        const vlfAppartement = vlfTarifs.appartement || null;
+        const vlfMaison = vlfTarifs.maison || null;
+        
+        // Ajouter à la liste avec l'année et les tarifs VLF
         rows.push({
             codeCommune,
             dep,
@@ -706,6 +724,8 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
             e11, e12, e13,
             e31, e32, e33,
             e51, e52, e53,
+            vlfAppartement,
+            vlfMaison,
             year: year // Utiliser l'année du fichier en cours
         });
         
@@ -845,7 +865,7 @@ function processAllCsvFiles(db) {
     processNextFile(0);
 }
 
-// Fonction pour insérer un batch de lignes (synchrone pour performance)
+// Fonction pour insérer un batch de lignes avec tarifs VLF (synchrone pour performance)
 function insertBatchSync(db, stmt, rows) {
     rows.forEach((row) => {
         try {
@@ -857,6 +877,8 @@ function insertBatchSync(db, stmt, rows) {
                 row.e11, row.e12, row.e13,
                 row.e31, row.e32, row.e33,
                 row.e51, row.e52, row.e53,
+                row.vlfAppartement,  // vlf_categorie5_appartement
+                row.vlfMaison,       // vlf_categorie5_maison
                 row.year || mainYear || getCurrentYear()
             );
         } catch (err) {
@@ -865,6 +887,370 @@ function insertBatchSync(db, stmt, rows) {
                 console.error(`❌ Erreur insertion ligne ${row.codeCommune}: ${err.message}`);
             }
         }
+    });
+}
+
+/**
+ * Télécharge le fichier CSV des tarifs VLF depuis data.gouv.fr
+ * L'URL fournie est une API qui retourne les métadonnées du dataset
+ */
+async function downloadVlfTarifsCsv() {
+    const apiUrl = 'https://www.data.gouv.fr/api/1/datasets/r/629800aa-b887-43f0-b48a-9f07214180a2';
+    const targetPath = path.join(IMPOT_DIR, 'descriptif-tarifs-locaux-2024.csv');
+    
+    console.log(`   🌐 Récupération de l'URL de téléchargement depuis data.gouv.fr...`);
+    
+    try {
+        // 1. Récupérer les métadonnées du dataset depuis l'API
+        const metadata = await new Promise((resolve, reject) => {
+            const url = new URL(apiUrl);
+            const client = url.protocol === 'https:' ? https : http;
+            
+            const request = client.get(url, (response) => {
+                if (response.statusCode !== 200) {
+                    reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+                    return;
+                }
+                
+                let data = '';
+                response.on('data', (chunk) => { data += chunk; });
+                response.on('end', () => {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(new Error(`Erreur parsing JSON: ${e.message}`));
+                    }
+                });
+            });
+            
+            request.on('error', reject);
+            request.setTimeout(30000, () => {
+                request.destroy();
+                reject(new Error('Timeout lors de la récupération des métadonnées'));
+            });
+        });
+        
+        // 2. Extraire l'URL de téléchargement du CSV depuis les métadonnées
+        // L'API data.gouv.fr peut retourner différentes structures de réponse
+        let downloadUrl = null;
+        
+        // Essayer plusieurs champs possibles dans l'ordre de probabilité
+        if (metadata.url && (metadata.url.includes('.csv') || metadata.url.includes('csv') || metadata.url.startsWith('http'))) {
+            downloadUrl = metadata.url;
+        } else if (metadata.file_url) {
+            downloadUrl = metadata.file_url;
+        } else if (metadata.file && (metadata.file.includes('.csv') || metadata.file.startsWith('http'))) {
+            downloadUrl = metadata.file;
+        } else if (metadata.latest && metadata.latest.url) {
+            downloadUrl = metadata.latest.url;
+        } else if (metadata.resources && Array.isArray(metadata.resources)) {
+            // Chercher un fichier CSV dans les ressources
+            const csvResource = metadata.resources.find(r => 
+                r.url && (r.url.includes('.csv') || r.format === 'csv' || r.title?.toLowerCase().includes('tarif') || r.title?.toLowerCase().includes('locaux'))
+            );
+            if (csvResource && csvResource.url) {
+                downloadUrl = csvResource.url;
+            }
+        }
+        
+        // Si pas trouvé dans les métadonnées, essayer plusieurs URLs de fallback
+        if (!downloadUrl) {
+            console.log(`   ⚠️  URL de téléchargement non trouvée dans les métadonnées, tentative URLs alternatives...`);
+            // Essayer plusieurs formats d'URL possibles pour data.gouv.fr
+            // Format 1: /file/ au lieu de /r/
+            downloadUrl = apiUrl.replace('/r/', '/file/');
+            
+            // Si ça ne marche pas, on pourra aussi essayer avec l'URL d'export CSV de data.economie.gouv.fr
+            // Mais essayons d'abord avec l'URL directe
+        }
+        
+        // S'assurer que l'URL est absolue
+        if (downloadUrl && !downloadUrl.startsWith('http')) {
+            downloadUrl = 'https://www.data.gouv.fr' + downloadUrl;
+        }
+        
+        console.log(`   🔍 URL de téléchargement déterminée: ${downloadUrl}`);
+        
+        console.log(`   📥 Téléchargement du fichier CSV depuis: ${downloadUrl}`);
+        
+        // 3. Télécharger le fichier CSV
+        const url = new URL(downloadUrl);
+        const client = url.protocol === 'https:' ? https : http;
+        
+        // Créer le dossier Impot s'il n'existe pas
+        if (!fs.existsSync(IMPOT_DIR)) {
+            fs.mkdirSync(IMPOT_DIR, { recursive: true });
+        }
+        
+        await new Promise((resolve, reject) => {
+            const fileStream = fs.createWriteStream(targetPath);
+            let downloadedBytes = 0;
+            
+            const request = client.get(url, (response) => {
+                // Si redirection, suivre la redirection
+                if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
+                    const redirectUrl = response.headers.location;
+                    if (redirectUrl) {
+                        console.log(`   🔄 Redirection vers: ${redirectUrl}`);
+                        fileStream.close();
+                        fs.unlinkSync(targetPath);
+                        // Télécharger depuis la nouvelle URL
+                        const redirectClient = redirectUrl.startsWith('https') ? https : http;
+                        const redirectRequest = redirectClient.get(redirectUrl, (redirectResponse) => {
+                            if (redirectResponse.statusCode !== 200) {
+                                fileStream.close();
+                                if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                                reject(new Error(`HTTP ${redirectResponse.statusCode}: ${redirectResponse.statusMessage}`));
+                                return;
+                            }
+                            handleDownload(redirectResponse, fileStream, targetPath, resolve, reject);
+                        });
+                        redirectRequest.on('error', reject);
+                        redirectRequest.setTimeout(600000, () => {
+                            redirectRequest.destroy();
+                            if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                            reject(new Error('Timeout lors du téléchargement'));
+                        });
+                        return;
+                    }
+                }
+                
+                // Si erreur 404, essayer l'URL d'export direct depuis data.economie.gouv.fr
+                if (response.statusCode === 404) {
+                    console.log(`   ⚠️  URL non trouvée (404), tentative export direct depuis data.economie.gouv.fr...`);
+                    fileStream.close();
+                    fs.unlinkSync(targetPath);
+                    
+                    // Fallback: URL d'export CSV direct depuis data.economie.gouv.fr
+                    const fallbackUrl = 'https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/descriptif-tarifs-des-locaux-d-habitation_2024/exports/csv?limit=-1';
+                    const fallbackClient = https;
+                    const fallbackRequest = fallbackClient.get(fallbackUrl, (fallbackResponse) => {
+                        if (fallbackResponse.statusCode !== 200) {
+                            fileStream.close();
+                            if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                            reject(new Error(`HTTP ${fallbackResponse.statusCode}: ${fallbackResponse.statusMessage}`));
+                            return;
+                        }
+                        handleDownload(fallbackResponse, fileStream, targetPath, resolve, reject);
+                    });
+                    fallbackRequest.on('error', reject);
+                    fallbackRequest.setTimeout(600000, () => {
+                        fallbackRequest.destroy();
+                        if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                        reject(new Error('Timeout lors du téléchargement (fallback)'));
+                    });
+                    return;
+                }
+                
+                if (response.statusCode !== 200) {
+                    fileStream.close();
+                    if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                    reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+                    return;
+                }
+                
+                handleDownload(response, fileStream, targetPath, resolve, reject);
+            });
+            
+            request.on('error', (err) => {
+                fileStream.close();
+                if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                reject(err);
+            });
+            
+            request.setTimeout(600000, () => { // 10 minutes timeout
+                request.destroy();
+                if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                reject(new Error('Timeout lors du téléchargement'));
+            });
+        });
+        
+        const stats = fs.statSync(targetPath);
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        console.log(`   ✅ Fichier téléchargé: ${path.basename(targetPath)} (${sizeMB} MB)`);
+        return targetPath;
+        
+    } catch (error) {
+        console.error(`   ❌ Erreur téléchargement fichier VLF: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * Fonction helper pour gérer le téléchargement d'un fichier
+ */
+function handleDownload(response, fileStream, targetPath, resolve, reject) {
+    let downloadedBytes = 0;
+    const totalBytes = parseInt(response.headers['content-length'] || '0', 10);
+    
+    response.on('data', (chunk) => {
+        downloadedBytes += chunk.length;
+        if (totalBytes > 0) {
+            const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
+            const downloadedMB = (downloadedBytes / (1024 * 1024)).toFixed(2);
+            process.stdout.write(`\r   📥 ${percent}% (${downloadedMB} MB)`);
+        }
+    });
+    
+    response.pipe(fileStream);
+    
+    fileStream.on('finish', () => {
+        fileStream.close();
+        if (totalBytes > 0) {
+            console.log(''); // Nouvelle ligne après la barre de progression
+        }
+        resolve();
+    });
+    
+    fileStream.on('error', (err) => {
+        fileStream.close();
+        if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+        reject(err);
+    });
+    
+    response.on('error', (err) => {
+        fileStream.close();
+        if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+        reject(err);
+    });
+}
+
+/**
+ * Charge les tarifs VLF depuis le CSV des tarifs des locaux d'habitation
+ * Télécharge automatiquement le fichier s'il n'existe pas
+ * Extrait les tarifs pour catégorie 5, nature_locaux A (appartement) et M (maison)
+ */
+async function loadVlfTarifs() {
+    const tarifsCsvPath = path.join(IMPOT_DIR, 'descriptif-tarifs-locaux-2024.csv');
+    
+    // Vérifier si le fichier existe, sinon le télécharger
+    if (!fs.existsSync(tarifsCsvPath)) {
+        console.log(`   ⚠️  Fichier tarifs VLF non trouvé: ${path.basename(tarifsCsvPath)}`);
+        console.log(`   📥 Téléchargement automatique depuis data.gouv.fr...`);
+        try {
+            await downloadVlfTarifsCsv();
+        } catch (error) {
+            console.log(`   ❌ Échec téléchargement automatique: ${error.message}`);
+            console.log(`   💡 Vous pouvez télécharger manuellement le fichier depuis:`);
+            console.log(`      https://www.data.gouv.fr/api/1/datasets/r/629800aa-b887-43f0-b48a-9f07214180a2`);
+            console.log(`      Et le placer dans: ${IMPOT_DIR}`);
+            vlfTarifsMap = {}; // Initialiser vide si fichier non trouvé
+            return;
+        }
+    } else {
+        const stats = fs.statSync(tarifsCsvPath);
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        console.log(`   ✅ Fichier tarifs VLF trouvé: ${path.basename(tarifsCsvPath)} (${sizeMB} MB)`);
+    }
+    
+    console.log(`   📖 Lecture du fichier: ${path.basename(tarifsCsvPath)}`);
+    
+    return new Promise((resolve, reject) => {
+        const tarifsMap = {};
+        let lineCount = 0;
+        let isHeader = true;
+        
+        const rl = readline.createInterface({
+            input: fs.createReadStream(tarifsCsvPath, { encoding: 'utf-8' }),
+            crlfDelay: Infinity
+        });
+        
+        rl.on('line', (line) => {
+            // Ignorer les lignes vides
+            if (!line || line.trim() === '') {
+                return;
+            }
+            
+            // Sauter l'en-tête
+            if (isHeader) {
+                isHeader = false;
+                return;
+            }
+            
+            // Parser la ligne (séparateur: point-virgule)
+            // Format: nom_de_la_commune;departement;code_commune;code_commune_origine_du_tarif;nature_locaux;serie_tarif_bati;categorie;vl_au_m2
+            const values = line.split(';');
+            
+            if (values.length < 8) {
+                return; // Ignorer les lignes incomplètes
+            }
+            
+            const codeCommune = (values[2] || '').trim(); // code_commune (INSEE 5 chiffres, ex: "40088")
+            const natureLocaux = (values[4] || '').trim(); // nature_locaux: A (appartement), M (maison), D (dépendance)
+            const categorie = (values[6] || '').trim(); // categorie: "5", "5M", "6", "7", "8", etc.
+            const vlAuM2 = parseNumber(values[7]); // vl_au_m2: valeur locative au m² (année 1970)
+            
+            // Ignorer si code commune invalide ou tarif invalide
+            if (!codeCommune || codeCommune.length !== 5 || !vlAuM2) {
+                return;
+            }
+            
+            // Ne garder que la catégorie 5 (exacte) pour appartement (A) et maison (M)
+            // Note: "5M" est pour maison mais on cherche "5" ou catégorie proche pour maison
+            // Selon les données observées, pour maison catégorie 5, on peut avoir "5" ou une catégorie proche
+            // Pour l'instant, on garde catégorie "5" pour A et M, et "5M" pour M si disponible
+            if ((categorie === '5' || categorie === '5M') && (natureLocaux === 'A' || natureLocaux === 'M')) {
+                // Initialiser la commune si elle n'existe pas
+                if (!tarifsMap[codeCommune]) {
+                    tarifsMap[codeCommune] = { appartement: null, maison: null };
+                }
+                
+                // Stocker le tarif selon la nature du local
+                if (natureLocaux === 'A' && categorie === '5') {
+                    // Appartement catégorie 5
+                    tarifsMap[codeCommune].appartement = vlAuM2;
+                } else if (natureLocaux === 'M' && (categorie === '5' || categorie === '5M')) {
+                    // Maison catégorie 5 ou 5M
+                    // Prendre la valeur si pas déjà définie, ou la moyenne si plusieurs valeurs
+                    if (tarifsMap[codeCommune].maison === null) {
+                        tarifsMap[codeCommune].maison = vlAuM2;
+                    } else {
+                        // Moyenne si plusieurs tarifs pour maison catégorie 5
+                        tarifsMap[codeCommune].maison = (tarifsMap[codeCommune].maison + vlAuM2) / 2;
+                    }
+                }
+            }
+            
+            lineCount++;
+            
+            // Afficher progression tous les 50000 lignes
+            if (lineCount % 50000 === 0) {
+                process.stdout.write(`\r   📊 ${lineCount} lignes lues...`);
+            }
+        });
+        
+        rl.on('close', () => {
+            console.log(`\r   ✅ ${lineCount} lignes lues, tarifs extraits pour ${Object.keys(tarifsMap).length} communes`);
+            
+            // Compter les communes avec tarifs complets
+            let communesCompletes = 0;
+            let communesAppartementSeulement = 0;
+            let communesMaisonSeulement = 0;
+            
+            Object.values(tarifsMap).forEach(tarif => {
+                if (tarif.appartement !== null && tarif.maison !== null) {
+                    communesCompletes++;
+                } else if (tarif.appartement !== null) {
+                    communesAppartementSeulement++;
+                } else if (tarif.maison !== null) {
+                    communesMaisonSeulement++;
+                }
+            });
+            
+            console.log(`   📊 Statistiques tarifs VLF:`);
+            console.log(`      - Communes avec tarifs complets (A+M): ${communesCompletes}`);
+            console.log(`      - Communes avec seulement appartement: ${communesAppartementSeulement}`);
+            console.log(`      - Communes avec seulement maison: ${communesMaisonSeulement}`);
+            
+            vlfTarifsMap = tarifsMap;
+            resolve();
+        });
+        
+        rl.on('error', (err) => {
+            console.error(`   ❌ Erreur lecture fichier tarifs VLF:`, err);
+            vlfTarifsMap = {}; // Initialiser vide en cas d'erreur
+            reject(err);
+        });
     });
 }
 

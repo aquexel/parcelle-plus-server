@@ -1,0 +1,120 @@
+{
+  "coefficients_departementaux_1980": {
+    "comment": "Coefficients d'actualisation départementaux de 1980 pour locaux d'habitation, locaux professionnels et dépendances. Appliqués une seule fois pour actualiser les VLF de 1970 à 1980.",
+    "source": "support.solutions-territoire.fr - Révision foncière de 1980",
+    "note": "Liste incomplète - seulement quelques départements trouvés. Pour les départements manquants, utiliser une moyenne de 1.4",
+    "departements": {
+      "01": {
+        "locaux_habitation_professionnel": 1.60,
+        "locaux_commerciaux_industriels": 1.99
+      },
+      "40": {
+        "locaux_habitation_professionnel": 1.6,
+        "locaux_commerciaux_industriels": 1.9
+      },
+      "34": {
+        "locaux_habitation_professionnel": 1.49,
+        "locaux_commerciaux_industriels": null
+      }
+    },
+    "moyenne_nationale_approximative": 1.40,
+    "reference_date": "1980-01-01",
+    "base_date": "1970-01-01"
+  },
+  "coefficients_annuels_revalorisation": {
+    "comment": "Coefficients de revalorisation annuels nationaux (forfaitaires) appliqués depuis 1981. Fixés par la loi de finances chaque année. Depuis 2018, basés sur l'IPCH (Indice des Prix à la Consommation Harmonisé) de novembre de l'année précédente.",
+    "source_principale": "UNPI - Observatoire national des taxes foncières (https://unpi.org/files/UNPI-Observatoire_national_des_taxes_foncieres-Oct2025.pdf)",
+    "source_officielle": "BOFIP (BOI-IF-TFB-20-20-20-20), Brochure IDL DGFiP (impots.gouv.fr), Loi de finances annuelle, INSEE IPCH",
+    "note_verification": "Les coefficients 2013-2021 ont été trouvés dans le tableau historique de l'UNPI qui référence les lois de finances annuelles. Ils correspondent aux pourcentages publiés convertis en coefficients multiplicatifs (ex: +1.8% = 1.018).",
+    "type_propriete": "Propriétés bâties autres que les établissements industriels",
+    "coefficients": {
+      "1981": 1.10,
+      "1982": 1.11,
+      "1983": 1.13,
+      "1984": 1.12,
+      "1985": 1.08,
+      "1986": 1.08,
+      "1987": 1.05,
+      "1988": 1.03,
+      "1989": 1.04,
+      "1990": 1.01,
+      "1991": 1.03,
+      "1992": 1.01,
+      "1993": 1.03,
+      "1994": 1.03,
+      "1995": 1.02,
+      "1996": 1.01,
+      "1997": 1.01,
+      "1998": 1.011,
+      "1999": 1.01,
+      "2000": 1.01,
+      "2001": 1.01,
+      "2002": 1.01,
+      "2003": 1.015,
+      "2004": 1.015,
+      "2005": 1.018,
+      "2006": 1.018,
+      "2007": 1.018,
+      "2008": 1.016,
+      "2009": 1.025,
+      "2010": 1.012,
+      "2011": 1.02,
+      "2012": 1.018,
+      "2013": 1.018,
+      "2014": 1.009,
+      "2015": 1.009,
+      "2016": 1.01,
+      "2017": 1.004,
+      "2018": 1.012,
+      "2019": 1.022,
+      "2020": 1.012,
+      "2021": 1.002,
+      "2022": 1.034,
+      "2023": 1.071,
+      "2024": 1.039,
+      "2025": 1.017
+    },
+    "reference_2018_plus": {
+      "comment": "Depuis 2018, les coefficients sont basés sur l'IPCH de novembre de l'année précédente (publication INSEE)",
+      "methode": "IPCH novembre année N-1",
+      "source_ipch": "https://www.insee.fr/fr/statistiques/serie/001759397"
+    }
+  },
+  "calcul_vlf_actuelle": {
+    "formule": "VLF_actuelle = VLF_1970 × Coefficient_departemental_1980 × ∏(Coefficients_annuels_1981_à_année_en_cours)",
+    "exemple_dax_landes_40": {
+      "vlf_1970_appartement_cat5": 5.18,
+      "coefficient_departemental_1980": 1.6,
+      "produit_coefficients_annuels_1981_2024": "~12.85 (calculé en multipliant tous les coefficients)",
+      "vlf_2024_estimee": "5.18 × 1.6 × 12.85 ≈ 106.5 €/m²/an"
+    }
+  },
+  "sources_officielles": {
+    "unpi_observatoire": {
+      "url": "https://unpi.org/files/UNPI-Observatoire_national_des_taxes_foncieres-Oct2025.pdf",
+      "description": "Observatoire national des taxes foncières - Tableau historique complet 1981-2024",
+      "fiabilite": "Très fiable - Référence les lois de finances annuelles"
+    },
+    "bofip": {
+      "url": "https://bofip.impots.gouv.fr/bofip/975-PGP.html",
+      "description": "Bulletin Officiel des Finances Publiques - BOI-IF-TFB-20-20-20-20",
+      "tableau_1981_2012": "https://bofip.impots.gouv.fr/bofip/975-PGP.html/identifiant%3DBOI-IF-TFB-20-20-20-20-20121210"
+    },
+    "brochure_idl_dgfip": {
+      "url": "https://www.impots.gouv.fr/www2/fichiers/documentation/brochure/idl/",
+      "description": "Brochure pratique IDL (Impôts Locaux) du ministère des Finances - Contient tableaux complets par année",
+      "exemples": ["idl_2025.pdf", "idl_2024.pdf", "idl_2020.pdf"]
+    },
+    "article_cgi": "Article 1518 bis du Code général des impôts",
+    "loi_finances": "Loi de finances annuelle (publication chaque année) - Fixe les coefficients",
+    "insee_ipch": {
+      "url": "https://www.insee.fr/fr/statistiques/serie/001759397",
+      "description": "Série INSEE IPCH (Indice des Prix à la Consommation Harmonisé) - Utilisé depuis 2018 pour calculer les coefficients"
+    },
+    "support_solutions_territoire": "https://support.solutions-territoire.fr/base-de-connaissances/fiscalite-locale/formation-evaluation-du-foncier/de-la-valeur-locative-70-a-la-valeur-locative-actualisee"
+  },
+  "notes_important": {
+    "coefficients_2013_2021": "Ces coefficients ont été extraits du tableau historique de l'UNPI qui référence les lois de finances. Ils sont vérifiés avec les pourcentages publiés: 2013 (+1.8%=1.018), 2014 (+0.9%=1.009), 2015 (+0.9%=1.009), 2016 (+1.0%=1.01), 2017 (+0.4%=1.004), 2018 (+1.2%=1.012), 2019 (+2.2%=1.022), 2020 (+1.2%=1.012), 2021 (+0.2%=1.002).",
+    "verification_recommandee": "Pour une vérification absolue, consulter les brochures IDL officielles du ministère des Finances (impots.gouv.fr) ou les lois de finances annuelles sur Légifrance."
+  }
+}

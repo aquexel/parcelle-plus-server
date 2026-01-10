@@ -2491,7 +2491,7 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             const Database = require('better-sqlite3');
             const db = new Database(reiDbPath, { readonly: true });
             
-            // Requête pour récupérer les données REI de la commune (utiliser noms de colonnes avec underscores)
+            // Requête pour récupérer les données REI de la commune avec tarifs VLF (utiliser noms de colonnes avec underscores)
             const stmt = db.prepare(`
                 SELECT 
                     code_commune as codeCommune,
@@ -2507,6 +2507,8 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
                     base_nette_tse as baseNetteTSE,
                     taux_tse as tauxTSE,
                     montant_reel_tse as montantReelTSE,
+                    vlf_categorie5_appartement as vlfCategorie5Appartement,
+                    vlf_categorie5_maison as vlfCategorie5Maison,
                     annee
                 FROM rei_communes 
                 WHERE code_commune = ? 
@@ -2540,6 +2542,8 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
                         base_nette_tse as baseNetteTSE,
                         taux_tse as tauxTSE,
                         montant_reel_tse as montantReelTSE,
+                        vlf_categorie5_appartement as vlfCategorie5Appartement,
+                        vlf_categorie5_maison as vlfCategorie5Maison,
                         annee
                     FROM rei_communes 
                     WHERE code_commune = ? 
@@ -2567,7 +2571,7 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
         
         console.log(`✅ Données REI trouvées: ${donneesRei.nomCommune} (${donneesRei.codeDepartement}) - Année ${donneesRei.annee}`);
         
-        // Retourner uniquement les données nécessaires (format JSON)
+        // Retourner les données nécessaires avec tarifs VLF (format JSON)
         res.json({
             codeCommune: donneesRei.codeCommune,
             codeDepartement: donneesRei.codeDepartement,
@@ -2582,7 +2586,9 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             montantReelDepartement: donneesRei.montantReelDepartement,
             baseNetteTSE: donneesRei.baseNetteTSE,
             tauxTSE: donneesRei.tauxTSE,
-            montantReelTSE: donneesRei.montantReelTSE
+            montantReelTSE: donneesRei.montantReelTSE,
+            vlfCategorie5Appartement: donneesRei.vlfCategorie5Appartement || null,
+            vlfCategorie5Maison: donneesRei.vlfCategorie5Maison || null
         });
         
     } catch (error) {

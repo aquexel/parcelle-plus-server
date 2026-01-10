@@ -89,12 +89,12 @@ const COLUMNS_MAP = {
     'E11': 69,          // Base nette communale (€)
     'E12': 70,          // Taux communal (%)
     'E13': 72,          // Montant réel communal (€)
-    'E31': 81,          // Base nette départementale/EPCI (€)
-    'E32': 82,          // Taux départemental/EPCI (%)
-    'E33': 84,          // Montant réel départemental/EPCI (€)
-    'E51': 87,          // Base nette TSE (€)
-    'E52': 88,          // Taux TSE (%)
-    'E53': 89,          // Montant réel TSE (€)
+    'E31': 81,          // Base nette départementale (€)
+    'E32': 82,          // Taux départemental (%)
+    'E33': 84,          // Montant réel départemental (€)
+    'E51': 87,          // Base nette intercommunalité/EPCI (€)
+    'E52': 88,          // Taux intercommunalité/EPCI (%)
+    'E53': 89,          // Montant réel intercommunalité/EPCI (€)
     'E51gGEMAPI': 99,   // Base nette GEMAPI (€)
     'E52gGEMAPI': 100,  // Taux GEMAPI (%)
     'E53gGEMAPI': 101,  // Montant réel GEMAPI (€)
@@ -597,9 +597,9 @@ async function createReiDatabase() {
                 base_nette_departement REAL,
                 taux_departement REAL,
                 montant_reel_departement REAL,
-                base_nette_tse REAL,
-                taux_tse REAL,
-                montant_reel_tse REAL,
+                base_nette_intercommunalite REAL,
+                taux_intercommunalite REAL,
+                montant_reel_intercommunalite REAL,
                 base_nette_gemapi REAL,
                 taux_gemapi REAL,
                 montant_reel_gemapi REAL,
@@ -663,7 +663,7 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
             code_commune, code_departement, code_commune_insee, nom_commune,
             base_nette_commune, taux_commune, montant_reel_commune,
             base_nette_departement, taux_departement, montant_reel_departement,
-            base_nette_tse, taux_tse, montant_reel_tse,
+            base_nette_intercommunalite, taux_intercommunalite, montant_reel_intercommunalite,
             base_nette_gemapi, taux_gemapi, montant_reel_gemapi,
             base_nette_teom, taux_teom, montant_reel_teom,
             vlf_categorie5_appartement, vlf_categorie5_maison, annee
@@ -716,12 +716,15 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
         const codeCommune = dep + com;
         
         // Parser les nombres (colonnes E pour TFPB)
+        // E11-E13 : Communal (Base nette, Taux, Montant réel)
         const e11 = parseNumber(values[COLUMNS_MAP.E11]);
         const e12 = parseNumber(values[COLUMNS_MAP.E12]);
         const e13 = parseNumber(values[COLUMNS_MAP.E13]);
+        // E31-E33 : Départemental (Base nette, Taux, Montant réel)
         const e31 = parseNumber(values[COLUMNS_MAP.E31]);
         const e32 = parseNumber(values[COLUMNS_MAP.E32]);
         const e33 = parseNumber(values[COLUMNS_MAP.E33]);
+        // E51-E53 : Intercommunalité/EPCI (Base nette, Taux, Montant réel) - PAS TSE !
         const e51 = parseNumber(values[COLUMNS_MAP.E51]);
         const e52 = parseNumber(values[COLUMNS_MAP.E52]);
         const e53 = parseNumber(values[COLUMNS_MAP.E53]);
@@ -747,11 +750,11 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
             dep,
             com,
             libcom,
-            e11, e12, e13,
-            e31, e32, e33,
-            e51, e52, e53,
-            e51gGEMAPI, e52gGEMAPI, e53gGEMAPI,
-            f61, f62, f63,
+            e11, e12, e13,  // Communal
+            e31, e32, e33,  // Départemental
+            e51, e52, e53,  // Intercommunalité/EPCI (pas TSE !)
+            e51gGEMAPI, e52gGEMAPI, e53gGEMAPI,  // GEMAPI
+            f61, f62, f63,  // TEOM
             vlfAppartement,
             vlfMaison,
             year: year // Utiliser l'année du fichier en cours
@@ -902,9 +905,9 @@ function insertBatchSync(db, stmt, rows) {
                 row.dep,
                 row.com,
                 row.libcom,
-                row.e11, row.e12, row.e13,
-                row.e31, row.e32, row.e33,
-                row.e51, row.e52, row.e53,
+                row.e11, row.e12, row.e13,  // Communal
+                row.e31, row.e32, row.e33,  // Départemental
+                row.e51, row.e52, row.e53,  // Intercommunalité/EPCI (pas TSE !)
                 row.e51gGEMAPI, row.e52gGEMAPI, row.e53gGEMAPI,  // GEMAPI
                 row.f61, row.f62, row.f63,  // TEOM
                 row.vlfAppartement,  // vlf_categorie5_appartement

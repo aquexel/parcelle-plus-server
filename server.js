@@ -2387,34 +2387,16 @@ app.get('/api/terrains-batir/search', terrainsBatirRoute);
 // ========== ROUTE REI (TAXE FONCIERE) ==========
 
 // Télécharger la base SQLite REI optimisée pour le calcul de taxe foncière
-// Recherche d'abord l'année N (date serveur), puis N-1 si N n'existe pas
 app.get('/api/rei/download', async (req, res) => {
     try {
-        // Calculer dynamiquement N et N-1 à partir de la date actuelle du serveur
-        const serverDate = new Date();
-        const currentYear = serverDate.getFullYear();
-        const previousYear = currentYear - 1;
-        
-        console.log(`📅 Recherche base REI - Date serveur: ${serverDate.toLocaleDateString('fr-FR')}`);
-        console.log(`   Année N (${currentYear}), Année N-1 (${previousYear})`);
-        
-        // Chercher d'abord l'année N (date serveur)
-        let reiDbPath = path.join(__dirname, 'database', `rei_${currentYear}.db`);
-        let selectedYear = currentYear;
-        
-        if (!fs.existsSync(reiDbPath)) {
-            // Chercher l'année N-1 (date serveur - 1)
-            console.log(`⚠️ Base REI ${currentYear} non trouvée, recherche année ${previousYear} (N-1)...`);
-            reiDbPath = path.join(__dirname, 'database', `rei_${previousYear}.db`);
-            selectedYear = previousYear;
-        }
+        const reiDbPath = path.join(__dirname, 'database', 'rei.db');
         
         // Vérifier que le fichier existe
         if (!fs.existsSync(reiDbPath)) {
             console.warn(`⚠️ Base REI non trouvée: ${reiDbPath}`);
             return res.status(404).json({ 
                 error: 'Base REI non disponible',
-                message: `Aucune base REI trouvée pour ${currentYear} ni ${previousYear}. Exécutez: node scripts/create-rei-database.js`
+                message: 'Aucune base REI trouvée. Exécutez: node scripts/create-rei-database.js'
             });
         }
         
@@ -2422,13 +2404,12 @@ app.get('/api/rei/download', async (req, res) => {
         const stats = fs.statSync(reiDbPath);
         const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
         
-        console.log(`📥 Téléchargement base REI ${selectedYear}: ${fileSizeMB} MB`);
+        console.log(`📥 Téléchargement base REI: ${fileSizeMB} MB`);
         
         // Définir les headers pour le téléchargement
         res.setHeader('Content-Type', 'application/x-sqlite3');
-        res.setHeader('Content-Disposition', `attachment; filename="rei_${selectedYear}.db"`);
+        res.setHeader('Content-Disposition', 'attachment; filename="rei.db"');
         res.setHeader('Content-Length', stats.size);
-        res.setHeader('X-REI-Year', selectedYear.toString()); // Header pour indiquer l'année
         res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache 1 heure
         
         // Envoyer le fichier
@@ -2443,36 +2424,15 @@ app.get('/api/rei/download', async (req, res) => {
     }
 });
 
-// Obtenir les informations sur la base REI (taille, date de mise à jour, année, etc.)
-// Recherche d'abord l'année N (date serveur), puis N-1 si N n'existe pas
+// Obtenir les informations sur la base REI (taille, date de mise à jour, etc.)
 app.get('/api/rei/info', async (req, res) => {
     try {
-        // Calculer dynamiquement N et N-1 à partir de la date actuelle du serveur
-        const serverDate = new Date();
-        const currentYear = serverDate.getFullYear();
-        const previousYear = currentYear - 1;
-        
-        // Chercher d'abord l'année N (date serveur)
-        let reiDbPath = path.join(__dirname, 'database', `rei_${currentYear}.db`);
-        let selectedYear = currentYear;
-        
-        if (!fs.existsSync(reiDbPath)) {
-            // Chercher l'année N-1 (date serveur - 1)
-            reiDbPath = path.join(__dirname, 'database', `rei_${previousYear}.db`);
-            selectedYear = previousYear;
-        }
+        const reiDbPath = path.join(__dirname, 'database', 'rei.db');
         
         if (!fs.existsSync(reiDbPath)) {
             return res.status(404).json({ 
                 available: false,
-                message: `Aucune base REI trouvée pour ${currentYear} (N) ni ${previousYear} (N-1)`,
-                serverDate: serverDate.toISOString(),
-                currentYear: currentYear,
-                previousYear: previousYear,
-                searchedFiles: [
-                    `rei_${currentYear}.db`,
-                    `rei_${previousYear}.db`
-                ]
+                message: 'Aucune base REI trouvée. Exécutez: node scripts/create-rei-database.js'
             });
         }
         
@@ -2482,13 +2442,11 @@ app.get('/api/rei/info', async (req, res) => {
         
         res.json({
             available: true,
-            filename: `rei_${selectedYear}.db`,
-            year: selectedYear,
+            filename: 'rei.db',
             sizeMB: parseFloat(fileSizeMB),
             sizeBytes: stats.size,
             lastModified: lastModified,
-            downloadUrl: '/api/rei/download',
-            isCurrentYear: selectedYear === currentYear
+            downloadUrl: '/api/rei/download'
         });
         
     } catch (error) {
@@ -2516,24 +2474,13 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
         
         console.log(`🔍 Recherche données REI pour commune: ${codeCommune}`);
         
-        // Calculer dynamiquement N et N-1 à partir de la date actuelle du serveur
-        const serverDate = new Date();
-        const currentYear = serverDate.getFullYear();
-        const previousYear = currentYear - 1;
-        
-        // Chercher d'abord l'année N (date serveur), puis N-1 si N n'existe pas
-        let reiDbPath = path.join(__dirname, 'database', `rei_${currentYear}.db`);
-        let selectedYear = currentYear;
-        
-        if (!fs.existsSync(reiDbPath)) {
-            reiDbPath = path.join(__dirname, 'database', `rei_${previousYear}.db`);
-            selectedYear = previousYear;
-        }
+        // Utiliser la base REI unique
+        const reiDbPath = path.join(__dirname, 'database', 'rei.db');
         
         if (!fs.existsSync(reiDbPath)) {
             return res.status(404).json({ 
                 error: 'Base REI non disponible',
-                message: `Aucune base REI trouvée pour ${currentYear} ni ${previousYear}`,
+                message: 'Aucune base REI trouvée. Exécutez: node scripts/create-rei-database.js',
                 codeCommune: codeCommune
             });
         }
@@ -2544,26 +2491,25 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             const Database = require('better-sqlite3');
             const db = new Database(reiDbPath, { readonly: true });
             
-            // Requête pour récupérer les données REI de la commune
+            // Requête pour récupérer les données REI de la commune (utiliser noms de colonnes avec underscores)
             const stmt = db.prepare(`
                 SELECT 
-                    codeCommune,
-                    codeDepartement,
-                    codeCommuneInsee,
-                    nomCommune,
-                    baseNetteCommune,
-                    tauxCommune,
-                    montantReelCommune,
-                    baseNetteDepartement,
-                    tauxDepartement,
-                    montantReelDepartement,
-                    baseNetteTSE,
-                    tauxTSE,
-                    montantReelTSE,
-                    annee,
-                    nombreArticlesCommune
+                    code_commune as codeCommune,
+                    code_departement as codeDepartement,
+                    code_commune_insee as codeCommuneInsee,
+                    nom_commune as nomCommune,
+                    base_nette_commune as baseNetteCommune,
+                    taux_commune as tauxCommune,
+                    montant_reel_commune as montantReelCommune,
+                    base_nette_departement as baseNetteDepartement,
+                    taux_departement as tauxDepartement,
+                    montant_reel_departement as montantReelDepartement,
+                    base_nette_tse as baseNetteTSE,
+                    taux_tse as tauxTSE,
+                    montant_reel_tse as montantReelTSE,
+                    annee
                 FROM rei_communes 
-                WHERE codeCommune = ? 
+                WHERE code_commune = ? 
                 ORDER BY annee DESC 
                 LIMIT 1
             `);
@@ -2581,23 +2527,22 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
                 
                 db.get(`
                     SELECT 
-                        codeCommune,
-                        codeDepartement,
-                        codeCommuneInsee,
-                        nomCommune,
-                        baseNetteCommune,
-                        tauxCommune,
-                        montantReelCommune,
-                        baseNetteDepartement,
-                        tauxDepartement,
-                        montantReelDepartement,
-                        baseNetteTSE,
-                        tauxTSE,
-                        montantReelTSE,
-                        annee,
-                        nombreArticlesCommune
+                        code_commune as codeCommune,
+                        code_departement as codeDepartement,
+                        code_commune_insee as codeCommuneInsee,
+                        nom_commune as nomCommune,
+                        base_nette_commune as baseNetteCommune,
+                        taux_commune as tauxCommune,
+                        montant_reel_commune as montantReelCommune,
+                        base_nette_departement as baseNetteDepartement,
+                        taux_departement as tauxDepartement,
+                        montant_reel_departement as montantReelDepartement,
+                        base_nette_tse as baseNetteTSE,
+                        taux_tse as tauxTSE,
+                        montant_reel_tse as montantReelTSE,
+                        annee
                     FROM rei_communes 
-                    WHERE codeCommune = ? 
+                    WHERE code_commune = ? 
                     ORDER BY annee DESC 
                     LIMIT 1
                 `, [codeCommune], (err, row) => {
@@ -2616,8 +2561,7 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             return res.status(404).json({ 
                 error: 'Commune non trouvée',
                 message: `Aucune donnée REI disponible pour la commune ${codeCommune}`,
-                codeCommune: codeCommune,
-                year: selectedYear
+                codeCommune: codeCommune
             });
         }
         
@@ -2638,8 +2582,7 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             montantReelDepartement: donneesRei.montantReelDepartement,
             baseNetteTSE: donneesRei.baseNetteTSE,
             tauxTSE: donneesRei.tauxTSE,
-            montantReelTSE: donneesRei.montantReelTSE,
-            nombreArticlesCommune: donneesRei.nombreArticlesCommune
+            montantReelTSE: donneesRei.montantReelTSE
         });
         
     } catch (error) {

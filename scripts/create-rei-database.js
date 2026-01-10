@@ -5,7 +5,7 @@
  * 1. Lit le fichier REI_2024.csv (112MB)
  * 2. Extrait uniquement les colonnes nécessaires (12 colonnes au lieu de 1101)
  * 3. Crée une base SQLite optimisée (~1-2MB au lieu de 112MB)
- * 4. Place la base dans database/rei_2024.db pour être servie par l'application
+ * 4. Place la base dans database/rei.db pour être servie par l'application
  * 
  * Usage: node scripts/create-rei-database.js
  */
@@ -527,8 +527,8 @@ async function createReiDatabase() {
     const totalSize = foundFiles.reduce((sum, f) => sum + f.size, 0);
     const totalSizeMB = totalSize / (1024 * 1024);
     
-    // Nom de la base: rei_{année_principale}.db
-    dbFile = path.join(DB_DIR, `rei_${mainYear}.db`);
+    // Nom de la base: rei.db (simple et unique)
+    dbFile = path.join(DB_DIR, 'rei.db');
     
     console.log(`\n✅ Fichiers sélectionnés: ${foundFiles.length} année(s)`);
     foundFiles.forEach(f => {
@@ -806,7 +806,7 @@ function processAllCsvFiles(db) {
                         }
                         console.log(`📂 Chemin: ${dbFile}`);
                         console.log('\n💡 La base peut maintenant être servie par votre serveur Node.js');
-                        console.log(`   Route: GET /api/rei/download (retourne rei_${mainYear}.db)`);
+                        console.log(`   Route: GET /api/rei/download (retourne rei.db)`);
                         
                         db.close((err) => {
                             if (err) {

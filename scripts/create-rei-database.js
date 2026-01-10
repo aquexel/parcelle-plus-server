@@ -1083,38 +1083,48 @@ async function loadVlfTarifs() {
                 return; // Ignorer les lignes incomplètes
             }
             
-            const codeCommune = (values[2] || '').trim(); // code_commune (INSEE 5 chiffres, ex: "40088")
+            const departement = (values[1] || '').trim(); // departement (2 chiffres, ex: "40" pour Landes)
+            const codeCommuneLocal = (values[2] || '').trim(); // code_commune local (2-3 chiffres, ex: "88" pour Dax)
             const natureLocaux = (values[4] || '').trim(); // nature_locaux: A (appartement), M (maison), D (dépendance)
             const categorie = (values[6] || '').trim(); // categorie: "5", "5M", "6", "7", "8", etc.
             const vlAuM2 = parseNumber(values[7]); // vl_au_m2: valeur locative au m² (année 1970)
             
-            // Ignorer si code commune invalide ou tarif invalide
-            if (!codeCommune || codeCommune.length !== 5 || !vlAuM2) {
-                return;
+            // Construire le code INSEE complet (5 chiffres) : departement (2) + code_commune (complété à 3 chiffres)
+            // Exemple: departement="40" + code_commune="88" → "40088"
+            if (!departement || departement.length !== 2 || !codeCommuneLocal || !vlAuM2) {
+                return; // Ignorer si données invalides
             }
             
+            // Compléter le code commune local à 3 chiffres avec des zéros à gauche
+            const codeCommuneComplet = departement + codeCommuneLocal.padStart(3, '0'); // Code INSEE 5 chiffres
+            
             // Ne garder que la catégorie 5 (exacte) pour appartement (A) et maison (M)
-            // Note: "5M" est pour maison mais on cherche "5" ou catégorie proche pour maison
-            // Selon les données observées, pour maison catégorie 5, on peut avoir "5" ou une catégorie proche
-            // Pour l'instant, on garde catégorie "5" pour A et M, et "5M" pour M si disponible
+            // Note: Dans le CSV, on peut avoir catégorie "5" ou "5M" (catégorie 5 maison)
+            // Pour l'instant, on accepte "5" (exacte) et "5M" (catégorie 5 maison) pour les deux types
             if ((categorie === '5' || categorie === '5M') && (natureLocaux === 'A' || natureLocaux === 'M')) {
                 // Initialiser la commune si elle n'existe pas
-                if (!tarifsMap[codeCommune]) {
-                    tarifsMap[codeCommune] = { appartement: null, maison: null };
+                if (!tarifsMap[codeCommuneComplet]) {
+                    tarifsMap[codeCommuneComplet] = { appartement: null, maison: null };
                 }
                 
                 // Stocker le tarif selon la nature du local
-                if (natureLocaux === 'A' && categorie === '5') {
-                    // Appartement catégorie 5
-                    tarifsMap[codeCommune].appartement = vlAuM2;
+                if (natureLocaux === 'A' && (categorie === '5' || categorie === '5M')) {
+                    // Appartement catégorie 5 ou 5M
+                    // Prendre la valeur si pas déjà définie, ou la moyenne si plusieurs valeurs
+                    if (tarifsMap[codeCommuneComplet].appartement === null) {
+                        tarifsMap[codeCommuneComplet].appartement = vlAuM2;
+                    } else {
+                        // Moyenne si plusieurs tarifs pour appartement catégorie 5
+                        tarifsMap[codeCommuneComplet].appartement = (tarifsMap[codeCommuneComplet].appartement + vlAuM2) / 2;
+                    }
                 } else if (natureLocaux === 'M' && (categorie === '5' || categorie === '5M')) {
                     // Maison catégorie 5 ou 5M
                     // Prendre la valeur si pas déjà définie, ou la moyenne si plusieurs valeurs
-                    if (tarifsMap[codeCommune].maison === null) {
-                        tarifsMap[codeCommune].maison = vlAuM2;
+                    if (tarifsMap[codeCommuneComplet].maison === null) {
+                        tarifsMap[codeCommuneComplet].maison = vlAuM2;
                     } else {
                         // Moyenne si plusieurs tarifs pour maison catégorie 5
-                        tarifsMap[codeCommune].maison = (tarifsMap[codeCommune].maison + vlAuM2) / 2;
+                        tarifsMap[codeCommuneComplet].maison = (tarifsMap[codeCommuneComplet].maison + vlAuM2) / 2;
                     }
                 }
             }

@@ -891,169 +891,82 @@ function insertBatchSync(db, stmt, rows) {
 }
 
 /**
- * Télécharge le fichier CSV des tarifs VLF depuis data.gouv.fr
- * L'URL fournie est une API qui retourne les métadonnées du dataset
+ * Télécharge le fichier CSV des tarifs VLF depuis data.economie.gouv.fr
+ * Utilise directement l'URL d'export CSV (plus fiable que passer par l'API data.gouv.fr qui retourne des redirections 302)
  */
 async function downloadVlfTarifsCsv() {
-    const apiUrl = 'https://www.data.gouv.fr/api/1/datasets/r/629800aa-b887-43f0-b48a-9f07214180a2';
     const targetPath = path.join(IMPOT_DIR, 'descriptif-tarifs-locaux-2024.csv');
     
-    console.log(`   🌐 Récupération de l'URL de téléchargement depuis data.gouv.fr...`);
+    // Utiliser directement l'URL d'export CSV de data.economie.gouv.fr (plus fiable)
+    // Cette URL retourne directement le fichier CSV complet avec tous les tarifs VLF
+    // Pas besoin de passer par l'API data.gouv.fr qui retourne des redirections 302
+    const downloadUrl = 'https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/descriptif-tarifs-des-locaux-d-habitation_2024/exports/csv?limit=-1';
+    
+    console.log(`   📥 Téléchargement du fichier CSV depuis data.economie.gouv.fr...`);
+    console.log(`   🔍 URL: ${downloadUrl}`);
     
     try {
-        // 1. Récupérer les métadonnées du dataset depuis l'API (avec gestion des redirections)
-        const metadata = await new Promise((resolve, reject) => {
-            const fetchMetadata = (url, maxRedirects = 5) => {
-                if (maxRedirects <= 0) {
-                    reject(new Error('Trop de redirections lors de la récupération des métadonnées'));
-                    return;
-                }
-                
-                const urlObj = new URL(url);
-                const client = urlObj.protocol === 'https:' ? https : http;
-                
-                const request = client.get(url, (response) => {
-                    // Gérer les redirections
-                    if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
-                        const redirectUrl = response.headers.location;
-                        if (redirectUrl) {
-                            const absoluteUrl = redirectUrl.startsWith('http') ? redirectUrl : new URL(redirectUrl, url).href;
-                            console.log(`   🔄 Redirection métadonnées vers: ${absoluteUrl}`);
-                            fetchMetadata(absoluteUrl, maxRedirects - 1);
-                            return;
-                        }
-                    }
-                    
-                    if (response.statusCode !== 200) {
-                        reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
-                        return;
-                    }
-                    
-                    let data = '';
-                    response.on('data', (chunk) => { data += chunk; });
-                    response.on('end', () => {
-                        try {
-                            resolve(JSON.parse(data));
-                        } catch (e) {
-                            reject(new Error(`Erreur parsing JSON: ${e.message}`));
-                        }
-                    });
-                });
-                
-                request.on('error', reject);
-                request.setTimeout(30000, () => {
-                    request.destroy();
-                    reject(new Error('Timeout lors de la récupération des métadonnées'));
-                });
-            };
-            
-            fetchMetadata(apiUrl);
-        });
-        
-        // 2. Extraire l'URL de téléchargement du CSV depuis les métadonnées
-        // L'API data.gouv.fr peut retourner différentes structures de réponse
-        let downloadUrl = null;
-        
-        // Essayer plusieurs champs possibles dans l'ordre de probabilité
-        if (metadata.url && (metadata.url.includes('.csv') || metadata.url.includes('csv') || metadata.url.startsWith('http'))) {
-            downloadUrl = metadata.url;
-        } else if (metadata.file_url) {
-            downloadUrl = metadata.file_url;
-        } else if (metadata.file && (metadata.file.includes('.csv') || metadata.file.startsWith('http'))) {
-            downloadUrl = metadata.file;
-        } else if (metadata.latest && metadata.latest.url) {
-            downloadUrl = metadata.latest.url;
-        } else if (metadata.resources && Array.isArray(metadata.resources)) {
-            // Chercher un fichier CSV dans les ressources
-            const csvResource = metadata.resources.find(r => 
-                r.url && (r.url.includes('.csv') || r.format === 'csv' || r.title?.toLowerCase().includes('tarif') || r.title?.toLowerCase().includes('locaux'))
-            );
-            if (csvResource && csvResource.url) {
-                downloadUrl = csvResource.url;
-            }
-        }
-        
-        // Si pas trouvé dans les métadonnées, utiliser directement l'URL d'export CSV de data.economie.gouv.fr
-        if (!downloadUrl) {
-            console.log(`   ⚠️  URL de téléchargement non trouvée dans les métadonnées, utilisation export direct data.economie.gouv.fr...`);
-            // Utiliser directement l'URL d'export CSV de data.economie.gouv.fr (plus fiable)
-            downloadUrl = 'https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/descriptif-tarifs-des-locaux-d-habitation_2024/exports/csv?limit=-1';
-        }
-        
-        // S'assurer que l'URL est absolue
-        if (downloadUrl && !downloadUrl.startsWith('http')) {
-            downloadUrl = 'https://www.data.gouv.fr' + downloadUrl;
-        }
-        
-        console.log(`   🔍 URL de téléchargement déterminée: ${downloadUrl}`);
-        
-        console.log(`   📥 Téléchargement du fichier CSV depuis: ${downloadUrl}`);
-        
-        // 3. Télécharger le fichier CSV (avec gestion des redirections)
-        let finalDownloadUrl = downloadUrl;
-        
         // Créer le dossier Impot s'il n'existe pas
         if (!fs.existsSync(IMPOT_DIR)) {
             fs.mkdirSync(IMPOT_DIR, { recursive: true });
+            console.log(`   📁 Dossier créé: ${IMPOT_DIR}`);
         }
         
+        // Télécharger le fichier CSV (avec gestion des redirections récursive)
         await new Promise((resolve, reject) => {
             const downloadFile = (urlString, maxRedirects = 5) => {
                 if (maxRedirects <= 0) {
-                    reject(new Error('Trop de redirections lors du téléchargement'));
+                    reject(new Error('Trop de redirections lors du téléchargement (max 5 niveaux)'));
                     return;
                 }
                 
                 const url = new URL(urlString);
                 const client = url.protocol === 'https:' ? https : http;
-                const fileStream = fs.createWriteStream(targetPath);
                 
                 const request = client.get(url, (response) => {
-                    // Gérer les redirections
+                    // Gérer les redirections HTTP (301, 302, 307, 308)
                     if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
                         const redirectUrl = response.headers.location;
                         if (redirectUrl) {
-                            const absoluteUrl = redirectUrl.startsWith('http') ? redirectUrl : new URL(redirectUrl, urlString).href;
-                            console.log(`   🔄 Redirection vers: ${absoluteUrl}`);
-                            fileStream.close();
-                            if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                            // Construire l'URL absolue si relative
+                            const absoluteUrl = redirectUrl.startsWith('http') 
+                                ? redirectUrl 
+                                : new URL(redirectUrl, urlString).href;
+                            console.log(`   🔄 Redirection HTTP ${response.statusCode} vers: ${absoluteUrl}`);
+                            // Suivre la redirection récursivement (pas besoin de créer fileStream ici)
                             downloadFile(absoluteUrl, maxRedirects - 1);
                             return;
                         }
                     }
                     
-                    // Si erreur 404, essayer l'URL d'export direct depuis data.economie.gouv.fr
-                    if (response.statusCode === 404 && !urlString.includes('data.economie.gouv.fr')) {
-                        console.log(`   ⚠️  URL non trouvée (404), tentative export direct depuis data.economie.gouv.fr...`);
-                        fileStream.close();
-                        if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
-                        
-                        // Fallback: URL d'export CSV direct depuis data.economie.gouv.fr
-                        const fallbackUrl = 'https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/descriptif-tarifs-des-locaux-d-habitation_2024/exports/csv?limit=-1';
-                        downloadFile(fallbackUrl, maxRedirects);
-                        return;
-                    }
-                    
                     if (response.statusCode !== 200) {
-                        fileStream.close();
-                        if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                        if (fs.existsSync(targetPath)) {
+                            try { fs.unlinkSync(targetPath); } catch (e) {}
+                        }
                         reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
                         return;
                     }
                     
+                    // Créer le fileStream seulement si la réponse est 200 OK (pas de redirection)
+                    const fileStream = fs.createWriteStream(targetPath);
+                    
+                    // Télécharger le fichier
                     handleDownload(response, fileStream, targetPath, resolve, reject);
                 });
                 
                 request.on('error', (err) => {
-                    fileStream.close();
-                    if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+                    if (fs.existsSync(targetPath)) {
+                        try { fs.unlinkSync(targetPath); } catch (e) {}
+                    }
                     reject(err);
                 });
                 
-                request.setTimeout(600000, () => { // 10 minutes timeout
+                request.setTimeout(600000, () => { // 10 minutes timeout pour gros fichiers
                     request.destroy();
-                    if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
-                    reject(new Error('Timeout lors du téléchargement'));
+                    if (fs.existsSync(targetPath)) {
+                        try { fs.unlinkSync(targetPath); } catch (e) {}
+                    }
+                    reject(new Error('Timeout lors du téléchargement (10 min écoulées)'));
                 });
             };
             

@@ -692,6 +692,19 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
             console.log(`   LIBCOM (index ${COLUMNS_MAP.LIBCOM}): "${headers[COLUMNS_MAP.LIBCOM]}"`);
             console.log(`   E11 (index ${COLUMNS_MAP.E11}): "${headers[COLUMNS_MAP.E11]}"`);
             console.log(`   E12 (index ${COLUMNS_MAP.E12}): "${headers[COLUMNS_MAP.E12]}"`);
+            console.log(`   E51gGEMAPI (index ${COLUMNS_MAP.E51gGEMAPI}): "${headers[COLUMNS_MAP.E51gGEMAPI]}"`);
+            console.log(`   E52gGEMAPI (index ${COLUMNS_MAP.E52gGEMAPI}): "${headers[COLUMNS_MAP.E52gGEMAPI]}"`);
+            console.log(`   E53gGEMAPI (index ${COLUMNS_MAP.E53gGEMAPI}): "${headers[COLUMNS_MAP.E53gGEMAPI]}"`);
+            console.log(`   F61 TEOM base (index ${COLUMNS_MAP.F61}): "${headers[COLUMNS_MAP.F61]}"`);
+            console.log(`   F62 TEOM taux (index ${COLUMNS_MAP.F62}): "${headers[COLUMNS_MAP.F62]}"`);
+            console.log(`   F63 TEOM montant (index ${COLUMNS_MAP.F63}): "${headers[COLUMNS_MAP.F63]}"`);
+            // Rechercher les colonnes TEOM dans les headers pour vérifier les indices
+            for (let i = 0; i < headers.length; i++) {
+                const header = headers[i].trim().toUpperCase();
+                if (header.includes('TEOM') || header.includes('F61') || header.includes('F62') || header.includes('F63')) {
+                    console.log(`   🔍 Colonne TEOM trouvée à l'index ${i}: "${headers[i]}"`);
+                }
+            }
             return;
         }
         
@@ -738,6 +751,14 @@ function processCsvFileForYear(db, fileInfo, onComplete) {
         const f61 = parseNumber(values[COLUMNS_MAP.F61]);
         const f62 = parseNumber(values[COLUMNS_MAP.F62]);
         const f63 = parseNumber(values[COLUMNS_MAP.F63]);
+        
+        // Log de debug pour les premières lignes (commune 40088 = Dax)
+        if (codeCommune === '40088' && rowCount <= 2) {
+            console.log(`🔍 Debug TEOM pour ${codeCommune} (ligne ${rowCount}):`);
+            console.log(`   Valeur brute F61[${COLUMNS_MAP.F61}]: "${values[COLUMNS_MAP.F61]}" → ${f61}`);
+            console.log(`   Valeur brute F62[${COLUMNS_MAP.F62}]: "${values[COLUMNS_MAP.F62]}" → ${f62}`);
+            console.log(`   Valeur brute F63[${COLUMNS_MAP.F63}]: "${values[COLUMNS_MAP.F63]}" → ${f63}`);
+        }
         
         // Récupérer les tarifs VLF pour cette commune (catégorie 5)
         const vlfTarifs = vlfTarifsMap[codeCommune] || {};

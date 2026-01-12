@@ -380,7 +380,8 @@ async function processDVFFile(filePath, year, department) {
                     type_dpe: null,
                     dpe_officiel: 1,
                     surface_habitable_logement: null,
-                    date_etablissement_dpe: null
+                    date_etablissement_dpe: null,
+                    annee_construction: null
                 });
                 
                 // Insérer par batch de 200 (ultra réduit pour économiser mémoire)
@@ -442,7 +443,7 @@ async function processDVFFile(filePath, year, department) {
 function insertDVFBatch(transactions) {
     const stmt = db.prepare(`
         INSERT OR REPLACE INTO dvf_bdnb_complete VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
     `);
     
@@ -476,7 +477,8 @@ function insertDVFBatch(transactions) {
                 row.type_dpe,
                 row.dpe_officiel,
                 row.surface_habitable_logement,
-                row.date_etablissement_dpe
+                row.date_etablissement_dpe,
+                row.annee_construction
             );
         }
     });
@@ -517,7 +519,7 @@ async function loadBDNBData() {
             name: 'bâtiments',
             file: 'batiment_groupe.csv',
             table: 'temp_bdnb_batiment',
-            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            insertSQL: `INSERT OR IGNORE INTO temp_bdnb_batiment VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             process: (row) => {
                 const id = row.batiment_groupe_id?.trim();
                 const commune = row.code_commune_insee?.trim();
@@ -526,9 +528,22 @@ async function loadBDNBData() {
                 const latitude = parseFloat(row.latitude) || null;
                 const geomGroupe = row.geom_groupe?.trim() || null;
                 const sGeomGroupe = parseFloat(row.s_geom_groupe) || null;
+                const anneeConstruction = parseInt(row.annee_construction || row.year_construction || row.date_construction) || null;
                 
                 if (!id) return null;
-                return [id, commune, nomCommune, longitude, latitude, geomGroupe, sGeomGroupe];
+                return [id, commune, nomCommune, longitude, latitude, geomGroupe, sGeomGroupe, anneeConstruction];
+            }
+        },
+        {
+            name: 'bâtiments (FFO)',
+            file: 'batiment_groupe_ffo_bat.csv',
+            table: 'temp_bdnb_batiment_ffo',
+            insertSQL: `INSERT OR REPLACE INTO temp_bdnb_batiment_ffo VALUES (?, ?)`,
+            process: (row) => {
+                const id = row.batiment_groupe_id?.trim();
+                const anneeConstruction = parseInt(row.annee_construction || row.year_construction || row.date_construction) || null;
+                if (!id || !anneeConstruction) return null;
+                return [id, anneeConstruction];
             }
         },
         {
@@ -658,6 +673,25 @@ async function loadBDNBData() {
                 // Ignorer
             }
         }
+    }
+
+    // Synchroniser l'année de construction depuis la table FFO vers temp_bdnb_batiment
+    try {
+        const updated = db.prepare(`
+            UPDATE temp_bdnb_batiment AS b
+            SET annee_construction = COALESCE(
+                b.annee_construction,
+                (SELECT f.annee_construction FROM temp_bdnb_batiment_ffo f WHERE f.batiment_groupe_id = b.batiment_groupe_id)
+            )
+            WHERE EXISTS (
+                SELECT 1 FROM temp_bdnb_batiment_ffo f
+                WHERE f.batiment_groupe_id = b.batiment_groupe_id
+                  AND f.annee_construction IS NOT NULL
+            )
+        `).run();
+        console.log(`   ✅ Synchronisation annee_construction depuis FFO: ${updated.changes} lignes mises à jour`);
+    } catch (e) {
+        console.log(`   ⚠️ Impossible de synchroniser les années de construction depuis batiment_groupe_ffo_bat: ${e.message}`);
     }
 }
 
@@ -1153,6 +1187,16 @@ async function mergeDVFWithBDNB() {
                 WHERE bat.batiment_groupe_id = d.batiment_groupe_id
                   AND bat.latitude IS NOT NULL
                 LIMIT 1
+            ),
+            annee_construction = COALESCE(
+                d.annee_construction,
+                (
+                    SELECT bat.annee_construction
+                    FROM temp_bdnb_batiment bat
+                    WHERE bat.batiment_groupe_id = d.batiment_groupe_id
+                      AND bat.annee_construction IS NOT NULL
+                    LIMIT 1
+                )
             )
         WHERE d.batiment_groupe_id IS NOT NULL 
           AND d.longitude IS NULL 
@@ -1165,6 +1209,20 @@ async function mergeDVFWithBDNB() {
     } catch (e) {
         // Ignorer
     }
+
+    // Mettre à jour l'année de construction pour toutes les transactions liées à un bâtiment
+    db.exec(`
+        UPDATE dvf_bdnb_complete AS d
+        SET annee_construction = (
+            SELECT bat.annee_construction
+            FROM temp_bdnb_batiment bat
+            WHERE bat.batiment_groupe_id = d.batiment_groupe_id
+              AND bat.annee_construction IS NOT NULL
+            LIMIT 1
+        )
+        WHERE d.batiment_groupe_id IS NOT NULL
+          AND d.annee_construction IS NULL
+    `);
     
     // Mise à jour des coordonnées GPS manquantes depuis temp_bdnb_parcelle
     console.log('   🌍 Mise à jour des coordonnées GPS manquantes depuis parcelles.db...');
@@ -1892,7 +1950,8 @@ async function createCompleteDatabase() {
             type_dpe TEXT,
             dpe_officiel INTEGER DEFAULT 1,
             surface_habitable_logement REAL,
-            date_etablissement_dpe TEXT
+            date_etablissement_dpe TEXT,
+            annee_construction INTEGER
         )
     `);
     
@@ -1906,7 +1965,8 @@ async function createCompleteDatabase() {
             longitude REAL,
             latitude REAL,
             geom_groupe TEXT,
-            s_geom_groupe REAL
+            s_geom_groupe REAL,
+            annee_construction INTEGER
         )
     `);
     
@@ -1949,6 +2009,13 @@ async function createCompleteDatabase() {
             parcelle_id TEXT PRIMARY KEY,
             indicateur_piscine INTEGER DEFAULT 0,
             indicateur_garage INTEGER DEFAULT 0
+        )
+    `);
+
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS temp_bdnb_batiment_ffo (
+            batiment_groupe_id TEXT PRIMARY KEY,
+            annee_construction INTEGER
         )
     `);
     

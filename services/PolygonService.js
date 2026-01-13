@@ -99,6 +99,14 @@ class PolygonService {
                     }
                 });
                 
+                this.db.run(`ALTER TABLE polygons ADD COLUMN annee_construction INTEGER`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        // Ignorer si la colonne existe déjà
+                    } else if (!err) {
+                        console.log('✅ Colonne annee_construction ajoutée');
+                    }
+                });
+                
                 this.db.run(`ALTER TABLE polygons ADD COLUMN type TEXT DEFAULT 'TERRAIN'`, (err) => {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
@@ -141,7 +149,7 @@ class PolygonService {
                 SELECT
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface,
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
-                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe, p.annee_construction,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id
@@ -180,7 +188,7 @@ class PolygonService {
                 SELECT
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface,
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
-                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe, p.annee_construction,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id
@@ -213,7 +221,7 @@ class PolygonService {
                 SELECT 
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface, 
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.zone_plu,
-                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.is_public, p.type, p.classe_dpe,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.is_public, p.type, p.classe_dpe, p.annee_construction,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id
@@ -251,8 +259,8 @@ class PolygonService {
                 INSERT INTO polygons (
                     id, user_id, title, description, price, coordinates, 
                     status, commune, code_insee, surface, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe, annee_construction
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -275,7 +283,8 @@ class PolygonService {
                 polygonData.surfaceMaison !== undefined ? polygonData.surfaceMaison : null,
                 polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
                 polygonData.type || 'TERRAIN',
-                polygonData.classeDpe || null
+                polygonData.classeDpe || null,
+                polygonData.anneeConstruction !== undefined ? polygonData.anneeConstruction : null
             ];
 
             this.db.run(query, params, function(err) {
@@ -301,6 +310,7 @@ class PolygonService {
                         surfaceMaison: polygonData.surfaceMaison !== undefined ? polygonData.surfaceMaison : null,
                         nombrePieces: polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
                         type: polygonData.type || 'TERRAIN',
+                        anneeConstruction: polygonData.anneeConstruction !== undefined ? polygonData.anneeConstruction : null,
                         createdAt: now,
                         updatedAt: now
                     };
@@ -381,6 +391,10 @@ class PolygonService {
                 updateFields.push('type = ?');
                 params.push(updateData.type);
             }
+            if (updateData.anneeConstruction !== undefined) {
+                updateFields.push('annee_construction = ?');
+                params.push(updateData.anneeConstruction);
+            }
             
             updateFields.push('updated_at = ?');
             params.push(now);
@@ -433,7 +447,7 @@ class PolygonService {
                 SELECT 
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface, 
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
-                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type,
+                    p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.annee_construction,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id

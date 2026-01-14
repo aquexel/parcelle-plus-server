@@ -139,6 +139,8 @@ module.exports = (req, res) => {
                 nature_culture,
                 orientation_principale,
                 pourcentage_vitrage,
+                annee_construction,
+                batiment_groupe_id,
                 CASE 
                     WHEN prix_m2_bati IS NOT NULL THEN prix_m2_bati
                     WHEN surface_reelle_bati > 0 THEN valeur_fonciere / surface_reelle_bati
@@ -255,7 +257,9 @@ module.exports = (req, res) => {
                 distance_meters: t.distance_meters,
                 type_bien: t.type_bien,
                 date_mutation: t.date_mutation,
-                nom_commune: t.nom_commune
+                nom_commune: t.nom_commune,
+                annee_construction: t.annee_construction,
+                batiment_groupe_id: t.batiment_groupe_id
             }));
             console.table(preview);
         } else {

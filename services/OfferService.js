@@ -788,15 +788,45 @@ class OfferService {
 
     /**
      * Accepter une proposition
+     * - En attente (pending) : seul le vendeur accepte l'offre de l'acheteur
+     * - Contre-proposition (counter_offer) : seul l'acheteur accepte l'offre du vendeur
      */
     async acceptOffer(offerId, actorId, actorName) {
+        const offer = await this.getOfferById(offerId);
+        if (!offer) {
+            throw new Error('Proposition non trouvée');
+        }
+        if (offer.status !== 'pending' && offer.status !== 'counter_offer') {
+            throw new Error('Cette proposition ne peut plus être acceptée');
+        }
+        if (offer.status === 'pending' && offer.seller_id !== actorId) {
+            throw new Error('Seul le vendeur peut accepter cette proposition');
+        }
+        if (offer.status === 'counter_offer' && offer.buyer_id !== actorId) {
+            throw new Error('Seul l\'acheteur peut accepter cette contre-proposition');
+        }
         return this.updateOfferStatus(offerId, 'accepted', actorId, actorName, 'Proposition acceptée');
     }
 
     /**
      * Refuser une proposition
+     * - En attente : seul le vendeur refuse l'offre acheteur
+     * - Contre-proposition : seul l'acheteur refuse la contre-offre vendeur
      */
     async rejectOffer(offerId, actorId, actorName, reason = null) {
+        const offer = await this.getOfferById(offerId);
+        if (!offer) {
+            throw new Error('Proposition non trouvée');
+        }
+        if (offer.status !== 'pending' && offer.status !== 'counter_offer') {
+            throw new Error('Cette proposition ne peut plus être refusée');
+        }
+        if (offer.status === 'pending' && offer.seller_id !== actorId) {
+            throw new Error('Seul le vendeur peut refuser cette proposition');
+        }
+        if (offer.status === 'counter_offer' && offer.buyer_id !== actorId) {
+            throw new Error('Seul l\'acheteur peut refuser cette contre-proposition');
+        }
         return this.updateOfferStatus(offerId, 'rejected', actorId, actorName, reason || 'Proposition refusée');
     }
 

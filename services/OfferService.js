@@ -339,15 +339,22 @@ class OfferService {
     async createOffer(offerData) {
         return new Promise(async (resolve, reject) => {
             try {
-                // Vérifier si l'acheteur a déjà une proposition active pour cette annonce
-                const hasActiveOffer = await this.hasActiveOfferForAnnouncement(offerData.announcementId, offerData.buyerId);
-                
-                if (hasActiveOffer) {
-                    console.log(`❌ Proposition refusée: l'acheteur ${offerData.buyerId} a déjà une proposition active pour l'annonce ${offerData.announcementId}`);
-                    return resolve({
-                        error: 'Vous avez déjà une proposition en cours pour cette annonce. Attendez la réponse du vendeur.',
-                        code: 'DUPLICATE_OFFER'
-                    });
+                // Contre-proposition vendeur : une offre « pending » existe encore côté acheteur ;
+                // ne pas appliquer la règle « une seule proposition pending » (sinon DUPLICATE puis
+                // createCounterOffer marque l'offre en countered sans insérer la contre-offre).
+                const isCounterOffer = offerData.status === 'counter_offer' && !!offerData.parentOfferId;
+
+                if (!isCounterOffer) {
+                    // Vérifier si l'acheteur a déjà une proposition active pour cette annonce
+                    const hasActiveOffer = await this.hasActiveOfferForAnnouncement(offerData.announcementId, offerData.buyerId);
+
+                    if (hasActiveOffer) {
+                        console.log(`❌ Proposition refusée: l'acheteur ${offerData.buyerId} a déjà une proposition active pour l'annonce ${offerData.announcementId}`);
+                        return resolve({
+                            error: 'Vous avez déjà une proposition en cours pour cette annonce. Attendez la réponse du vendeur.',
+                            code: 'DUPLICATE_OFFER'
+                        });
+                    }
                 }
 
                 const id = uuidv4();
@@ -605,6 +612,15 @@ class OfferService {
                     originalPrice: originalOffer.original_price,
                     status: 'counter_offer'
                 });
+
+                if (counterOffer && counterOffer.error && counterOffer.code === 'DUPLICATE_OFFER') {
+                    reject(new Error(counterOffer.error || 'Impossible de créer la contre-proposition'));
+                    return;
+                }
+                if (!counterOffer || !counterOffer.id) {
+                    reject(new Error('Échec création de la contre-proposition'));
+                    return;
+                }
 
                 // Mettre à jour la proposition originale
                 await this.updateOfferStatus(

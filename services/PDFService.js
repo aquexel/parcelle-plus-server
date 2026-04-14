@@ -166,45 +166,15 @@ class PDFService {
 
                 if (buyerSignature) {
                     doc.fontSize(8)
-                       .fillColor('#000000');
-                    
-                    const buyerInfo = [];
-                    buyerInfo.push(`Acheteur: ${buyerSignature.user_name}`);
-                    buyerInfo.push(`Email: ${buyerSignature.user_email}`);
-                    if (buyerSignature.prenom && buyerSignature.nom) {
-                        buyerInfo.push(`Nom complet: ${buyerSignature.prenom} ${buyerSignature.nom}`);
-                    }
-                    if (buyerSignature.date_naissance) {
-                        buyerInfo.push(`Date de naissance: ${buyerSignature.date_naissance}`);
-                    }
-                    if (buyerSignature.adresse) {
-                        buyerInfo.push(`Adresse: ${buyerSignature.adresse}`);
-                    }
-                    buyerInfo.push(`Signé le: ${new Date(buyerSignature.signature_timestamp).toLocaleString('fr-FR')}`);
-                    
-                    doc.text(buyerInfo.join(' | '))
+                       .fillColor('#000000')
+                       .text(`Acheteur: ${buyerSignature.user_name} | Email: ${buyerSignature.user_email} | Signé le: ${new Date(buyerSignature.signature_timestamp).toLocaleString('fr-FR')}`)
                        .moveDown(0.3);
                 }
 
                 if (sellerSignature) {
                     doc.fontSize(8)
-                       .fillColor('#000000');
-                    
-                    const sellerInfo = [];
-                    sellerInfo.push(`Vendeur: ${sellerSignature.user_name}`);
-                    sellerInfo.push(`Email: ${sellerSignature.user_email}`);
-                    if (sellerSignature.prenom && sellerSignature.nom) {
-                        sellerInfo.push(`Nom complet: ${sellerSignature.prenom} ${sellerSignature.nom}`);
-                    }
-                    if (sellerSignature.date_naissance) {
-                        sellerInfo.push(`Date de naissance: ${sellerSignature.date_naissance}`);
-                    }
-                    if (sellerSignature.adresse) {
-                        sellerInfo.push(`Adresse: ${sellerSignature.adresse}`);
-                    }
-                    sellerInfo.push(`Signé le: ${new Date(sellerSignature.signature_timestamp).toLocaleString('fr-FR')}`);
-                    
-                    doc.text(sellerInfo.join(' | '))
+                       .fillColor('#000000')
+                       .text(`Vendeur: ${sellerSignature.user_name} | Email: ${sellerSignature.user_email} | Signé le: ${new Date(sellerSignature.signature_timestamp).toLocaleString('fr-FR')}`)
                        .moveDown(0.3);
                 }
 
@@ -308,6 +278,7 @@ class PDFService {
                 doc.end();
 
                 stream.on('finish', () => {
+                    console.log(`✅ PDF généré: ${filepath}`);
                     resolve(filepath);
                 });
 

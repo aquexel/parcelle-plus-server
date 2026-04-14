@@ -95,6 +95,16 @@ class UserService {
             );
         } catch (insertError) {
             console.error('❌ Erreur insertion utilisateur:', insertError.message);
+            // Détecter les violations de contrainte UNIQUE
+            if (insertError.message && insertError.message.includes('UNIQUE constraint failed')) {
+                if (insertError.message.includes('username')) {
+                    throw new Error('Un utilisateur avec ce nom d\'utilisateur existe déjà');
+                } else if (insertError.message.includes('email')) {
+                    throw new Error('Un utilisateur avec cet email existe déjà');
+                } else {
+                    throw new Error('Un utilisateur avec ce nom d\'utilisateur ou cet email existe déjà');
+                }
+            }
             throw new Error(`Erreur lors de la création de l'utilisateur: ${insertError.message}`);
         }
         

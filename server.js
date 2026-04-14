@@ -99,6 +99,7 @@ try {
         isInitialized: () => false,
         registerUserFCMToken: async () => { return false; },
         sendMessageNotification: async () => { return false; },
+        sendOfferNotification: async () => { return false; },
         sendCustomNotification: async () => { return false; }
     };
 }
@@ -1595,6 +1596,32 @@ app.post('/api/offers/:id/counter', async (req, res) => {
             type: 'counter_offer',
             offer: counterOffer
         });
+
+        // Push FCM vers l'acheteur (contre-proposition sans nouveau message chat)
+        try {
+            if (pushNotificationService.isInitialized()) {
+                const buyerId = counterOffer.buyerId || counterOffer.buyer_id;
+                const sellerName = counterOffer.sellerName || counterOffer.seller_name || 'Vendeur';
+                const price = counterOffer.proposedPrice ?? counterOffer.proposed_price ?? 0;
+                const roomId = counterOffer.roomId || counterOffer.room_id || '';
+                const annId = counterOffer.announcementId || counterOffer.announcement_id || '';
+                const sellerId = counterOffer.sellerId || counterOffer.seller_id || '';
+                await pushNotificationService.sendOfferNotification(
+                    buyerId,
+                    sellerName,
+                    'counter_offer',
+                    `Contre-proposition : ${Math.round(Number(price))} €`,
+                    {
+                        room_id: roomId,
+                        announcement_id: annId,
+                        offer_id: counterOffer.id,
+                        sender_id: sellerId
+                    }
+                );
+            }
+        } catch (fcmErr) {
+            console.error('❌ FCM contre-proposition (non bloquant):', fcmErr.message || fcmErr);
+        }
 
         res.status(201).json(counterOffer);
     } catch (error) {

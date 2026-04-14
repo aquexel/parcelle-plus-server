@@ -138,8 +138,9 @@ class PushNotificationService {
 
     /**
      * Envoyer une notification pour une mise à jour de proposition
+     * @param {Record<string, string>} [extraData] — champs FCM (ex. room_id) pour ouvrir le bon chat côté app
      */
-    async sendOfferNotification(targetUserId, senderName, offerStatus, messageContent) {
+    async sendOfferNotification(targetUserId, senderName, offerStatus, messageContent, extraData = {}) {
         if (!this.initialized) {
             console.log('⚠️ Firebase non initialisé - Notification non envoyée');
             return false;
@@ -152,14 +153,14 @@ class PushNotificationService {
                 return false;
             }
 
+            const dataPayload = { type: 'offer_update', sender_name: String(senderName || ''), offer_status: String(offerStatus || ''), message: String(messageContent || '') };
+            for (const [k, v] of Object.entries(extraData || {})) {
+                if (v != null && v !== '') dataPayload[k] = String(v);
+            }
+
             const message = {
                 token: fcmToken,
-                data: {
-                    type: 'offer_update',
-                    sender_name: senderName,
-                    offer_status: offerStatus,
-                    message: messageContent
-                },
+                data: dataPayload,
                 notification: {
                     title: `💰 Proposition de ${senderName}`,
                     body: messageContent

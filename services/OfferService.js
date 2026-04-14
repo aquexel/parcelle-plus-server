@@ -790,11 +790,31 @@ class OfferService {
      * Accepter une proposition
      * - En attente (pending) : seul le vendeur accepte l'offre de l'acheteur
      * - Contre-proposition (counter_offer) : seul l'acheteur accepte l'offre du vendeur
+     * - Déjà acceptée (accepted) dans le flux contre-offre : le vendeur peut confirmer à son tour
      */
     async acceptOffer(offerId, actorId, actorName) {
         const offer = await this.getOfferById(offerId);
         if (!offer) {
             throw new Error('Proposition non trouvée');
+        }
+        if (offer.status === 'accepted') {
+            const isCounterFlow = !!offer.parent_offer_id;
+            if (!isCounterFlow) {
+                throw new Error('Cette proposition est déjà acceptée');
+            }
+            if (offer.seller_id !== actorId) {
+                throw new Error('Seul le vendeur peut confirmer cette acceptation');
+            }
+            await this.addOfferHistory({
+                offerId,
+                action: 'seller_confirmed_acceptance',
+                actorId,
+                actorName,
+                previousStatus: 'accepted',
+                newStatus: 'accepted',
+                comment: 'Acceptation confirmée par le vendeur'
+            });
+            return this.getOfferById(offerId);
         }
         if (offer.status !== 'pending' && offer.status !== 'counter_offer') {
             throw new Error('Cette proposition ne peut plus être acceptée');

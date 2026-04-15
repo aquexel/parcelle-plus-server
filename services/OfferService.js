@@ -95,7 +95,6 @@ class OfferService {
             if (err) {
                 console.error('❌ Erreur création table offers:', err);
             } else {
-                console.log('✅ Table offers initialisée');
             }
         });
 
@@ -103,7 +102,6 @@ class OfferService {
             if (err) {
                 console.error('❌ Erreur création table conversation_announcements:', err);
             } else {
-                console.log('✅ Table conversation_announcements initialisée');
             }
         });
 
@@ -111,7 +109,6 @@ class OfferService {
             if (err) {
                 console.error('❌ Erreur création table offer_history:', err);
             } else {
-                console.log('✅ Table offer_history initialisée');
             }
         });
 
@@ -119,7 +116,6 @@ class OfferService {
             if (err) {
                 console.error('❌ Erreur création table offer_signatures:', err);
             } else {
-                console.log('✅ Table offer_signatures initialisée');
                 
                 // Migration: Ajouter les colonnes email_verification_token et email_verified si elles n'existent pas
                 this.migrateSignaturesTable();
@@ -140,14 +136,12 @@ class OfferService {
             const needsEmailVerified = !columnNames.includes('email_verified');
             
             if (needsEmailVerificationToken || needsEmailVerified) {
-                console.log('🔄 Migration: Ajout des colonnes email_verification_token et email_verified à offer_signatures...');
                 
                 if (needsEmailVerificationToken) {
                     this.db.run("ALTER TABLE offer_signatures ADD COLUMN email_verification_token TEXT", (err) => {
                         if (err) {
                             console.error('❌ Erreur ajout colonne email_verification_token:', err);
                         } else {
-                            console.log('✅ Colonne email_verification_token ajoutée');
                         }
                     });
                 }
@@ -157,7 +151,6 @@ class OfferService {
                         if (err) {
                             console.error('❌ Erreur ajout colonne email_verified:', err);
                         } else {
-                            console.log('✅ Colonne email_verified ajoutée');
                         }
                     });
                 }
@@ -171,7 +164,6 @@ class OfferService {
                     if (err) {
                         console.error('❌ Erreur nettoyage signatures invalides:', err);
                     } else {
-                        console.log('✅ Migration: Signatures invalides nettoyées (timestamp supprimé pour signatures non vérifiées)');
                     }
                 }
             );
@@ -191,7 +183,6 @@ class OfferService {
                         if (err && !err.message.includes('duplicate column name')) {
                             console.error(`❌ Erreur ajout colonne ${column.name}:`, err);
                         } else if (!err) {
-                            console.log(`✅ Colonne ${column.name} ajoutée à offer_signatures`);
                         }
                     }
                 );
@@ -224,14 +215,12 @@ class OfferService {
             ], function(err) {
                 if (err) {
                     if (err.message.includes('UNIQUE constraint failed')) {
-                        console.log(`ℹ️ L'annonce ${data.announcementId} est déjà liée à la room ${data.roomId}`);
                         resolve({ alreadyLinked: true });
                     } else {
                         console.error('❌ Erreur liaison annonce-conversation:', err);
                         reject(err);
                     }
                 } else {
-                    console.log(`✅ Annonce ${data.announcementId} liée à la conversation ${data.roomId}`);
                     resolve({ id, ...data, createdAt: now });
                 }
             });
@@ -262,7 +251,6 @@ class OfferService {
                     console.error('❌ Erreur récupération conversations utilisateur:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ ${rows.length} conversations trouvées pour ${userId}`);
                     
                     // Pour chaque conversation, récupérer les noms d'utilisateurs depuis parcelle_business.db
                     let processed = 0;
@@ -293,12 +281,10 @@ class OfferService {
                                     messageCount: 0
                                 };
                                 
-                                console.log(`🔍 Conversation: ${conversation.buyerName} ↔ ${conversation.sellerName}`);
                                 conversations.push(conversation);
                                 
                                 processed++;
                                 if (processed === rows.length) {
-                                    console.log('✅ Toutes les conversations traitées');
                                     resolve(conversations);
                                 }
                             });
@@ -390,7 +376,6 @@ class OfferService {
                         console.error('❌ Erreur création proposition:', err);
                         reject(err);
                     } else {
-                        console.log(`✅ Proposition créée: ${id}`);
 
                         // Créer l'historique
                         await this.addOfferHistory({
@@ -560,7 +545,6 @@ class OfferService {
                         console.error('❌ Erreur mise à jour statut proposition:', err);
                         reject(err);
                     } else {
-                        console.log(`✅ Proposition ${offerId} - Statut changé: ${offer.status} → ${newStatus}`);
 
                         // Créer l'historique
                         await this.addOfferHistory({
@@ -941,7 +925,6 @@ class OfferService {
      */
     deleteConversationsAndOffersByAnnouncement(announcementId) {
         return new Promise((resolve, reject) => {
-            console.log(`🗑️ Suppression conversations/offres pour annonce ${announcementId}`);
 
             // Récupérer d'abord les room_ids des conversations liées à cette annonce
             const getRoomsQuery = `SELECT room_id FROM conversation_announcements WHERE announcement_id = ?`;
@@ -953,7 +936,6 @@ class OfferService {
                 }
 
                 const roomIds = rows.map(row => row.room_id);
-                console.log(`📋 ${roomIds.length} conversations trouvées pour l'annonce`);
 
                 if (roomIds.length === 0) {
                     return resolve({ conversationsDeleted: 0, offersDeleted: 0, messagesDeleted: 0 });
@@ -972,7 +954,6 @@ class OfferService {
                     }
                     
                     const messagesDeleted = this.changes;
-                    console.log(`✅ ${messagesDeleted} messages supprimés`);
 
                     // 2. Supprimer les offres de ces conversations
                     const deleteOffersQuery = `DELETE FROM offers WHERE announcement_id = ?`;
@@ -984,7 +965,6 @@ class OfferService {
                         }
                         
                         const offersDeleted = this.changes;
-                        console.log(`✅ ${offersDeleted} offres supprimées`);
 
                         // 3. Supprimer les liens conversation-annonce
                         const deleteConversationsQuery = `DELETE FROM conversation_announcements WHERE announcement_id = ?`;
@@ -996,7 +976,6 @@ class OfferService {
                             }
                             
                             const conversationsDeleted = this.changes;
-                            console.log(`✅ ${conversationsDeleted} conversations supprimées`);
 
                             resolve({
                                 conversationsDeleted,
@@ -1030,13 +1009,11 @@ class OfferService {
                     }
                     
                     if (!row) {
-                        console.log(`⚠️ Aucune conversation trouvée pour annonce ${announcementId}`);
                         resolve({ success: true, deletedCount: 0, message: 'Aucune conversation trouvée' });
                         return;
                     }
                     
                     const roomId = row.room_id;
-                    console.log(`🗑️ Suppression conversation room: ${roomId}`);
                     
                     // 2. Supprimer les propositions liées
                     this.db.run(`
@@ -1047,7 +1024,6 @@ class OfferService {
                             console.error('❌ Détails erreur:', err.message);
                             console.error('❌ Code erreur:', err.code);
                         } else {
-                            console.log(`🗑️ ${this.changes} propositions supprimées`);
                             deletedCount += this.changes;
                         }
                     });
@@ -1059,7 +1035,6 @@ class OfferService {
                         if (err) {
                             console.error('❌ Erreur suppression messages:', err);
                         } else {
-                            console.log(`🗑️ ${this.changes} messages supprimés`);
                             deletedCount += this.changes;
                         }
                     });
@@ -1073,7 +1048,6 @@ class OfferService {
                             console.error('❌ Erreur suppression liaison:', err);
                             resolve({ success: false, error: err.message });
                         } else {
-                            console.log(`🗑️ ${this.changes} liaisons supprimées`);
                             deletedCount += this.changes;
                             
                             resolve({ 
@@ -1093,7 +1067,6 @@ class OfferService {
             if (err) {
                 console.error('❌ Erreur fermeture base de données:', err);
             } else {
-                console.log('✅ Base de données OfferService fermée');
             }
         });
     }

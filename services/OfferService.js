@@ -453,7 +453,7 @@ class OfferService {
             const query = `
                 SELECT * FROM offers 
                 WHERE room_id = ?
-                ORDER BY created_at DESC
+                ORDER BY created_at ASC
             `;
 
             this.db.all(query, [roomId], (err, rows) => {
@@ -516,7 +516,7 @@ class OfferService {
                 params = [userId, userId];
             }
 
-            query += ` ORDER BY created_at DESC`;
+            query += ` ORDER BY created_at ASC`;
 
             this.db.all(query, params, (err, rows) => {
                 if (err) {

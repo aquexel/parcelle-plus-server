@@ -468,7 +468,6 @@ class OfferService {
                         }
                         return row;
                     });
-                    console.log(`✅ ${rows.length} propositions récupérées pour la room ${roomId}`);
                     resolve(rows);
                 }
             });
@@ -492,7 +491,6 @@ class OfferService {
                     reject(err);
                 } else {
                     const hasActiveOffer = row.count > 0;
-                    console.log(`🔍 Vérification proposition: annonce ${announcementId}, acheteur ${buyerId}, proposition en attente: ${hasActiveOffer}`);
                     resolve(hasActiveOffer);
                 }
             });
@@ -531,7 +529,6 @@ class OfferService {
                         }
                         return row;
                     });
-                    console.log(`✅ ${rows.length} propositions récupérées pour l'utilisateur ${userId}`);
                     resolve(rows);
                 }
             });

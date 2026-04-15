@@ -35,7 +35,17 @@ app.use(cors({
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(morgan('dev'));
+app.use(
+    morgan('dev', {
+        skip(req, res) {
+            if (res.statusCode >= 400) return false;
+            const path = (req.originalUrl || req.url || '').split('?')[0];
+            if (req.method !== 'GET') return false;
+            if (path.startsWith('/api/offers/room/')) return true;
+            return false;
+        },
+    })
+);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -1748,27 +1758,52 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-// Vérification de l'email
+function clientWantsJsonVerifyEmail(req) {
+    if (req.query && String(req.query.format) === 'json') return true;
+    const accept = (req.get('Accept') || '').toLowerCase();
+    return accept.includes('application/json');
+}
+
+function verifyEmailHtmlPage(ok, title, message) {
+    const color = ok ? '#2e7d32' : '#c62828';
+    const icon = ok ? '✅' : '❌';
+    const esc = (s) => String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title></head><body style="font-family:system-ui,sans-serif;padding:24px;text-align:center;background:#f5f5f5;"><div style="max-width:480px;margin:48px auto;background:#fff;padding:32px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);"><div style="font-size:48px;margin-bottom:16px;">${icon}</div><h1 style="color:${color};font-size:1.25rem;">${esc(title)}</h1><p style="color:#444;line-height:1.5;">${esc(message)}</p><p style="font-size:14px;color:#666;margin-top:24px;">Vous pouvez fermer cette page et ouvrir l’application ParcellePlus.</p></div></body></html>`;
+}
+
+// Vérification de l'email (JSON pour l’app Android ; page HTML pour le navigateur)
 app.get('/api/auth/verify-email', async (req, res) => {
-    try {
-        const { token } = req.query;
-        
-        if (!token) {
+    const wantJson = clientWantsJsonVerifyEmail(req);
+    const { token } = req.query;
+
+    if (!token) {
+        if (wantJson) {
             return res.status(400).json({ error: 'Token de vérification requis' });
         }
-        
+        return res.status(400).send(verifyEmailHtmlPage(false, 'Lien invalide', 'Le lien ne contient pas de jeton. Demandez un nouvel e-mail depuis l’application.'));
+    }
+
+    try {
         const verifiedUser = await userService.verifyEmail(token);
-        
-        res.status(200).json({
-            message: 'Email vérifié avec succès',
-            user: verifiedUser
-        });
-        
+        if (wantJson) {
+            return res.status(200).json({
+                message: 'Email vérifié avec succès',
+                user: verifiedUser
+            });
+        }
+        const name = verifiedUser && (verifiedUser.username || verifiedUser.email) ? String(verifiedUser.username || verifiedUser.email) : '';
+        return res.status(200).send(verifyEmailHtmlPage(true, 'E-mail confirmé', name ? `Merci ${name} — votre compte est activé.` : 'Votre compte est activé.'));
     } catch (error) {
         console.error('❌ Erreur vérification email:', error.message);
-        res.status(400).json({ 
-            error: error.message || 'Erreur lors de la vérification de l\'email'
-        });
+        const msg = error.message || 'Erreur lors de la vérification de l\'email';
+        if (wantJson) {
+            return res.status(400).json({ error: msg });
+        }
+        return res.status(200).send(verifyEmailHtmlPage(false, 'Vérification impossible', msg));
     }
 });
 

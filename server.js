@@ -39,9 +39,18 @@ app.use(
     morgan('dev', {
         skip(req, res) {
             if (res.statusCode >= 400) return false;
-            const path = (req.originalUrl || req.url || '').split('?')[0];
             if (req.method !== 'GET') return false;
+            const full = req.originalUrl || req.url || '';
+            const path = full.split('?')[0];
             if (path.startsWith('/api/offers/room/')) return true;
+            if (path === '/api/messages') {
+                try {
+                    const q = full.includes('?') ? full.slice(full.indexOf('?') + 1) : '';
+                    if (new URLSearchParams(q).has('room')) return true;
+                } catch {
+                    /* ne pas masquer en cas d’URL inattendue */
+                }
+            }
             return false;
         },
     })

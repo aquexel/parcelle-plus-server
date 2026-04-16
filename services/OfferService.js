@@ -966,6 +966,16 @@ class OfferService {
                         
                         const offersDeleted = this.changes;
 
+                        this.db.run(
+                            'DELETE FROM visit_appointments WHERE announcement_id = ?',
+                            [announcementId],
+                            function (vErr) {
+                                if (vErr) {
+                                    console.error('❌ Erreur suppression visit_appointments:', vErr);
+                                }
+                            }
+                        );
+
                         // 3. Supprimer les liens conversation-annonce
                         const deleteConversationsQuery = `DELETE FROM conversation_announcements WHERE announcement_id = ?`;
                         
@@ -1023,6 +1033,16 @@ class OfferService {
                             console.error('❌ Erreur suppression propositions:', err);
                             console.error('❌ Détails erreur:', err.message);
                             console.error('❌ Code erreur:', err.code);
+                        } else {
+                            deletedCount += this.changes;
+                        }
+                    });
+
+                    this.db.run(`
+                        DELETE FROM visit_appointments WHERE room_id = ?
+                    `, [roomId], function(err) {
+                        if (err) {
+                            console.error('❌ Erreur suppression rendez-vous visite:', err);
                         } else {
                             deletedCount += this.changes;
                         }

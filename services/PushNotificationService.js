@@ -6,7 +6,6 @@ try {
     admin = require('firebase-admin');
 } catch (error) {
     // firebase-admin n'est pas installé, on continuera sans
-    console.log('⚠️ firebase-admin non disponible - L\'enregistrement des tokens FCM fonctionnera, mais l\'envoi de notifications nécessitera firebase-admin');
 }
 
 class PushNotificationService {
@@ -19,7 +18,6 @@ class PushNotificationService {
     initializeFirebase() {
         // Si firebase-admin n'est pas disponible, on ne peut pas initialiser Firebase
         if (!admin) {
-            console.log('⚠️ firebase-admin non installé - Enregistrement des tokens FCM activé, envoi de notifications désactivé');
             // Initialiser quand même la table pour permettre l'enregistrement des tokens
             this.initializeFCMTable();
             return;
@@ -32,11 +30,6 @@ class PushNotificationService {
             // Vérifier si le fichier existe
             const fs = require('fs');
             if (!fs.existsSync(serviceAccountPath)) {
-                console.log('⚠️ Fichier firebase-service-account.json non trouvé. Notifications push désactivées.');
-                console.log('📋 Pour activer les notifications push:');
-                console.log('   1. Créez un projet Firebase');
-                console.log('   2. Téléchargez le fichier de clé de service');
-                console.log('   3. Placez-le dans le dossier racine du serveur');
                 // Initialiser quand même la table pour permettre l'enregistrement des tokens
                 this.initializeFCMTable();
                 return;
@@ -51,14 +44,12 @@ class PushNotificationService {
             });
 
             this.initialized = true;
-            console.log('✅ Firebase Admin SDK initialisé - Notifications push activées');
             
             // Initialiser la table FCM tokens
             this.initializeFCMTable();
             
         } catch (error) {
             console.error('❌ Erreur initialisation Firebase:', error.message);
-            console.log('⚠️ Notifications push désactivées');
             
             // Initialiser quand même la table pour permettre l'enregistrement des tokens
             this.initializeFCMTable();
@@ -69,22 +60,17 @@ class PushNotificationService {
      * Envoyer une notification push pour un nouveau message
      */
     async sendMessageNotification(targetUserId, senderName, messageContent, roomId, senderId) {
-        console.log(`📱 [sendMessageNotification] Début pour utilisateur ${targetUserId}, initialisé: ${this.initialized}`);
         if (!this.initialized) {
-            console.log('⚠️ Firebase non initialisé - Notification non envoyée');
             return false;
         }
 
         let fcmToken = null;
         try {
             // Récupérer le token FCM de l'utilisateur cible
-            console.log(`📱 [sendMessageNotification] Récupération token FCM pour ${targetUserId}...`);
             fcmToken = await this.getUserFCMToken(targetUserId);
             if (!fcmToken) {
-                console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${targetUserId}`);
                 return false;
             }
-            console.log(`📱 [sendMessageNotification] Token FCM récupéré: ${fcmToken.substring(0, 20)}...`);
 
             const message = {
                 token: fcmToken,
@@ -111,9 +97,7 @@ class PushNotificationService {
             if (!this.admin) {
                 throw new Error('firebase-admin non disponible');
             }
-            console.log(`📱 [sendMessageNotification] Envoi notification via Firebase...`);
             const response = await this.admin.messaging().send(message);
-            console.log(`✅ [sendMessageNotification] Notification envoyée avec succès: ${response}`);
             return true;
 
         } catch (error) {
@@ -122,7 +106,6 @@ class PushNotificationService {
             console.error(`❌ Token utilisé: ${fcmToken || 'non récupéré'}`);
             console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
-                console.log(`⚠️ Token FCM invalide ou expiré pour ${targetUserId} - Suppression du token de la base de données`);
                 // Supprimer le token invalide de la base de données
                 if (fcmToken) {
                     try {
@@ -142,14 +125,12 @@ class PushNotificationService {
      */
     async sendOfferNotification(targetUserId, senderName, offerStatus, messageContent, extraData = {}) {
         if (!this.initialized) {
-            console.log('⚠️ Firebase non initialisé - Notification non envoyée');
             return false;
         }
 
         try {
             const fcmToken = await this.getUserFCMToken(targetUserId);
             if (!fcmToken) {
-                console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${targetUserId}`);
                 return false;
             }
 
@@ -174,7 +155,6 @@ class PushNotificationService {
                 throw new Error('firebase-admin non disponible');
             }
             const response = await this.admin.messaging().send(message);
-            console.log(`✅ Notification proposition envoyée: ${response}`);
             return true;
 
         } catch (error) {
@@ -207,7 +187,6 @@ class PushNotificationService {
             if (err) {
                 console.error('❌ Erreur création table fcm_tokens:', err);
             } else {
-                console.log('✅ Table fcm_tokens créée/vérifiée');
             }
         });
         
@@ -244,9 +223,7 @@ class PushNotificationService {
                         reject(err);
                     } else {
                         if (this.changes > 0) {
-                            console.log(`✅ [deleteUserFCMToken] Token FCM invalide supprimé pour utilisateur ${userId} (${this.changes} ligne(s) supprimée(s))`);
                         } else {
-                            console.log(`ℹ️ [deleteUserFCMToken] Token FCM non trouvé pour suppression (utilisateur: ${userId})`);
                         }
                         db.close();
                         resolve(this.changes > 0);
@@ -274,10 +251,8 @@ class PushNotificationService {
                     console.error('❌ Erreur récupération token FCM:', err);
                     reject(err);
                 } else if (row) {
-                    console.log(`✅ Token FCM trouvé pour ${userId}`);
                     resolve(row.fcm_token);
                 } else {
-                    console.log(`⚠️ Aucun token FCM trouvé pour ${userId}`);
                     resolve(null);
                 }
             });
@@ -398,7 +373,6 @@ class PushNotificationService {
      */
     async sendCustomNotification(userId, title, body, data = {}) {
         if (!this.initialized) {
-            console.log(`⚠️ Firebase non initialisé - Notification non envoyée pour utilisateur ${userId}`);
             return false;
         }
 
@@ -407,12 +381,9 @@ class PushNotificationService {
             // Récupérer le token FCM de l'utilisateur
             fcmToken = await this.getUserFCMToken(userId);
             if (!fcmToken) {
-                console.log(`⚠️ Token FCM non trouvé pour l'utilisateur ${userId} - Notification non envoyée`);
-                console.log(`💡 L'utilisateur doit ouvrir l'application pour enregistrer son token FCM`);
                 return false;
             }
 
-            console.log(`📱 Tentative d'envoi notification à ${userId} avec token FCM: ${fcmToken.substring(0, 20)}...`);
 
             const message = {
                 token: fcmToken,
@@ -438,7 +409,6 @@ class PushNotificationService {
                 throw new Error('firebase-admin non disponible');
             }
             const response = await this.admin.messaging().send(message);
-            console.log(`✅ Notification personnalisée envoyée avec succès (messageId: ${response}) pour utilisateur ${userId}`);
             return true;
 
         } catch (error) {
@@ -447,7 +417,6 @@ class PushNotificationService {
             console.error(`❌ Token utilisé: ${fcmToken || 'non récupéré'}`);
             console.error(`❌ Détails erreur:`, JSON.stringify(error, Object.getOwnPropertyNames(error)));
             if (error.code === 'messaging/invalid-registration-token' || error.code === 'messaging/registration-token-not-registered') {
-                console.log(`⚠️ Token FCM invalide ou expiré pour ${userId} - Suppression du token de la base de données`);
                 // Supprimer le token invalide de la base de données
                 if (fcmToken) {
                     try {

@@ -60,7 +60,6 @@ class PriceAlertService {
                 if (err) {
                     console.error('❌ Erreur création table price_alerts:', err);
                 } else {
-                    console.log('✅ Table price_alerts initialisée');
                     // Migration : ajouter les nouvelles colonnes si elles n'existent pas (pour les bases existantes)
                     this.migrateDatabase();
                     
@@ -69,7 +68,6 @@ class PriceAlertService {
                         if (err) {
                             console.error('❌ Erreur création table alert_notifications:', err);
                         } else {
-                            console.log('✅ Table alert_notifications initialisée');
                             
                             // Créer les index APRÈS que les deux tables soient créées
                             createIndexes.forEach(indexQuery => {
@@ -103,10 +101,8 @@ class PriceAlertService {
                 if (err && !err.message.includes('duplicate column name')) {
                     // Colonne déjà existante, c'est OK
                     if (index === 0) {
-                        console.log('✅ Migration colonnes déjà appliquée ou en cours');
                     }
                 } else if (!err) {
-                    console.log(`✅ Migration colonne ${index + 1} appliquée`);
                 }
             });
         });
@@ -182,7 +178,6 @@ class PriceAlertService {
                         minSurfaceTerrain: alertData.minSurfaceTerrain || null,
                         maxSurfaceTerrain: alertData.maxSurfaceTerrain || null
                     };
-                    console.log(`✅ Alerte créée: ${id} pour l'utilisateur ${alertData.userId} (types: ${types.join(', ')}, ${alert.minSurfaceHabitable || alert.minSurface}-${alert.maxSurfaceHabitable || alert.maxSurface}m² habitable, ${alert.minSurfaceTerrain || 0}-${alert.maxSurfaceTerrain || '∞'}m² terrain, max ${alertData.maxPrice}€)`);
                     resolve(alert);
                 }
             });
@@ -232,7 +227,6 @@ class PriceAlertService {
                             maxSurfaceTerrain: row.max_surface_terrain
                         };
                     });
-                    console.log(`✅ ${alerts.length} alertes récupérées pour l'utilisateur ${userId}`);
                     resolve(alerts);
                 }
             });
@@ -267,7 +261,6 @@ class PriceAlertService {
                         createdAt: row.created_at,
                         updatedAt: row.updated_at
                     }));
-                    console.log(`✅ ${alerts.length} alertes actives récupérées`);
                     resolve(alerts);
                 }
             });
@@ -346,10 +339,8 @@ class PriceAlertService {
                     console.error('❌ Erreur mise à jour alerte:', err);
                     reject(err);
                 } else if (this.changes === 0) {
-                    console.log(`⚠️ Alerte non trouvée: ${alertId}`);
                     resolve(null);
                 } else {
-                    console.log(`✅ Alerte mise à jour: ${alertId}`);
                     resolve({ id: alertId, ...updateData, updatedAt: now });
                 }
             });
@@ -368,10 +359,8 @@ class PriceAlertService {
                     console.error('❌ Erreur suppression alerte:', err);
                     reject(err);
                 } else if (this.changes === 0) {
-                    console.log(`⚠️ Alerte non trouvée: ${alertId}`);
                     resolve(false);
                 } else {
-                    console.log(`✅ Alerte supprimée: ${alertId}`);
                     resolve(true);
                 }
             });
@@ -437,7 +426,6 @@ class PriceAlertService {
                     });
 
                     if (matchingAlerts.length > 0) {
-                        console.log(`🔔 ${matchingAlerts.length} alertes correspondent à l'annonce ${announcement.id}`);
                     }
                     resolve(matchingAlerts);
                 }
@@ -458,14 +446,12 @@ class PriceAlertService {
             this.db.run(query, [alertId, announcementId, userId], function(err) {
                 if (err) {
                     if (err.message.includes('UNIQUE constraint')) {
-                        console.log(`⚠️ Notification déjà envoyée: alerte ${alertId}, annonce ${announcementId}`);
                         resolve({ alreadyNotified: true });
                     } else {
                         console.error('❌ Erreur enregistrement notification:', err);
                         reject(err);
                     }
                 } else {
-                    console.log(`✅ Notification enregistrée: alerte ${alertId}, annonce ${announcementId}`);
                     resolve({ id: this.lastID, alertId, announcementId, userId });
                 }
             });
@@ -524,7 +510,6 @@ class PriceAlertService {
                             maxSurfaceTerrain: row.max_surface_terrain
                         };
                     });
-                    console.log(`✅ Stats alertes pour l'utilisateur ${userId}: ${stats.length} alertes`);
                     resolve(stats);
                 }
             });
@@ -536,7 +521,6 @@ class PriceAlertService {
             if (err) {
                 console.error('❌ Erreur fermeture base de données:', err);
             } else {
-                console.log('✅ Base de données fermée (PriceAlertService)');
             }
         });
     }

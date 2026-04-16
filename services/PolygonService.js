@@ -57,13 +57,11 @@ class PolygonService {
             if (err) {
                 console.error('❌ Erreur création table polygons:', err);
             } else {
-                console.log('✅ Table polygons initialisée');
                 // Ajouter les colonnes si elles n'existent pas déjà
                 this.db.run(`ALTER TABLE polygons ADD COLUMN zone_plu TEXT DEFAULT ''`, (err) => {
                     if (err && !err.message.includes('duplicate column')) {
                         console.error('⚠️ Note: colonne zone_plu probablement déjà existante');
                     } else if (!err) {
-                        console.log('✅ Colonne zone_plu ajoutée');
                     }
                 });
                 
@@ -71,7 +69,6 @@ class PolygonService {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
                     } else if (!err) {
-                        console.log('✅ Colonne orientation ajoutée');
                     }
                 });
                 
@@ -79,7 +76,6 @@ class PolygonService {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
                     } else if (!err) {
-                        console.log('✅ Colonne luminosite ajoutée');
                     }
                 });
                 
@@ -87,7 +83,6 @@ class PolygonService {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
                     } else if (!err) {
-                        console.log('✅ Colonne surface_maison ajoutée');
                     }
                 });
                 
@@ -95,7 +90,6 @@ class PolygonService {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
                     } else if (!err) {
-                        console.log('✅ Colonne nombre_pieces ajoutée');
                     }
                 });
                 
@@ -111,7 +105,6 @@ class PolygonService {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
                     } else if (!err) {
-                        console.log('✅ Colonne type ajoutée');
                     }
                 });
                 
@@ -119,7 +112,6 @@ class PolygonService {
                     if (err && !err.message.includes('duplicate column')) {
                         // Ignorer si la colonne existe déjà
                     } else if (!err) {
-                        console.log('✅ Colonne classe_dpe ajoutée');
                     }
                 });
             }
@@ -130,7 +122,6 @@ class PolygonService {
             if (err) {
                 console.error('❌ Erreur création table announcement_views:', err);
             } else {
-                console.log('✅ Table announcement_views initialisée');
                 // Créer les index
                 createViewsIndexes.forEach(indexQuery => {
                     this.db.run(indexQuery, (err) => {
@@ -175,7 +166,6 @@ class PolygonService {
                         isPublic: row.is_public === 1,
                         viewCount: row.view_count || 0
                     }));
-                    console.log(`✅ ${polygons.length} polygones récupérés`);
                     resolve(polygons);
                 }
             });
@@ -240,10 +230,8 @@ class PolygonService {
                         isPublic: row.is_public === 1,
                         viewCount: row.view_count || 0
                     };
-                    console.log(`✅ Polygone récupéré: ${id}`);
                     resolve(polygon);
                 } else {
-                    console.log(`⚠️ Polygone non trouvé: ${id}`);
                     resolve(null);
                 }
             });
@@ -315,7 +303,6 @@ class PolygonService {
                         updatedAt: now
                     };
                     
-                    console.log(`✅ Polygone sauvegardé: ${id} (${savedPolygon.surface}m²)`);
                     resolve(savedPolygon);
                 }
             });
@@ -411,10 +398,8 @@ class PolygonService {
                     console.error('❌ Erreur mise à jour polygone:', err);
                     reject(err);
                 } else if (this.changes === 0) {
-                    console.log(`⚠️ Polygone non trouvé pour mise à jour: ${id}`);
                     resolve(null);
                 } else {
-                    console.log(`✅ Polygone mis à jour: ${id}`);
                     // Récupérer le polygone mis à jour depuis la base
                     self.getPolygonById(id).then(resolve).catch(reject);
                 }
@@ -431,10 +416,8 @@ class PolygonService {
                     console.error('❌ Erreur suppression polygone:', err);
                     reject(err);
                 } else if (this.changes === 0) {
-                    console.log(`⚠️ Polygone non trouvé pour suppression: ${id}`);
                     resolve(false);
                 } else {
-                    console.log(`✅ Polygone supprimé: ${id}`);
                     resolve(true);
                 }
             });
@@ -468,7 +451,6 @@ class PolygonService {
                         isPublic: row.is_public === 1,
                         viewCount: row.view_count || 0
                     }));
-                    console.log(`✅ ${polygons.length} polygones récupérés pour l'utilisateur ${userId}`);
                     resolve(polygons);
                 }
             });
@@ -497,7 +479,6 @@ class PolygonService {
                         ...row,
                         coordinates: JSON.parse(row.coordinates)
                     }));
-                    console.log(`✅ ${polygons.length} polygones récupérés pour la commune ${commune}`);
                     resolve(polygons);
                 }
             });
@@ -522,7 +503,6 @@ class PolygonService {
                     console.error('❌ Erreur récupération statistiques:', err);
                     reject(err);
                 } else {
-                    console.log('✅ Statistiques récupérées');
                     resolve(row);
                 }
             });
@@ -546,7 +526,6 @@ class PolygonService {
                     console.error('❌ Erreur enregistrement vue:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ Vue enregistrée: annonce ${announcementId} par ${viewerId}`);
                     resolve({ id: this.lastID, announcementId, viewerId, viewerType });
                 }
             });
@@ -572,7 +551,6 @@ class PolygonService {
                     console.error('❌ Erreur récupération vues annonce:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ Statistiques vues pour annonce ${announcementId}: ${row.total_views} vues, ${row.unique_viewers} visiteurs uniques`);
                     resolve({
                         announcementId,
                         totalViews: row.total_views || 0,
@@ -633,7 +611,6 @@ class PolygonService {
                         announcements: stats
                     };
 
-                    console.log(`✅ Statistiques vendeur ${sellerId}: ${totalStats.totalAnnouncements} annonces, ${totalStats.totalViews} vues totales`);
                     resolve(totalStats);
                 }
             });
@@ -667,7 +644,6 @@ class PolygonService {
             if (err) {
                 console.error('❌ Erreur fermeture base de données:', err);
             } else {
-                console.log('✅ Base de données fermée');
             }
         });
     }

@@ -20,6 +20,7 @@ const PolygonService = require('./services/PolygonService');
 const MessageService = require('./services/MessageService');
 const UserService = require('./services/UserService');
 const OfferService = require('./services/OfferService');
+const VisitAppointmentService = require('./services/VisitAppointmentService');
 const PriceAlertService = require('./services/PriceAlertService');
 const EmailService = require('./services/EmailService');
 const PDFService = require('./services/PDFService');
@@ -106,6 +107,7 @@ const polygonService = new PolygonService();
 const messageService = new MessageService();
 const userService = new UserService();
 const offerService = new OfferService();
+const visitAppointmentService = new VisitAppointmentService();
 const priceAlertService = new PriceAlertService();
 const pdfService = new PDFService();
 const photoDistributionService = new PhotoDistributionService();
@@ -1120,6 +1122,95 @@ app.delete('/api/conversations/delete-for-announcement', async (req, res) => {
             success: false, 
             error: 'Erreur serveur lors de la suppression de la conversation' 
         });
+    }
+});
+
+// ——— Rendez-vous visite (proposition → acceptation par l’autre partie) ———
+app.post('/api/visit-appointments', async (req, res) => {
+    try {
+        const d = req.body;
+        const required = [
+            'roomId', 'announcementId', 'buyerId', 'sellerId', 'buyerName', 'sellerName',
+            'proposerId', 'slotDatetime'
+        ];
+        const missing = required.filter((f) => !d[f]);
+        if (missing.length > 0) {
+            return res.status(400).json({ error: `Champs manquants: ${missing.join(', ')}` });
+        }
+        const saved = await visitAppointmentService.create(d);
+        const targetUserId =
+            saved.proposerId === saved.buyerId ? saved.sellerId : saved.buyerId;
+        broadcastNotification({
+            type: 'new_visit_appointment',
+            visit: saved,
+            targetUserId
+        });
+        res.status(201).json(saved);
+    } catch (error) {
+        console.error('❌ Erreur création rendez-vous visite:', error);
+        res.status(400).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+app.get('/api/visit-appointments/room/:roomId', async (req, res) => {
+    try {
+        const list = await visitAppointmentService.getByRoom(req.params.roomId);
+        res.json(list);
+    } catch (error) {
+        console.error('❌ Erreur liste rendez-vous (room):', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+app.get('/api/visit-appointments/user/:userId', async (req, res) => {
+    try {
+        const list = await visitAppointmentService.getByUser(req.params.userId);
+        res.json(list);
+    } catch (error) {
+        console.error('❌ Erreur liste rendez-vous (user):', error);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+app.post('/api/visit-appointments/:id/accept', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) {
+            return res.status(400).json({ error: 'userId requis' });
+        }
+        const updated = await visitAppointmentService.accept(req.params.id, userId);
+        const targetUserId =
+            updated.proposerId === updated.buyerId ? updated.sellerId : updated.buyerId;
+        broadcastNotification({
+            type: 'visit_appointment_updated',
+            visit: updated,
+            targetUserId
+        });
+        res.json(updated);
+    } catch (error) {
+        console.error('❌ Erreur acceptation rendez-vous:', error);
+        res.status(400).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+app.post('/api/visit-appointments/:id/reject', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) {
+            return res.status(400).json({ error: 'userId requis' });
+        }
+        const updated = await visitAppointmentService.reject(req.params.id, userId);
+        const targetUserId =
+            updated.proposerId === updated.buyerId ? updated.sellerId : updated.buyerId;
+        broadcastNotification({
+            type: 'visit_appointment_updated',
+            visit: updated,
+            targetUserId
+        });
+        res.json(updated);
+    } catch (error) {
+        console.error('❌ Erreur refus rendez-vous:', error);
+        res.status(400).json({ error: error.message || 'Erreur serveur' });
     }
 });
 

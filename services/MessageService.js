@@ -40,7 +40,6 @@ class MessageService {
             if (err) {
                 console.error('❌ Erreur création table messages:', err);
             } else {
-                console.log('✅ Table messages initialisée');
             }
         });
 
@@ -48,7 +47,6 @@ class MessageService {
             if (err) {
                 console.error('❌ Erreur création table rooms:', err);
             } else {
-                console.log('✅ Table rooms initialisée');
                 // Créer la room par défaut
                 this.createDefaultRoom();
             }
@@ -79,7 +77,6 @@ class MessageService {
                     console.error('❌ Erreur création room par défaut:', err);
                     reject(err);
                 } else {
-                    console.log('✅ Room par défaut créée');
                     resolve(defaultRoom);
                 }
             });
@@ -94,7 +91,6 @@ class MessageService {
                 
                 // Si c'est une room privée (commence par "private_"), la créer automatiquement
                 if (roomId.startsWith('private_')) {
-                    console.log(`🏠 Vérification/création de la room privée: ${roomId}`);
                     // Utiliser le username de l'autre utilisateur si fourni dans messageData
                     const otherUserName = messageData.targetUserName || messageData.otherUserName || null;
                     await this.ensurePrivateRoomExists(roomId, messageData.senderId, otherUserName);
@@ -138,7 +134,6 @@ class MessageService {
                             updatedAt: now
                         };
                         
-                        console.log(`✅ Message sauvegardé: ${id} (room: ${savedMessage.room})`);
                         resolve(savedMessage);
                     }
                 });
@@ -196,10 +191,8 @@ class MessageService {
                     console.error('❌ Erreur récupération message:', err);
                     reject(err);
                 } else if (row) {
-                    console.log(`✅ Message récupéré: ${id}`);
                     resolve(row);
                 } else {
-                    console.log(`⚠️ Message non trouvé: ${id}`);
                     resolve(null);
                 }
             });
@@ -222,7 +215,6 @@ class MessageService {
                     console.error('❌ Erreur récupération messages utilisateur:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ ${rows.length} messages récupérés pour l'utilisateur ${senderId}`);
                     resolve(rows);
                 }
             });
@@ -238,10 +230,8 @@ class MessageService {
                     console.error('❌ Erreur suppression message:', err);
                     reject(err);
                 } else if (this.changes === 0) {
-                    console.log(`⚠️ Message non trouvé pour suppression: ${id}`);
                     resolve(false);
                 } else {
-                    console.log(`✅ Message supprimé: ${id}`);
                     resolve(true);
                 }
             });
@@ -262,10 +252,8 @@ class MessageService {
                     console.error('❌ Erreur mise à jour message:', err);
                     reject(err);
                 } else if (this.changes === 0) {
-                    console.log(`⚠️ Message non trouvé pour mise à jour: ${id}`);
                     resolve(null);
                 } else {
-                    console.log(`✅ Message mis à jour: ${id}`);
                     resolve({ id, content, updatedAt: now });
                 }
             });
@@ -306,7 +294,6 @@ class MessageService {
                         updatedAt: now
                     };
                     
-                    console.log(`✅ Room créée: ${id} (${savedRoom.name})`);
                     resolve(savedRoom);
                 }
             });
@@ -330,7 +317,6 @@ class MessageService {
                     console.error('❌ Erreur récupération rooms:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ ${rows.length} rooms récupérées`);
                     resolve(rows);
                 }
             });
@@ -354,10 +340,8 @@ class MessageService {
                     console.error('❌ Erreur récupération room:', err);
                     reject(err);
                 } else if (row) {
-                    console.log(`✅ Room récupérée: ${id}`);
                     resolve(row);
                 } else {
-                    console.log(`⚠️ Room non trouvée: ${id}`);
                     resolve(null);
                 }
             });
@@ -381,7 +365,6 @@ class MessageService {
                     console.error('❌ Erreur récupération statistiques messages:', err);
                     reject(err);
                 } else {
-                    console.log('✅ Statistiques messages récupérées');
                     resolve(row);
                 }
             });
@@ -411,7 +394,6 @@ class MessageService {
                     console.error('❌ Erreur recherche messages:', err);
                     reject(err);
                 } else {
-                    console.log(`✅ ${rows.length} messages trouvés pour "${searchTerm}"`);
                     resolve(rows);
                 }
             });
@@ -440,20 +422,17 @@ class MessageService {
                             if (updateErr) {
                                 console.error('❌ Erreur mise à jour nom room:', updateErr);
                             } else {
-                                console.log(`✅ Nom de room mis à jour: ${updatedRoomName}`);
                                 row.name = updatedRoomName;
                             }
                             resolve(row);
                         });
                     } else {
-                        console.log(`✅ Room privée existe déjà: ${roomId}`);
                         resolve(row);
                     }
                     return;
                 }
                 
                 // Créer la room privée
-                console.log(`🆕 Création de la room privée: ${roomId}`);
                 
                 // Extraire les IDs des utilisateurs du nom de la room
                 // Le format peut être: private_user1_user2 ou private_user1_user2_announcement_id
@@ -479,7 +458,6 @@ class MessageService {
                         console.error('❌ Erreur création room privée:', err);
                         reject(err);
                     } else {
-                        console.log(`✅ Room privée créée: ${roomId} - ${roomName}`);
                         resolve({
                             id: roomId,
                             name: roomName,
@@ -505,7 +483,6 @@ class MessageService {
                     return;
                 }
                 
-                console.log(`✅ Messages de la room ${roomId} supprimés`);
                 
                 // Ensuite supprimer la room elle-même
                 const deleteRoom = `DELETE FROM rooms WHERE id = ?`;
@@ -515,10 +492,8 @@ class MessageService {
                         console.error('❌ Erreur suppression room:', err);
                         reject(err);
                     } else if (this.changes === 0) {
-                        console.log(`⚠️ Room ${roomId} non trouvée`);
                         resolve(false); // Room n'existait pas
                     } else {
-                        console.log(`✅ Room ${roomId} supprimée`);
                         resolve(true); // Room supprimée avec succès
                     }
                 });
@@ -531,7 +506,6 @@ class MessageService {
             if (err) {
                 console.error('❌ Erreur fermeture base de données:', err);
             } else {
-                console.log('✅ Base de données fermée');
             }
         });
     }

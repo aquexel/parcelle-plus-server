@@ -25,6 +25,7 @@ const PriceAlertService = require('./services/PriceAlertService');
 const EmailService = require('./services/EmailService');
 const PDFService = require('./services/PDFService');
 const PhotoDistributionService = require('./services/PhotoDistributionService');
+const EntitlementService = require('./services/EntitlementService');
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -112,6 +113,7 @@ const priceAlertService = new PriceAlertService();
 const pdfService = new PDFService();
 const photoDistributionService = new PhotoDistributionService();
 const emailService = new EmailService();
+const entitlementService = new EntitlementService();
 
 // PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
 let pushNotificationService;
@@ -168,6 +170,26 @@ async function determineTargetUserId(roomId, senderId) {
         console.error('❌ Erreur détermination utilisateur cible:', error.message);
         return null;
     }
+}
+
+function extractAuthToken(req) {
+    return req.header('Authorization')?.replace('Bearer ', '') || req.header('X-Auth-Token');
+}
+
+async function getAuthenticatedUser(req) {
+    const token = extractAuthToken(req);
+    if (!token) return null;
+    const session = await userService.validateSession(token);
+    return session?.user || null;
+}
+
+async function requireAuthenticatedUser(req, res) {
+    const authenticatedUser = await getAuthenticatedUser(req);
+    if (!authenticatedUser) {
+        res.status(401).json({ error: 'Token requis ou session invalide' });
+        return null;
+    }
+    return authenticatedUser;
 }
 
 wss.on('connection', (ws, req) => {
@@ -327,10 +349,15 @@ app.get('/api/polygons/public', async (req, res) => {
         
         // Récupérer tous les polygones et filtrer les publics
         const allPolygons = await polygonService.getAllPolygons(null, limit);
-        const publicPolygons = allPolygons.filter(p => 
-            (p.is_public === 1 || p.is_public === true || p.isPublic === true) && 
-            (p.status === 'active' || p.status === 'available')
-        );
+        const publicPolygons = allPolygons.filter((p) => {
+            const isPublic = (p.is_public === 1 || p.is_public === true || p.isPublic === true);
+            const hasValidStatus = (p.status === 'active' || p.status === 'available');
+            if (!isPublic || !hasValidStatus) return false;
+
+            const sellerId = p.user_id || p.userId;
+            const visibility = entitlementService.canAnnouncementBePublic(p.id, sellerId);
+            return visibility.allowed;
+        });
         
         // Ajouter le nombre de photos pour chaque polygone (via système P2P)
         const polygonsWithPhotos = await Promise.all(publicPolygons.map(async (polygon) => {
@@ -389,8 +416,33 @@ app.get('/api/polygons/:id', async (req, res) => {
 
 app.post('/api/polygons', async (req, res) => {
     try {
-        const polygonData = req.body;
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const polygonData = req.body || {};
+        const sellerId = String(authenticatedUser.id);
+        const payloadSellerId = String(polygonData.userId || sellerId);
+        if (payloadSellerId !== sellerId) {
+            return res.status(403).json({
+                error: 'userId invalide pour la session courante',
+                code: 'SELLER_MISMATCH'
+            });
+        }
+        polygonData.userId = sellerId;
+
         const savedPolygon = await polygonService.savePolygon(polygonData);
+        const publicationRegistration = entitlementService.registerAnnouncementCreation(
+            sellerId,
+            savedPolygon.id
+        );
+        if (!publicationRegistration.allowed) {
+            await polygonService.deletePolygon(savedPolygon.id);
+            return res.status(402).json({
+                error: publicationRegistration.message || 'Publication annonce non autorisee',
+                code: publicationRegistration.reason || 'PAYMENT_REQUIRED',
+                sellerEntitlements: entitlementService.getUserEntitlements(sellerId).seller
+            });
+        }
         
         // Vérifier les alertes de prix pour cette nouvelle annonce
         try {
@@ -472,7 +524,10 @@ app.post('/api/polygons', async (req, res) => {
             polygon: savedPolygon
         });
         
-        res.status(201).json(savedPolygon);
+        res.status(201).json({
+            ...savedPolygon,
+            publication: publicationRegistration
+        });
     } catch (error) {
         console.error('❌ Erreur sauvegarde polygone:', error);
         res.status(500).json({ error: 'Erreur serveur' });
@@ -1043,6 +1098,40 @@ app.post('/api/conversations/link-announcement', async (req, res) => {
             });
         }
 
+        const authenticatedUser = await getAuthenticatedUser(req);
+        if (!authenticatedUser) {
+            return res.status(401).json({
+                error: 'Session requise pour contacter un vendeur',
+                code: 'AUTH_REQUIRED'
+            });
+        }
+
+        if (String(authenticatedUser.id) !== String(buyerId)) {
+            return res.status(403).json({
+                error: 'buyerId invalide pour la session courante',
+                code: 'BUYER_MISMATCH'
+            });
+        }
+
+        const contactAuthorization = entitlementService.registerBuyerContact({
+            buyerId: authenticatedUser.id,
+            sellerId,
+            announcementId
+        });
+
+        if (!contactAuthorization.allowed) {
+            return res.status(402).json({
+                error: contactAuthorization.message || 'Limite de contacts atteinte',
+                code: contactAuthorization.reason || 'PAYMENT_REQUIRED',
+                pricing: {
+                    buyerSubscriptionMonthlyEur: 3,
+                    buyerContactPackEur: 2,
+                    buyerContactPackSize: 3
+                },
+                buyerEntitlements: contactAuthorization.entitlements || null
+            });
+        }
+
         const link = await offerService.linkAnnouncementToConversation({
             roomId,
             announcementId,
@@ -1051,7 +1140,11 @@ app.post('/api/conversations/link-announcement', async (req, res) => {
             initialMessageId
         });
 
-        res.status(201).json(link);
+        res.status(201).json({
+            ...link,
+            contactUsage: contactAuthorization.usageType,
+            buyerEntitlements: contactAuthorization.entitlements || null
+        });
     } catch (error) {
         console.error('❌ Erreur liaison annonce-conversation:', error);
         res.status(500).json({ error: 'Erreur serveur' });
@@ -2098,7 +2191,7 @@ app.post('/api/auth/logout', async (req, res) => {
 // Vérification de session/token
 app.get('/api/auth/verify', async (req, res) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '') || req.header('X-Auth-Token');
+        const token = extractAuthToken(req);
         
         if (!token) {
             return res.status(401).json({ error: 'Token requis' });
@@ -2121,6 +2214,139 @@ app.get('/api/auth/verify', async (req, res) => {
     } catch (error) {
         console.error('❌ Erreur vérification token:', error.message);
         res.status(500).json({ error: 'Erreur de vérification' });
+    }
+});
+
+// Entitlements et limites de monétisation utilisateur
+app.get('/api/entitlements/me', async (req, res) => {
+    try {
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const entitlements = entitlementService.getUserEntitlements(authenticatedUser.id);
+        res.json(entitlements);
+    } catch (error) {
+        console.error('❌ Erreur récupération entitlements:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Endpoint temporaire d'activation d'un pack contact acheteur.
+// A remplacer ensuite par une validation Google Play Billing.
+app.post('/api/entitlements/buyer/contact-packs', async (req, res) => {
+    try {
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const packs = parseInt(req.body?.packs || 1, 10);
+        if (!Number.isInteger(packs) || packs <= 0) {
+            return res.status(400).json({ error: 'packs doit être un entier positif' });
+        }
+
+        const buyer = entitlementService.addBuyerContactPacks(authenticatedUser.id, packs);
+        res.status(201).json({
+            message: 'Pack(s) de contacts ajouté(s)',
+            buyer
+        });
+    } catch (error) {
+        console.error('❌ Erreur ajout pack contacts:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Consommer une estimation vendeur (5 gratuites, puis abonnement vendeur requis)
+app.post('/api/entitlements/seller/consume-estimation', async (req, res) => {
+    try {
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const result = entitlementService.consumeSellerEstimation(authenticatedUser.id);
+        if (!result.allowed) {
+            return res.status(402).json({
+                error: result.message || 'Limite d estimations atteinte',
+                code: result.reason || 'PAYMENT_REQUIRED',
+                sellerEntitlements: result.entitlements || null
+            });
+        }
+        res.status(201).json(result);
+    } catch (error) {
+        console.error('❌ Erreur consommation estimation vendeur:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Vérifier l'accès au calcul de rentabilité
+app.get('/api/entitlements/roi/check', async (req, res) => {
+    try {
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const result = entitlementService.canUseRoiCalculation(authenticatedUser.id);
+        if (!result.allowed) {
+            return res.status(402).json({
+                error: result.message,
+                code: result.reason,
+                pricing: {
+                    buyerSubscriptionMonthlyEur: 3,
+                    roiOptionMonthlyEur: 3
+                }
+            });
+        }
+        res.json(result);
+    } catch (error) {
+        console.error('❌ Erreur vérification ROI:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Prolonger manuellement une annonce (2 EUR/semaine en logique métier, sans paiement intégré)
+app.post('/api/entitlements/seller/announcement/:announcementId/extend', async (req, res) => {
+    try {
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const announcementId = req.params.announcementId;
+        const weeks = parseInt(req.body?.weeks || 1, 10);
+        const result = entitlementService.extendAnnouncementPublication(
+            announcementId,
+            authenticatedUser.id,
+            weeks
+        );
+        if (!result.success) {
+            return res.status(400).json({
+                error: result.message || 'Impossible de prolonger cette annonce'
+            });
+        }
+        res.status(201).json(result);
+    } catch (error) {
+        console.error('❌ Erreur prolongation annonce:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Endpoint admin/local pour activer des abonnements sans PSP.
+app.post('/api/admin/entitlements/subscription', async (req, res) => {
+    try {
+        const { userId, planCode, months = 1, adminKey } = req.body || {};
+        const configuredKey = process.env.ADMIN_ENTITLEMENTS_KEY;
+        if (configuredKey && adminKey !== configuredKey) {
+            return res.status(403).json({ error: 'Acces refuse' });
+        }
+        if (!userId || !planCode) {
+            return res.status(400).json({ error: 'userId et planCode requis' });
+        }
+        const updated = entitlementService.setSubscription(
+            userId,
+            planCode,
+            parseInt(months, 10)
+        );
+        res.status(201).json({
+            message: 'Abonnement mis a jour',
+            entitlements: updated
+        });
+    } catch (error) {
+        console.error('❌ Erreur mise a jour abonnement admin:', error.message);
+        res.status(400).json({ error: error.message || 'Erreur serveur' });
     }
 });
 

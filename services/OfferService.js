@@ -1,6 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const { ensureVisitAppointmentsSchema } = require('./VisitAppointmentService');
 
 /**
  * Service de gestion des propositions d'achat/vente
@@ -10,6 +11,8 @@ class OfferService {
     constructor() {
         this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
         this.db = new sqlite3.Database(this.dbPath);
+        // Même fichier que VisitAppointmentService : créer visit_appointments avant tout DELETE
+        ensureVisitAppointmentsSchema(this.db);
         // Base de données des utilisateurs (différente)
         this.usersDbPath = path.join(__dirname, '..', 'database', 'parcelle_business.db');
         this.usersDb = new sqlite3.Database(this.usersDbPath);

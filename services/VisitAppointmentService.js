@@ -2,18 +2,7 @@ const sqlite3 = require('sqlite3').verbose();
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
-/**
- * Rendez-vous de visite : proposition par une partie, acceptation / refus par l'autre (même logique métier qu'une offre simplifiée).
- */
-class VisitAppointmentService {
-    constructor() {
-        this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
-        this.db = new sqlite3.Database(this.dbPath);
-        this.initializeDatabase();
-    }
-
-    initializeDatabase() {
-        const sql = `
+const VISIT_APPOINTMENTS_DDL = `
             CREATE TABLE IF NOT EXISTS visit_appointments (
                 id TEXT PRIMARY KEY,
                 room_id TEXT NOT NULL,
@@ -31,16 +20,35 @@ class VisitAppointmentService {
                 updated_at TEXT NOT NULL
             )
         `;
-        this.db.run(sql, (err) => {
+
+/**
+ * Crée la table et les index sur une connexion parcelle_chat.db.
+ * Exportée pour être appelée depuis OfferService avant tout DELETE sur cette table
+ * (évite race : CREATE TABLE async après le chargement du module).
+ */
+function ensureVisitAppointmentsSchema(db) {
+    db.serialize(() => {
+        db.run(VISIT_APPOINTMENTS_DDL, (err) => {
             if (err) {
                 console.error('❌ Erreur création visit_appointments:', err);
             } else {
                 console.log('✅ Table visit_appointments prête');
             }
         });
-        this.db.run('CREATE INDEX IF NOT EXISTS idx_visit_room ON visit_appointments(room_id)');
-        this.db.run('CREATE INDEX IF NOT EXISTS idx_visit_buyer ON visit_appointments(buyer_id)');
-        this.db.run('CREATE INDEX IF NOT EXISTS idx_visit_seller ON visit_appointments(seller_id)');
+        db.run('CREATE INDEX IF NOT EXISTS idx_visit_room ON visit_appointments(room_id)');
+        db.run('CREATE INDEX IF NOT EXISTS idx_visit_buyer ON visit_appointments(buyer_id)');
+        db.run('CREATE INDEX IF NOT EXISTS idx_visit_seller ON visit_appointments(seller_id)');
+    });
+}
+
+/**
+ * Rendez-vous de visite : proposition par une partie, acceptation / refus par l'autre (même logique métier qu'une offre simplifiée).
+ */
+class VisitAppointmentService {
+    constructor() {
+        this.dbPath = path.join(__dirname, '..', 'database', 'parcelle_chat.db');
+        this.db = new sqlite3.Database(this.dbPath);
+        ensureVisitAppointmentsSchema(this.db);
     }
 
     rowToJson(row) {
@@ -267,3 +275,4 @@ class VisitAppointmentService {
 }
 
 module.exports = VisitAppointmentService;
+module.exports.ensureVisitAppointmentsSchema = ensureVisitAppointmentsSchema;

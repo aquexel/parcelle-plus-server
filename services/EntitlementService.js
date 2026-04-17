@@ -61,6 +61,95 @@ class EntitlementService {
             CREATE INDEX IF NOT EXISTS idx_seller_publications_seller
             ON seller_announcement_publications(seller_id)
         `);
+
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS monetization_launch_config (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                promo_free_until_ms INTEGER,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        this.db.prepare(`
+            INSERT OR IGNORE INTO monetization_launch_config (id, promo_free_until_ms)
+            VALUES (1, NULL)
+        `).run();
+    }
+
+    /**
+     * Période de lancement : tout gratuit jusqu'à promo_free_until_ms (inclus côté temps : now < until).
+     * NULL = pas de promo active (monétisation normale).
+     */
+    getLaunchPromoFreeUntilMs() {
+        const row = this.db.prepare(`
+            SELECT promo_free_until_ms FROM monetization_launch_config WHERE id = 1
+        `).get();
+        const v = row?.promo_free_until_ms;
+        if (v == null || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    getLaunchPromoStatus(now = Date.now()) {
+        const freeUntilMs = this.getLaunchPromoFreeUntilMs();
+        const active = freeUntilMs != null && freeUntilMs > now;
+        return { active, freeUntilMs };
+    }
+
+    isLaunchPromoActive(now = Date.now()) {
+        const until = this.getLaunchPromoFreeUntilMs();
+        return until != null && until > now;
+    }
+
+    /**
+     * Active une période gratuite globale à partir de maintenant (ex. 3 mois).
+     * Si une promo est déjà en cours, prolonge à partir de max(now, fin actuelle).
+     */
+    setLaunchPromoMonthsFromNow(months) {
+        const m = Number(months);
+        if (!Number.isFinite(m) || m <= 0) {
+            throw new Error('months doit être un nombre positif');
+        }
+        const addMs = Math.round(m * 30 * 24 * 60 * 60 * 1000);
+        const now = Date.now();
+        const currentUntil = this.getLaunchPromoFreeUntilMs() || 0;
+        const base = Math.max(now, currentUntil);
+        const newUntil = base + addMs;
+        this.db.prepare(`
+            UPDATE monetization_launch_config
+            SET promo_free_until_ms = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+        `).run(newUntil);
+        return this.getLaunchPromoStatus(now);
+    }
+
+    /** Termine la promo tout de suite (monétisation réactivée). */
+    endLaunchPromoNow() {
+        this.db.prepare(`
+            UPDATE monetization_launch_config
+            SET promo_free_until_ms = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+        `).run();
+        return this.getLaunchPromoStatus(Date.now());
+    }
+
+    /** Fixe une date de fin absolue (ms depuis epoch), ou null pour repasser en payant. */
+    setLaunchPromoEndMs(endMs) {
+        if (endMs == null) {
+            this.db.prepare(`
+                UPDATE monetization_launch_config
+                SET promo_free_until_ms = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            `).run();
+        } else {
+            const n = Number(endMs);
+            if (!Number.isFinite(n)) throw new Error('endMs invalide');
+            this.db.prepare(`
+                UPDATE monetization_launch_config
+                SET promo_free_until_ms = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+            `).run(Math.round(n));
+        }
+        return this.getLaunchPromoStatus(Date.now());
     }
 
     ensureUserState(userId) {
@@ -132,9 +221,12 @@ class EntitlementService {
 
         const sellerPublicationStats = this.getSellerPublicationStats(userId);
 
+        const launchPromo = this.getLaunchPromoStatus(now);
+
         return {
             userId,
             pricing: this.getPricing(),
+            launchPromo,
             seller: {
                 subscriptionActive: Boolean(state?.seller_subscription_until && state.seller_subscription_until > now),
                 subscriptionUntil: state?.seller_subscription_until || null,
@@ -198,6 +290,14 @@ class EntitlementService {
         this.ensureUserState(userId);
         this.ensureSellerCounter(userId);
 
+        if (this.isLaunchPromoActive()) {
+            return {
+                allowed: true,
+                usageType: 'launch_promo',
+                entitlements: this.getUserEntitlements(userId).seller
+            };
+        }
+
         const state = this.getUserState(userId);
         if (this.isSubscriptionActive(state?.seller_subscription_until)) {
             return {
@@ -251,6 +351,21 @@ class EntitlementService {
         const now = Date.now();
         const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 
+        if (this.isLaunchPromoActive(now)) {
+            const promoUntil = this.getLaunchPromoFreeUntilMs() || now + sevenDaysMs;
+            this.db.prepare(`
+                INSERT INTO seller_announcement_publications
+                (announcement_id, seller_id, free_until_ms, paid_until_ms, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(announcement_id) DO UPDATE SET
+                    seller_id = excluded.seller_id,
+                    free_until_ms = excluded.free_until_ms,
+                    paid_until_ms = excluded.paid_until_ms,
+                    updated_at = CURRENT_TIMESTAMP
+            `).run(announcementId, sellerId, promoUntil, promoUntil);
+            return { allowed: true, usageType: 'launch_promo', freeUntilMs: promoUntil };
+        }
+
         const state = this.getUserState(sellerId);
         const sellerSubscriptionActive = this.isSubscriptionActive(state?.seller_subscription_until, now);
         if (sellerSubscriptionActive) {
@@ -299,6 +414,13 @@ class EntitlementService {
         }
         this.ensureUserState(sellerId);
         const now = Date.now();
+        if (this.isLaunchPromoActive(now)) {
+            return {
+                allowed: true,
+                usageType: 'launch_promo',
+                visibleUntilMs: this.getLaunchPromoFreeUntilMs()
+            };
+        }
         const state = this.getUserState(sellerId);
         if (this.isSubscriptionActive(state?.seller_subscription_until, now)) {
             return { allowed: true, usageType: 'seller_subscription', visibleUntilMs: null };
@@ -358,8 +480,11 @@ class EntitlementService {
 
     canUseRoiCalculation(userId) {
         this.ensureUserState(userId);
-        const state = this.getUserState(userId);
         const now = Date.now();
+        if (this.isLaunchPromoActive(now)) {
+            return { allowed: true, usageType: 'launch_promo' };
+        }
+        const state = this.getUserState(userId);
         if (this.isSubscriptionActive(state?.buyer_subscription_until, now)) {
             return { allowed: true, usageType: 'buyer_subscription' };
         }
@@ -422,6 +547,30 @@ class EntitlementService {
         }
 
         const now = Date.now();
+        if (this.isLaunchPromoActive(now)) {
+            const existingContact = this.db.prepare(`
+                SELECT id
+                FROM buyer_contact_events
+                WHERE buyer_id = ? AND seller_id = ?
+            `).get(buyerId, sellerId);
+            if (existingContact) {
+                return {
+                    allowed: true,
+                    usageType: 'existing_relationship',
+                    entitlements: this.getUserEntitlements(buyerId).buyer
+                };
+            }
+            this.db.prepare(`
+                INSERT INTO buyer_contact_events (buyer_id, seller_id, announcement_id)
+                VALUES (?, ?, ?)
+            `).run(buyerId, sellerId, announcementId || null);
+            return {
+                allowed: true,
+                usageType: 'launch_promo',
+                entitlements: this.getUserEntitlements(buyerId).buyer
+            };
+        }
+
         const txn = this.db.transaction(() => {
             const existingContact = this.db.prepare(`
                 SELECT id

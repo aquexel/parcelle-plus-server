@@ -316,6 +316,51 @@ app.get('/', (req, res) => {
     });
 });
 
+// Politique de mise à jour Android (sans auth).
+// Obligatoire : versionCode < minAndroidVersionCode → l’app bloque.
+// Recommandée (optionnel) : min <= versionCode < recommendedAndroidVersionCode → dialogue non bloquant.
+// Variables d’environnement :
+//   CLIENT_MIN_ANDROID_VERSION_CODE (défaut 1)
+//   CLIENT_UPDATE_MESSAGE (texte blocage obligatoire)
+//   CLIENT_RECOMMENDED_ANDROID_VERSION_CODE (optionnel ; doit être > min pour être pris en compte)
+//   CLIENT_RECOMMENDED_UPDATE_MESSAGE (optionnel)
+//   CLIENT_ANDROID_STORE_URL
+app.get('/api/client/requirements', (req, res) => {
+    try {
+        const raw = process.env.CLIENT_MIN_ANDROID_VERSION_CODE;
+        const parsed = raw != null && raw !== '' ? parseInt(String(raw), 10) : 1;
+        const minAndroidVersionCode = Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+        const message =
+            process.env.CLIENT_UPDATE_MESSAGE ||
+            'Une mise a jour de l application est necessaire pour continuer.';
+        const updateUrl =
+            process.env.CLIENT_ANDROID_STORE_URL ||
+            'https://play.google.com/store/apps/details?id=com.parcelle.plus';
+
+        const payload = {
+            minAndroidVersionCode,
+            message,
+            updateUrl
+        };
+
+        const recRaw = process.env.CLIENT_RECOMMENDED_ANDROID_VERSION_CODE;
+        if (recRaw != null && recRaw !== '') {
+            const recParsed = parseInt(String(recRaw), 10);
+            if (Number.isFinite(recParsed) && recParsed > minAndroidVersionCode) {
+                payload.recommendedAndroidVersionCode = recParsed;
+                payload.recommendedMessage =
+                    process.env.CLIENT_RECOMMENDED_UPDATE_MESSAGE ||
+                    'Une nouvelle version est disponible avec des ameliorations. Nous vous recommandons de mettre a jour.';
+            }
+        }
+
+        res.json(payload);
+    } catch (error) {
+        console.error('❌ Erreur /api/client/requirements:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
 // Routes pour les polygones
 app.get('/api/polygons', async (req, res) => {
     try {
@@ -2346,6 +2391,64 @@ app.post('/api/admin/entitlements/subscription', async (req, res) => {
         });
     } catch (error) {
         console.error('❌ Erreur mise a jour abonnement admin:', error.message);
+        res.status(400).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
+// Période de lancement « tout gratuit » (jusqu’à une date), puis monétisation normale.
+// Lecture publique (sans secret) pour affichage app / monitoring.
+app.get('/api/entitlements/launch-promo', (req, res) => {
+    try {
+        const status = entitlementService.getLaunchPromoStatus();
+        res.json(status);
+    } catch (error) {
+        console.error('❌ Erreur lecture promo lancement:', error.message);
+        res.status(500).json({ error: 'Erreur serveur' });
+    }
+});
+
+// Admin : activer X mois de gratuité globale, fixer une date de fin, ou repasser en payant.
+// Même clé ADMIN_ENTITLEMENTS_KEY que /api/admin/entitlements/subscription (si définie dans .env).
+app.post('/api/admin/entitlements/launch-promo', async (req, res) => {
+    try {
+        const { adminKey, months, mode, endMs } = req.body || {};
+        const configuredKey = process.env.ADMIN_ENTITLEMENTS_KEY;
+        if (configuredKey && adminKey !== configuredKey) {
+            return res.status(403).json({ error: 'Acces refuse' });
+        }
+
+        if (mode === 'paid' || mode === 'off' || mode === 'end') {
+            const launchPromo = entitlementService.endLaunchPromoNow();
+            return res.status(201).json({
+                message: 'Monétisation réactivée (promo lancement terminée)',
+                launchPromo
+            });
+        }
+
+        if (endMs != null && endMs !== '') {
+            const launchPromo = entitlementService.setLaunchPromoEndMs(parseInt(String(endMs), 10));
+            return res.status(201).json({
+                message: 'Date de fin de promo lancement enregistrée',
+                launchPromo
+            });
+        }
+
+        if (months != null && months !== '') {
+            const m = parseFloat(String(months));
+            const launchPromo = entitlementService.setLaunchPromoMonthsFromNow(m);
+            return res.status(201).json({
+                message: 'Période gratuite globale prolongée / activée',
+                launchPromo
+            });
+        }
+
+        const launchPromo = entitlementService.getLaunchPromoStatus();
+        return res.status(200).json({
+            message: 'Aucun changement : envoyez { months: N } ou { mode: "paid" } ou { endMs: timestamp }',
+            launchPromo
+        });
+    } catch (error) {
+        console.error('❌ Erreur admin promo lancement:', error.message);
         res.status(400).json({ error: error.message || 'Erreur serveur' });
     }
 });

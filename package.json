@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/test-server.js"
+    "test": "node test/test-server.js",
+    "seed:contact-test": "node scripts/seed-contact-test-data.js",
+    "fix:test-polygons-fr": "node scripts/fix-test-polygons-map-france.js",
+    "build:loyers-db": "node scripts/create-loyers-anil-database.js"
   },
   "keywords": [
     "parcelle",

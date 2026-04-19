@@ -106,6 +106,7 @@ dist
 database/*.db
 database/*.db-journal
 database/*.db-wal
+tmp_loyers_import/
 
 # Fichiers de sauvegarde
 backup/

@@ -11,6 +11,7 @@ const morgan = require('morgan');
 const { v4: uuidv4 } = require('uuid');
 const WebSocket = require('ws');
 const http = require('http');
+const https = require('https');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
@@ -35,7 +36,7 @@ const app = express();
 app.use(cors({
     origin: '*', // Permettre toutes les origines pour développement
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Auth-Token', 'X-API-Key']
 }));
 app.use(
     morgan('dev', {
@@ -114,6 +115,47 @@ const pdfService = new PDFService();
 const photoDistributionService = new PhotoDistributionService();
 const emailService = new EmailService();
 const entitlementService = new EntitlementService();
+const { LoyersAnilService } = require('./services/LoyersAnilService');
+const loyersAnilService = new LoyersAnilService();
+
+/**
+ * GET JSON (geo.api.gouv, etc.) avec User-Agent (évite 403 « bot »).
+ */
+function fetchHttpsJson(url) {
+    return new Promise((resolve, reject) => {
+        const req = https.get(
+            url,
+            {
+                headers: {
+                    'User-Agent': 'ParcellePlus/1.0 (loyers heatmap; contact: support parcelleplus)',
+                    Accept: 'application/json'
+                }
+            },
+            (res) => {
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    if (res.statusCode && res.statusCode >= 400) {
+                        reject(new Error(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+                        return;
+                    }
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            }
+        );
+        req.on('error', reject);
+        req.setTimeout(20000, () => {
+            req.destroy();
+            reject(new Error('timeout'));
+        });
+    });
+}
 
 // PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
 let pushNotificationService;
@@ -170,6 +212,131 @@ async function determineTargetUserId(roomId, senderId) {
         console.error('❌ Erreur détermination utilisateur cible:', error.message);
         return null;
     }
+}
+
+// Room: private_<uuid acheteur ou vendeur 1>_<uuid 2>_announcement_<id annonce> (UUID avec tirets)
+const PRIVATE_LISTING_ROOM_RE =
+    /^private_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})_([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})_announcement_([0-9a-fA-F-]+)$/;
+
+function parsePrivateListingRoomId(roomId) {
+    if (typeof roomId !== 'string') return null;
+    const m = roomId.match(PRIVATE_LISTING_ROOM_RE);
+    if (!m) return null;
+    return { participant1: m[1], participant2: m[2], announcementId: m[3] };
+}
+
+/**
+ * Même règle que POST /api/conversations/link-announcement : empêche d’envoyer le premier message
+ * dans une room liée à une annonce sans quota contact (contourne un bouton « Plus tard » côté app).
+ * @param {import('express').Request|null} req - null pour WebSocket (pas de session HTTP).
+ * @param {{ room?: string, senderId?: string }} messageData
+ * @returns {Promise<{ ok: true } | { ok: false, status: number, body: object }>}
+ */
+async function gatePrivateListingFirstMessage(req, messageData) {
+    const roomId = messageData.room;
+    const parsed = parsePrivateListingRoomId(roomId);
+    if (!parsed) return { ok: true };
+
+    const senderId = String(messageData.senderId || '');
+    if (!senderId || senderId === 'anonymous') {
+        return {
+            ok: false,
+            status: 400,
+            body: { error: 'senderId requis pour cette conversation', code: 'SENDER_REQUIRED' },
+        };
+    }
+
+    let polygon;
+    try {
+        polygon = await polygonService.getPolygonById(parsed.announcementId);
+    } catch (e) {
+        return { ok: true };
+    }
+    if (!polygon) return { ok: true };
+
+    const sellerId = String(polygon.user_id || polygon.userId || '');
+    if (!sellerId) return { ok: true };
+
+    if (senderId === sellerId) {
+        return { ok: true };
+    }
+
+    const p1 = String(parsed.participant1);
+    const p2 = String(parsed.participant2);
+    if (senderId !== p1 && senderId !== p2) {
+        return {
+            ok: false,
+            status: 403,
+            body: { error: 'Expediteur non autorise pour cette room', code: 'ROOM_SENDER_MISMATCH' },
+        };
+    }
+    if (sellerId !== p1 && sellerId !== p2) {
+        return {
+            ok: false,
+            status: 403,
+            body: { error: 'Room incompatible avec l annonce', code: 'ROOM_ANNOUNCEMENT_MISMATCH' },
+        };
+    }
+
+    let buyerId = senderId;
+    if (req) {
+        const authed = await getAuthenticatedUser(req);
+        if (!authed) {
+            return {
+                ok: false,
+                status: 401,
+                body: { error: 'Session requise pour contacter un vendeur', code: 'AUTH_REQUIRED' },
+            };
+        }
+        if (String(authed.id) !== senderId) {
+            return {
+                ok: false,
+                status: 403,
+                body: { error: 'senderId invalide pour la session courante', code: 'SENDER_SESSION_MISMATCH' },
+            };
+        }
+        buyerId = String(authed.id);
+    }
+
+    const existing = await offerService.getConversationAnnouncement(roomId);
+    if (existing) return { ok: true };
+
+    const contactAuthorization = entitlementService.registerBuyerContact({
+        buyerId,
+        sellerId,
+        announcementId: parsed.announcementId,
+    });
+    if (!contactAuthorization.allowed) {
+        return {
+            ok: false,
+            status: 402,
+            body: {
+                error: contactAuthorization.message || 'Limite de contacts atteinte',
+                code: contactAuthorization.reason || 'PAYMENT_REQUIRED',
+                pricing: {
+                    buyerSubscriptionMonthlyEur: 3,
+                    buyerContactPackEur: 2,
+                    buyerContactPackSize: 3,
+                },
+                buyerEntitlements: contactAuthorization.entitlements || null,
+            },
+        };
+    }
+
+    try {
+        await offerService.linkAnnouncementToConversation({
+            roomId,
+            announcementId: parsed.announcementId,
+            buyerId,
+            sellerId,
+            initialMessageId: null,
+        });
+    } catch (e) {
+        console.error('❌ Liaison annonce (premier message):', e.message);
+        return { ok: false, status: 500, body: { error: 'Erreur serveur' } };
+    }
+
+    return { ok: true };
 }
 
 function extractAuthToken(req) {
@@ -252,6 +419,23 @@ wss.on('connection', (ws, req) => {
 async function handleChatMessage(clientId, message) {
     try {
         if (isAutogeneratedOfferPlaceholderMessage(message.content)) {
+            return;
+        }
+        const gate = await gatePrivateListingFirstMessage(null, {
+            room: message.room || 'general',
+            senderId: message.senderId,
+        });
+        if (!gate.ok) {
+            const clientInfo = clients.get(clientId);
+            if (clientInfo?.ws && clientInfo.ws.readyState === WebSocket.OPEN) {
+                clientInfo.ws.send(
+                    JSON.stringify({
+                        type: 'contact_gate_error',
+                        status: gate.status,
+                        ...gate.body,
+                    })
+                );
+            }
             return;
         }
         const savedMessage = await messageService.saveMessage({
@@ -390,11 +574,15 @@ app.get('/api/polygons/user/:userId', async (req, res) => {
 // Route pour récupérer les polygones publics (pour les acheteurs)
 app.get('/api/polygons/public', async (req, res) => {
     try {
-        const { limit = 100 } = req.query;
-        
-        // Récupérer tous les polygones et filtrer les publics
-        const allPolygons = await polygonService.getAllPolygons(null, limit);
-        const publicPolygons = allPolygons.filter((p) => {
+        const { limit = 100, listing_type: listingTypeQuery } = req.query;
+        const listingFilter =
+            listingTypeQuery === 'rent' || listingTypeQuery === 'sale'
+                ? listingTypeQuery
+                : null;
+
+        // Récupérer les polygones (filtrage vente/location si listing_type=rent|sale)
+        const allPolygons = await polygonService.getAllPolygons(null, Number(limit) || 100);
+        let publicPolygons = allPolygons.filter((p) => {
             const isPublic = (p.is_public === 1 || p.is_public === true || p.isPublic === true);
             const hasValidStatus = (p.status === 'active' || p.status === 'available');
             if (!isPublic || !hasValidStatus) return false;
@@ -403,6 +591,13 @@ app.get('/api/polygons/public', async (req, res) => {
             const visibility = entitlementService.canAnnouncementBePublic(p.id, sellerId);
             return visibility.allowed;
         });
+
+        if (listingFilter) {
+            publicPolygons = publicPolygons.filter((p) => {
+                const lt = p.listing_type || p.listingType || 'sale';
+                return lt === listingFilter;
+            });
+        }
         
         // Ajouter le nombre de photos pour chaque polygone (via système P2P)
         const polygonsWithPhotos = await Promise.all(publicPolygons.map(async (polygon) => {
@@ -1079,6 +1274,11 @@ app.post('/api/messages', async (req, res) => {
                 reason: 'offer_placeholder',
                 room: messageData.room || null,
             });
+        }
+
+        const contactGate = await gatePrivateListingFirstMessage(req, messageData);
+        if (!contactGate.ok) {
+            return res.status(contactGate.status).json(contactGate.body);
         }
 
         const savedMessage = await messageService.saveMessage(messageData);
@@ -2299,6 +2499,29 @@ app.post('/api/entitlements/buyer/contact-packs', async (req, res) => {
     }
 });
 
+// A remplacer par Google Play Billing : activation abonnement acheteur (contacts non plafonnés tant que l abo est actif).
+app.post('/api/entitlements/buyer/subscription', async (req, res) => {
+    try {
+        const authenticatedUser = await requireAuthenticatedUser(req, res);
+        if (!authenticatedUser) return;
+
+        const months = parseInt(req.body?.months ?? 1, 10);
+        const safeMonths = Number.isInteger(months) && months > 0 ? months : 1;
+        const updated = entitlementService.setSubscription(
+            authenticatedUser.id,
+            'buyer_monthly',
+            safeMonths
+        );
+        res.status(201).json({
+            message: 'Abonnement acheteur active (provisionnel, a remplacer par facturation Play)',
+            entitlements: updated,
+        });
+    } catch (error) {
+        console.error('❌ Erreur activation abonnement acheteur:', error.message);
+        res.status(400).json({ error: error.message || 'Erreur serveur' });
+    }
+});
+
 // Consommer une estimation vendeur (5 gratuites, puis abonnement vendeur requis)
 app.post('/api/entitlements/seller/consume-estimation', async (req, res) => {
     try {
@@ -3129,6 +3352,189 @@ app.get('/api/rei/commune/:codeCommune', async (req, res) => {
             message: error.message,
             codeCommune: req.params.codeCommune
         });
+    }
+});
+
+// ========== LOYERS ANIL (CARTE DES LOYERS 2025, data.gouv) ==========
+
+app.get('/api/loyers/info', (req, res) => {
+    try {
+        const dbPath = path.join(__dirname, 'database', 'loyers_anil.db');
+        if (!loyersAnilService.isAvailable()) {
+            return res.status(404).json({
+                available: false,
+                message:
+                    'Base loyers ANIL absente. Exécutez : node scripts/create-loyers-anil-database.js',
+                datasetUrl:
+                    'https://www.data.gouv.fr/datasets/carte-des-loyers-indicateurs-de-loyers-dannonce-par-commune-en-2025'
+            });
+        }
+        const stats = fs.statSync(dbPath);
+        res.json({
+            available: true,
+            filename: 'loyers_anil.db',
+            sizeMB: parseFloat((stats.size / (1024 * 1024)).toFixed(2)),
+            lastModified: stats.mtime.toISOString(),
+            sourceAttribution:
+                'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin',
+            datasetUrl:
+                'https://www.data.gouv.fr/datasets/carte-des-loyers-indicateurs-de-loyers-dannonce-par-commune-en-2025'
+        });
+    } catch (error) {
+        console.error('❌ Erreur /api/loyers/info:', error);
+        res.status(500).json({ error: 'Erreur serveur', message: error.message });
+    }
+});
+
+app.get('/api/loyers/commune/:codeInsee', (req, res) => {
+    try {
+        const code = String(req.params.codeInsee || '').trim();
+        if (!/^\d{5}$/.test(code)) {
+            return res.status(400).json({
+                error: 'Code INSEE invalide',
+                message: 'Le code commune doit comporter 5 chiffres (ex. 75107)'
+            });
+        }
+        if (!loyersAnilService.isAvailable()) {
+            return res.status(404).json({
+                error: 'Base loyers non disponible',
+                message: 'Exécutez : node scripts/create-loyers-anil-database.js'
+            });
+        }
+        const payload = loyersAnilService.buildCommunePayload(code);
+        if (!payload) {
+            return res.status(404).json({
+                error: 'Commune introuvable',
+                message: `Aucun indicateur ANIL en base pour le code ${code}`,
+                codeInsee: code
+            });
+        }
+        res.json(payload);
+    } catch (error) {
+        console.error('❌ Erreur /api/loyers/commune:', error);
+        res.status(500).json({ error: 'Erreur serveur', message: error.message });
+    }
+});
+
+app.get('/api/loyers/estimate', (req, res) => {
+    try {
+        const code = String(req.query.codeInsee || '').trim();
+        const segment = String(req.query.segment || 'APP').toUpperCase();
+        const surface = parseFloat(String(req.query.surface || '').replace(',', '.'));
+        const allowed = ['APP', 'APP12', 'APP3', 'MAISON'];
+        if (!/^\d{5}$/.test(code)) {
+            return res.status(400).json({ error: 'codeInsee requis (5 chiffres)' });
+        }
+        if (!allowed.includes(segment)) {
+            return res.status(400).json({
+                error: 'segment invalide',
+                message: `segment doit être l’un de : ${allowed.join(', ')}`
+            });
+        }
+        if (!Number.isFinite(surface) || surface <= 0 || surface > 50000) {
+            return res.status(400).json({ error: 'surface invalide (m²)' });
+        }
+        if (!loyersAnilService.isAvailable()) {
+            return res.status(404).json({
+                error: 'Base loyers non disponible',
+                message: 'Exécutez : node scripts/create-loyers-anil-database.js'
+            });
+        }
+        const est = loyersAnilService.estimate(code, segment, surface);
+        if (!est) {
+            return res.status(404).json({
+                error: 'Données introuvables',
+                message: `Pas d’indicateur pour ${code} / ${segment}`
+            });
+        }
+        res.json(est);
+    } catch (error) {
+        console.error('❌ Erreur /api/loyers/estimate:', error);
+        res.status(500).json({ error: 'Erreur serveur', message: error.message });
+    }
+});
+
+/**
+ * Heatmap locataire : communes dans la bbox (geo.api.gouv) + loyer au m² prédit ANIL pour un segment.
+ * GeoJSON FeatureCollection de points (centroides communes).
+ */
+app.get('/api/loyers/bbox-heatmap', async (req, res) => {
+    try {
+        const south = parseFloat(String(req.query.south ?? '').replace(',', '.'));
+        const west = parseFloat(String(req.query.west ?? '').replace(',', '.'));
+        const north = parseFloat(String(req.query.north ?? '').replace(',', '.'));
+        const east = parseFloat(String(req.query.east ?? '').replace(',', '.'));
+        const segment = String(req.query.segment || 'APP').toUpperCase();
+        const allowed = ['APP', 'APP12', 'APP3', 'MAISON'];
+        if (![south, west, north, east].every((x) => Number.isFinite(x))) {
+            return res.status(400).json({ error: 'bbox invalide', message: 'south, west, north, east requis' });
+        }
+        if (south >= north || west >= east) {
+            return res.status(400).json({ error: 'bbox invalide', message: 'south < north et west < east' });
+        }
+        if (!allowed.includes(segment)) {
+            return res.status(400).json({ error: 'segment invalide', message: `segment ∈ ${allowed.join(', ')}` });
+        }
+        if (!loyersAnilService.isAvailable()) {
+            return res.status(404).json({
+                error: 'Base loyers non disponible',
+                message: 'Exécutez : node scripts/create-loyers-anil-database.js'
+            });
+        }
+
+        const bboxParam = `${west},${south},${east},${north}`;
+        const geoUrl = `https://geo.api.gouv.fr/communes?bbox=${encodeURIComponent(bboxParam)}&fields=nom,code,centre&format=geojson&geometry=centre`;
+        const geo = await fetchHttpsJson(geoUrl);
+        const featsIn = Array.isArray(geo.features) ? geo.features : [];
+        const codeSet = new Set();
+        const byCode = new Map();
+        for (const f of featsIn) {
+            const code = f && f.properties && f.properties.code != null ? String(f.properties.code).padStart(5, '0') : '';
+            if (!/^\d{5}$/.test(code)) continue;
+            codeSet.add(code);
+            byCode.set(code, f);
+        }
+        const codes = [...codeSet];
+        const loyerRows = loyersAnilService.getLoypredForCodes(codes, segment);
+        const loyByCode = new Map(loyerRows.map((r) => [r.codeInsee, r]));
+
+        const features = [];
+        for (const code of codes) {
+            const row = loyByCode.get(code);
+            if (!row || row.loypredm2 == null || !Number.isFinite(row.loypredm2)) continue;
+            const f = byCode.get(code);
+            const geom = f && f.geometry;
+            if (!geom || geom.type !== 'Point' || !Array.isArray(geom.coordinates) || geom.coordinates.length < 2) {
+                continue;
+            }
+            const [lon, lat] = geom.coordinates;
+            if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+            const nom = (f.properties && f.properties.nom) || row.libgeo || '';
+            features.push({
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [lon, lat] },
+                properties: {
+                    codeInsee: code,
+                    nom,
+                    segment,
+                    loypredm2: row.loypredm2,
+                    sourceAttribution:
+                        'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin'
+                }
+            });
+        }
+
+        res.json({
+            type: 'FeatureCollection',
+            features,
+            segment,
+            sourceAttribution: 'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin',
+            datasetUrl:
+                'https://www.data.gouv.fr/datasets/carte-des-loyers-indicateurs-de-loyers-dannonce-par-commune-en-2025'
+        });
+    } catch (error) {
+        console.error('❌ Erreur /api/loyers/bbox-heatmap:', error);
+        res.status(500).json({ error: 'Erreur serveur', message: error.message });
     }
 });
 

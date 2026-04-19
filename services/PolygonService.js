@@ -107,6 +107,14 @@ class PolygonService {
                     } else if (!err) {
                     }
                 });
+
+                this.db.run(`ALTER TABLE polygons ADD COLUMN listing_type TEXT DEFAULT 'sale'`, (err) => {
+                    if (err && !err.message.includes('duplicate column')) {
+                        // Ignorer si la colonne existe déjà
+                    } else if (!err) {
+                        console.log('✅ Colonne listing_type ajoutée (sale | rent)');
+                    }
+                });
                 
                 this.db.run(`ALTER TABLE polygons ADD COLUMN classe_dpe TEXT`, (err) => {
                     if (err && !err.message.includes('duplicate column')) {
@@ -141,6 +149,7 @@ class PolygonService {
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface,
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
                     p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe, p.annee_construction,
+                    p.listing_type,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id
@@ -172,23 +181,31 @@ class PolygonService {
         });
     }
 
-    async getPublicPolygons(limit = 100) {
+    async getPublicPolygons(limit = 100, listingType = null) {
         return new Promise((resolve, reject) => {
+            let listingClause = '';
+            const queryParams = [];
+            if (listingType === 'rent' || listingType === 'sale') {
+                listingClause = ` AND COALESCE(p.listing_type, 'sale') = ?`;
+                queryParams.push(listingType);
+            }
             const query = `
                 SELECT
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface,
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
                     p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.classe_dpe, p.annee_construction,
+                    p.listing_type,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id
-                WHERE p.is_public = 1 AND p.status = 'available'
+                WHERE p.is_public = 1 AND p.status = 'available'${listingClause}
                 GROUP BY p.id
                 ORDER BY p.created_at DESC 
                 LIMIT ?
             `;
+            queryParams.push(limit);
 
-            this.db.all(query, [limit], (err, rows) => {
+            this.db.all(query, queryParams, (err, rows) => {
                 if (err) {
                     console.error('❌ Erreur récupération polygones publics:', err);
                     reject(err);
@@ -212,6 +229,7 @@ class PolygonService {
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface, 
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.zone_plu,
                     p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.is_public, p.type, p.classe_dpe, p.annee_construction,
+                    p.listing_type,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id
@@ -243,12 +261,15 @@ class PolygonService {
             const id = uuidv4();
             const now = new Date().toISOString();
             
+            const listingTypeRaw = polygonData.listingType || polygonData.listing_type || 'sale';
+            const listingType = listingTypeRaw === 'rent' ? 'rent' : 'sale';
+
             const query = `
                 INSERT INTO polygons (
                     id, user_id, title, description, price, coordinates, 
                     status, commune, code_insee, surface, created_at, updated_at, is_public, zone_plu,
-                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe, annee_construction
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    orientation, luminosite, surface_maison, nombre_pieces, type, classe_dpe, annee_construction, listing_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `;
 
             const params = [
@@ -272,7 +293,8 @@ class PolygonService {
                 polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
                 polygonData.type || 'TERRAIN',
                 polygonData.classeDpe || null,
-                polygonData.anneeConstruction !== undefined ? polygonData.anneeConstruction : null
+                polygonData.anneeConstruction !== undefined ? polygonData.anneeConstruction : null,
+                listingType
             ];
 
             this.db.run(query, params, function(err) {
@@ -299,6 +321,7 @@ class PolygonService {
                         nombrePieces: polygonData.nombrePieces !== undefined ? polygonData.nombrePieces : null,
                         type: polygonData.type || 'TERRAIN',
                         anneeConstruction: polygonData.anneeConstruction !== undefined ? polygonData.anneeConstruction : null,
+                        listing_type: listingType,
                         createdAt: now,
                         updatedAt: now
                     };
@@ -382,6 +405,12 @@ class PolygonService {
                 updateFields.push('annee_construction = ?');
                 params.push(updateData.anneeConstruction);
             }
+            if (updateData.listingType !== undefined || updateData.listing_type !== undefined) {
+                const raw = updateData.listingType !== undefined ? updateData.listingType : updateData.listing_type;
+                const listingType = raw === 'rent' ? 'rent' : 'sale';
+                updateFields.push('listing_type = ?');
+                params.push(listingType);
+            }
             
             updateFields.push('updated_at = ?');
             params.push(now);
@@ -431,6 +460,7 @@ class PolygonService {
                     p.id, p.user_id, p.title, p.description, p.coordinates, p.surface, 
                     p.commune, p.code_insee, p.price, p.status, p.created_at, p.updated_at, p.is_public, p.zone_plu,
                     p.orientation, p.luminosite, p.surface_maison, p.nombre_pieces, p.type, p.annee_construction,
+                    p.listing_type,
                     COUNT(av.id) as view_count
                 FROM polygons p
                 LEFT JOIN announcement_views av ON p.id = av.announcement_id

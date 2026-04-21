@@ -252,7 +252,14 @@ class UserService {
     
     async validateSession(token) {
         const session = this.db.prepare(`
-            SELECT s.*, u.id, u.username, u.email, u.full_name, u.phone, u.user_type, u.is_verified
+            SELECT
+                u.id AS user_id,
+                u.username AS username,
+                u.email AS email,
+                u.full_name AS full_name,
+                u.phone AS phone,
+                u.user_type AS user_type,
+                u.is_verified AS is_verified
             FROM user_sessions s
             JOIN users u ON s.user_id = u.id
             WHERE s.token = ? AND s.expires_at > ?
@@ -264,7 +271,7 @@ class UserService {
         
         return {
             user: {
-                id: session.id,
+                id: session.user_id,
                 username: session.username,
                 email: session.email,
                 fullName: session.full_name,

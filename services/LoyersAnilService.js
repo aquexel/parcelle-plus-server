@@ -8,6 +8,29 @@ const path = require('path');
 
 const DB_FILENAME = 'loyers_anil.db';
 
+/** Métropole : 5 chiffres. Corse : 2A ou 2B + 3 chiffres (ex. 2A004, 2B108). */
+function isValidCommuneInseeCode(code) {
+    const c = String(code || '').trim().toUpperCase();
+    if (/^\d{5}$/.test(c)) return true;
+    if (/^2[AB]\d{3}$/.test(c)) return true;
+    return false;
+}
+
+/**
+ * Normalise une saisie ou une valeur API vers la clé stockée en base.
+ * @param {string} code
+ * @returns {string} chaîne vide si non reconnue
+ */
+function normalizeCommuneInseeInput(code) {
+    const s = String(code || '').trim();
+    if (!s) return '';
+    const up = s.toUpperCase();
+    if (/^2[AB]\d{3}$/.test(up)) return up;
+    if (/^\d{5}$/.test(up)) return up;
+    if (/^\d{1,5}$/.test(up)) return up.padStart(5, '0');
+    return '';
+}
+
 const REFERENCE_M2 = {
     APP: 52,
     APP12: 37,
@@ -32,11 +55,13 @@ class LoyersAnilService {
     }
 
     /**
-     * @param {string} codeInsee 5 chiffres
+     * @param {string} codeInsee 5 chiffres ou Corse 2A### / 2B###
      * @returns {object|null}
      */
     getCommuneRows(codeInsee) {
         if (!this.isAvailable()) return null;
+        const code = normalizeCommuneInseeInput(codeInsee);
+        if (!isValidCommuneInseeCode(code)) return null;
         const Database = require('better-sqlite3');
         const db = new Database(this.dbPath, { readonly: true });
         try {
@@ -45,7 +70,7 @@ class LoyersAnilService {
                     `SELECT code_insee, segment, libgeo, dep, reg, loypredm2, lwr_ipm2, upr_ipm2, typpred, nbobs_com, nbobs_mail, r2_adj
                      FROM loyers_communes WHERE code_insee = ? ORDER BY segment`
                 )
-                .all(codeInsee);
+                .all(code);
             return rows.length ? rows : null;
         } finally {
             db.close();
@@ -55,6 +80,7 @@ class LoyersAnilService {
     buildCommunePayload(codeInsee) {
         const rows = this.getCommuneRows(codeInsee);
         if (!rows) return null;
+        const canonicalCode = rows[0].code_insee || normalizeCommuneInseeInput(codeInsee);
 
         const libgeo = rows[0].libgeo || '';
         const segments = rows.map((r) => {
@@ -80,7 +106,7 @@ class LoyersAnilService {
         });
 
         return {
-            codeInsee,
+            codeInsee: canonicalCode,
             libgeo,
             sourceAttribution:
                 'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin',
@@ -99,6 +125,7 @@ class LoyersAnilService {
     estimate(codeInsee, segment, surfaceM2) {
         const rows = this.getCommuneRows(codeInsee);
         if (!rows) return null;
+        const canonicalCode = rows[0].code_insee || normalizeCommuneInseeInput(codeInsee);
         const row = rows.find((r) => r.segment === segment);
         if (!row || surfaceM2 <= 0) return null;
         const s = Number(surfaceM2);
@@ -106,7 +133,7 @@ class LoyersAnilService {
         const low = row.lwr_ipm2 != null ? Number(row.lwr_ipm2) : null;
         const high = row.upr_ipm2 != null ? Number(row.upr_ipm2) : null;
         return {
-            codeInsee,
+            codeInsee: canonicalCode,
             segment,
             surfaceM2: s,
             loypredm2: loy,
@@ -129,7 +156,9 @@ class LoyersAnilService {
      */
     getLoypredForCodes(codeInsees, segment) {
         if (!this.isAvailable() || !codeInsees || codeInsees.length === 0) return [];
-        const uniq = [...new Set(codeInsees.map((c) => String(c).trim()))].filter((c) => /^\d{5}$/.test(c));
+        const uniq = [
+            ...new Set(codeInsees.map((c) => normalizeCommuneInseeInput(c)).filter((c) => c && isValidCommuneInseeCode(c)))
+        ];
         if (!uniq.length) return [];
         const cap = uniq.slice(0, 400);
         const Database = require('better-sqlite3');
@@ -152,4 +181,11 @@ class LoyersAnilService {
     }
 }
 
-module.exports = { LoyersAnilService, REFERENCE_M2, SEGMENT_LABELS, DB_FILENAME };
+module.exports = {
+    LoyersAnilService,
+    REFERENCE_M2,
+    SEGMENT_LABELS,
+    DB_FILENAME,
+    isValidCommuneInseeCode,
+    normalizeCommuneInseeInput
+};

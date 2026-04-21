@@ -100,6 +100,17 @@ function normalizeHeader(h) {
         .trim();
 }
 
+/** INSEE métropole (5 chiffres) ou Corse 2A### / 2B### comme dans les CSV ANIL. */
+function normalizeInseeCsv(raw) {
+    const t = stripQuotes(raw).replace(/\s/g, '').toUpperCase();
+    if (!t) return null;
+    if (/^2[AB]\d{3}$/.test(t)) return t;
+    const digits = t.replace(/\D/g, '');
+    if (!digits || !/^\d+$/.test(digits)) return null;
+    const code = digits.padStart(5, '0');
+    return /^\d{5}$/.test(code) ? code : null;
+}
+
 async function importCsvFile(db, segment, filePath) {
     const insert = db.prepare(`INSERT OR REPLACE INTO loyers_communes (
         code_insee, segment, libgeo, dep, reg, loypredm2, lwr_ipm2, upr_ipm2, typpred, nbobs_com, nbobs_mail, r2_adj
@@ -122,8 +133,8 @@ async function importCsvFile(db, segment, filePath) {
             )
             .on('data', (row) => {
                 const rawCode = stripQuotes(row.INSEE_C || row.insee_c);
-                const code = rawCode.padStart(5, '0');
-                if (!/^\d{5}$/.test(code)) return;
+                const code = normalizeInseeCsv(rawCode);
+                if (!code) return;
 
                 const lwrKey = Object.keys(row).find((k) => k.toLowerCase().includes('lwr') && k.toLowerCase().includes('ipm'));
                 const uprKey = Object.keys(row).find((k) => k.toLowerCase().includes('upr') && k.toLowerCase().includes('ipm'));

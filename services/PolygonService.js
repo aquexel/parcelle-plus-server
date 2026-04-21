@@ -332,10 +332,50 @@ class PolygonService {
         });
     }
 
+    /**
+     * Dérive `coordinates` (anneau ou point) depuis un GeoJSON Feature/Geometry (même logique que POST côté serveur).
+     */
+    _coordinatesFromGeoJsonPayload(geoJson) {
+        if (geoJson == null) return undefined;
+        try {
+            const raw = typeof geoJson === 'string' ? JSON.parse(geoJson) : geoJson;
+            let geom = raw;
+            if (raw && raw.type === 'Feature' && raw.geometry) geom = raw.geometry;
+            if (geom && geom.type === 'Polygon' && Array.isArray(geom.coordinates) && geom.coordinates[0]) {
+                return geom.coordinates[0];
+            }
+            if (
+                geom &&
+                geom.type === 'MultiPolygon' &&
+                Array.isArray(geom.coordinates) &&
+                geom.coordinates[0] &&
+                geom.coordinates[0][0]
+            ) {
+                return geom.coordinates[0][0];
+            }
+            if (
+                geom &&
+                geom.type === 'Point' &&
+                Array.isArray(geom.coordinates) &&
+                geom.coordinates.length >= 2
+            ) {
+                const lng = Number(geom.coordinates[0]);
+                const lat = Number(geom.coordinates[1]);
+                if (Number.isFinite(lat) && Number.isFinite(lng)) return [{ lat, lng }];
+            }
+        } catch (_) {}
+        return undefined;
+    }
+
     async updatePolygon(id, updateData) {
         return new Promise((resolve, reject) => {
             const self = this;
             const now = new Date().toISOString();
+
+            if (updateData.geoJson !== undefined && updateData.coordinates === undefined) {
+                const ring = self._coordinatesFromGeoJsonPayload(updateData.geoJson);
+                if (ring) updateData.coordinates = ring;
+            }
             
             // Construire la requête dynamiquement
             const updateFields = [];
@@ -404,6 +444,11 @@ class PolygonService {
             if (updateData.anneeConstruction !== undefined) {
                 updateFields.push('annee_construction = ?');
                 params.push(updateData.anneeConstruction);
+            }
+            if (updateData.classeDpe !== undefined || updateData.classe_dpe !== undefined) {
+                updateFields.push('classe_dpe = ?');
+                const v = updateData.classeDpe !== undefined ? updateData.classeDpe : updateData.classe_dpe;
+                params.push(v || null);
             }
             if (updateData.listingType !== undefined || updateData.listing_type !== undefined) {
                 const raw = updateData.listingType !== undefined ? updateData.listingType : updateData.listing_type;

@@ -115,7 +115,7 @@ const pdfService = new PDFService();
 const photoDistributionService = new PhotoDistributionService();
 const emailService = new EmailService();
 const entitlementService = new EntitlementService();
-const { LoyersAnilService } = require('./services/LoyersAnilService');
+const { LoyersAnilService, isValidCommuneInseeCode, normalizeCommuneInseeInput } = require('./services/LoyersAnilService');
 const loyersAnilService = new LoyersAnilService();
 
 /**
@@ -155,6 +155,64 @@ function fetchHttpsJson(url) {
             reject(new Error('timeout'));
         });
     });
+}
+
+/** Marge autour de la bbox carte pour inclure des communes dont le centre est proche du bord. */
+function inflateBboxHeatmap(south, west, north, east, ratio = 0.07) {
+    const padLat = Math.max((north - south) * ratio, 0.003);
+    const padLon = Math.max((east - west) * ratio, 0.003);
+    return {
+        south: south - padLat,
+        west: west - padLon,
+        north: north + padLat,
+        east: east + padLon
+    };
+}
+
+function communeCentreInBbox(centre, west, south, east, north) {
+    if (!centre || centre.type !== 'Point' || !Array.isArray(centre.coordinates)) return false;
+    const [lon, lat] = centre.coordinates;
+    return Number.isFinite(lon) && Number.isFinite(lat) && lon >= west && lon <= east && lat >= south && lat <= north;
+}
+
+/**
+ * Départements croisant la bbox (échantillons lat/lon ; l’API Géo ne filtre pas par bbox sur /communes).
+ */
+async function fetchDepartementsTouchingBbox(south, west, north, east) {
+    const lats = [south, south, south, (south + north) / 2, (south + north) / 2, north, north, north];
+    const lons = [west, (west + east) / 2, east, west, east, west, (west + east) / 2, east];
+    const deptSet = new Set();
+    for (let i = 0; i < lats.length; i++) {
+        const lat = lats[i];
+        const lon = lons[i];
+        const url = `https://geo.api.gouv.fr/communes?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&fields=codeDepartement`;
+        try {
+            const arr = await fetchHttpsJson(url);
+            if (Array.isArray(arr) && arr.length && arr[0].codeDepartement != null) {
+                deptSet.add(String(arr[0].codeDepartement));
+            }
+        } catch (e) {
+            console.warn('⚠️ geo.api.gouv département (échantillon):', e.message);
+        }
+    }
+    return [...deptSet];
+}
+
+async function fetchCommunesForDepartement(deptCode) {
+    const enc = encodeURIComponent(deptCode);
+    const url = `https://geo.api.gouv.fr/departements/${enc}/communes?fields=nom,code,centre`;
+    return fetchHttpsJson(url);
+}
+
+/** Réponse : une Feature GeoJSON avec Polygon ou MultiPolygon. */
+async function fetchCommuneContourGeoFeature(codeInsee) {
+    const enc = encodeURIComponent(codeInsee);
+    const url = `https://geo.api.gouv.fr/communes/${enc}?fields=nom,code,contour&format=geojson&geometry=contour`;
+    const feat = await fetchHttpsJson(url);
+    if (!feat || feat.type !== 'Feature' || !feat.geometry) return null;
+    const t = feat.geometry.type;
+    if (t !== 'Polygon' && t !== 'MultiPolygon') return null;
+    return feat;
 }
 
 // PushNotificationService optionnel (peut fonctionner sans firebase-admin pour l'enregistrement des tokens)
@@ -571,17 +629,102 @@ app.get('/api/polygons/user/:userId', async (req, res) => {
     }
 });
 
+/** Centre approximatif d’un polygone annonce (coordonnées [{ lat, lng }, …]). */
+function polygonRingCentroid(coordinates) {
+    if (!Array.isArray(coordinates) || coordinates.length === 0) return null;
+    let sumLat = 0;
+    let sumLng = 0;
+    let n = 0;
+    for (const pt of coordinates) {
+        if (
+            pt &&
+            typeof pt.lat === 'number' &&
+            typeof pt.lng === 'number' &&
+            Number.isFinite(pt.lat) &&
+            Number.isFinite(pt.lng)
+        ) {
+            sumLat += pt.lat;
+            sumLng += pt.lng;
+            n++;
+        }
+    }
+    if (!n) return null;
+    return { lat: sumLat / n, lng: sumLng / n };
+}
+
+function centroidInsideBBox(lat, lng, south, west, north, east) {
+    return lat >= south && lat <= north && lng >= west && lng <= east;
+}
+
+/**
+ * Filtre types d’annonces : ?types=maison → MAISON_SEULE + MAISON_TERRAIN,
+ * ou liste CSV exacte (ex. MAISON_SEULE,APPARTEMENT).
+ */
+function parsePolygonTypesFilter(typesParam) {
+    if (typesParam == null || String(typesParam).trim() === '') return null;
+    const s = String(typesParam).trim().toLowerCase();
+    if (s === 'maison' || s === 'maisons') {
+        return new Set(['MAISON_SEULE', 'MAISON_TERRAIN']);
+    }
+    const parts = String(typesParam)
+        .split(',')
+        .map((t) => t.trim().toUpperCase())
+        .filter(Boolean);
+    if (!parts.length) return null;
+    return new Set(parts);
+}
+
 // Route pour récupérer les polygones publics (pour les acheteurs)
 app.get('/api/polygons/public', async (req, res) => {
     try {
-        const { limit = 100, listing_type: listingTypeQuery } = req.query;
+        const { limit: limitRaw, listing_type: listingTypeQuery } = req.query;
         const listingFilter =
             listingTypeQuery === 'rent' || listingTypeQuery === 'sale'
                 ? listingTypeQuery
                 : null;
 
+        let south = parseFloat(String(req.query.south ?? '').replace(',', '.'));
+        let west = parseFloat(String(req.query.west ?? '').replace(',', '.'));
+        let north = parseFloat(String(req.query.north ?? '').replace(',', '.'));
+        let east = parseFloat(String(req.query.east ?? '').replace(',', '.'));
+        let bboxActive =
+            [south, west, north, east].every((x) => Number.isFinite(x)) && south < north && west < east;
+
+        // Compat clients (ex. Flutter) : bbox = minLon,minLat,maxLon,maxLat
+        if (!bboxActive && req.query.bbox != null && String(req.query.bbox).trim() !== '') {
+            const bp = String(req.query.bbox)
+                .split(',')
+                .map((s) => parseFloat(String(s).trim().replace(',', '.')));
+            if (bp.length === 4 && bp.every((x) => Number.isFinite(x))) {
+                west = bp[0];
+                south = bp[1];
+                east = bp[2];
+                north = bp[3];
+                bboxActive = south < north && west < east;
+            }
+        }
+
+        const typeSet = parsePolygonTypesFilter(req.query.types != null ? req.query.types : req.query.type);
+
+        const minPrice = parseFloat(String(req.query.min_price ?? '').replace(',', '.'));
+        const maxPrice = parseFloat(String(req.query.max_price ?? '').replace(',', '.'));
+        const minPieces = parseInt(String(req.query.min_pieces ?? ''), 10);
+        const maxPieces = parseInt(String(req.query.max_pieces ?? ''), 10);
+        const minSurfM = parseFloat(String(req.query.min_surface_maison ?? '').replace(',', '.'));
+        const maxSurfM = parseFloat(String(req.query.max_surface_maison ?? '').replace(',', '.'));
+        const minSurfParcel = parseFloat(String(req.query.min_surface ?? '').replace(',', '.'));
+        const maxSurfParcel = parseFloat(String(req.query.max_surface ?? '').replace(',', '.'));
+
+        const parsedLimit = parseInt(String(limitRaw ?? ''), 10);
+        const defaultFetch = bboxActive || typeSet ? 400 : 100;
+        const maxFetch = bboxActive ? 800 : 500;
+        const fetchLimit = Math.min(
+            Math.max(Number.isFinite(parsedLimit) ? parsedLimit : defaultFetch, 1),
+            maxFetch
+        );
+
         // Récupérer les polygones (filtrage vente/location si listing_type=rent|sale)
-        const allPolygons = await polygonService.getAllPolygons(null, Number(limit) || 100);
+        const allPolygons = await polygonService.getAllPolygons(null, fetchLimit);
         let publicPolygons = allPolygons.filter((p) => {
             const isPublic = (p.is_public === 1 || p.is_public === true || p.isPublic === true);
             const hasValidStatus = (p.status === 'active' || p.status === 'available');
@@ -598,7 +741,59 @@ app.get('/api/polygons/public', async (req, res) => {
                 return lt === listingFilter;
             });
         }
-        
+
+        if (typeSet && typeSet.size > 0) {
+            publicPolygons = publicPolygons.filter((p) => {
+                const pt = String(p.type || '').toUpperCase();
+                if (typeSet.has(pt)) return true;
+                // Filtre « maison » (CSV → MAISON) : inclure les annonces legacy MAISON_SEULE
+                if (typeSet.has('MAISON') && pt === 'MAISON_SEULE') return true;
+                return false;
+            });
+        }
+
+        if (bboxActive) {
+            publicPolygons = publicPolygons.filter((p) => {
+                const c = polygonRingCentroid(p.coordinates);
+                if (!c) return false;
+                return centroidInsideBBox(c.lat, c.lng, south, west, north, east);
+            });
+        }
+
+        if (Number.isFinite(minPrice)) {
+            publicPolygons = publicPolygons.filter((p) => Number(p.price) >= minPrice);
+        }
+        if (Number.isFinite(maxPrice)) {
+            publicPolygons = publicPolygons.filter((p) => Number(p.price) <= maxPrice);
+        }
+        if (Number.isFinite(minPieces)) {
+            publicPolygons = publicPolygons.filter((p) => (p.nombre_pieces != null ? Number(p.nombre_pieces) : 0) >= minPieces);
+        }
+        if (Number.isFinite(maxPieces)) {
+            publicPolygons = publicPolygons.filter(
+                (p) => p.nombre_pieces != null && Number(p.nombre_pieces) <= maxPieces
+            );
+        }
+        if (Number.isFinite(minSurfM)) {
+            publicPolygons = publicPolygons.filter(
+                (p) => p.surface_maison != null && Number(p.surface_maison) >= minSurfM
+            );
+        }
+        if (Number.isFinite(maxSurfM)) {
+            publicPolygons = publicPolygons.filter(
+                (p) => p.surface_maison != null && Number(p.surface_maison) <= maxSurfM
+            );
+        }
+        if (Number.isFinite(minSurfParcel)) {
+            publicPolygons = publicPolygons.filter((p) => Number(p.surface) >= minSurfParcel);
+        }
+        if (Number.isFinite(maxSurfParcel)) {
+            publicPolygons = publicPolygons.filter((p) => Number(p.surface) <= maxSurfParcel);
+        }
+
+        const responseLimit = Math.min(Math.max(parseInt(String(req.query.response_limit ?? ''), 10) || 200, 1), 500);
+        publicPolygons = publicPolygons.slice(0, responseLimit);
+
         // Ajouter le nombre de photos pour chaque polygone (via système P2P)
         const polygonsWithPhotos = await Promise.all(publicPolygons.map(async (polygon) => {
             let photoCount = 0;
@@ -654,6 +849,136 @@ app.get('/api/polygons/:id', async (req, res) => {
     }
 });
 
+/**
+ * Déballage JSON (chaîne échappée plusieurs fois côté clients).
+ */
+function parseJsonLoose(value, maxDepth) {
+    maxDepth = maxDepth || 4;
+    let cur = value;
+    for (let d = 0; d < maxDepth; d++) {
+        if (typeof cur !== 'string') return cur;
+        const t = cur.trim();
+        if (!t) return null;
+        try {
+            cur = JSON.parse(t);
+        } catch (e) {
+            return null;
+        }
+    }
+    return cur;
+}
+
+/**
+ * Extrait un anneau [ [lng,lat], ... ] ou liste de points depuis un objet GeoJSON déjà parsé.
+ */
+function extractCoordinateRingFromGeoObject(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    let geom = raw;
+    if (raw.type === 'Feature') {
+        if (!raw.geometry) return null;
+        geom = raw.geometry;
+    }
+    if (!geom || typeof geom !== 'object') return null;
+    if (geom.type === 'Polygon' && Array.isArray(geom.coordinates) && geom.coordinates[0]) {
+        return geom.coordinates[0];
+    }
+    if (
+        geom.type === 'MultiPolygon' &&
+        Array.isArray(geom.coordinates) &&
+        geom.coordinates[0] &&
+        geom.coordinates[0][0]
+    ) {
+        return geom.coordinates[0][0];
+    }
+    if (geom.type === 'Point' && Array.isArray(geom.coordinates) && geom.coordinates.length >= 2) {
+        const lng = Number(geom.coordinates[0]);
+        const lat = Number(geom.coordinates[1]);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            return [{ lat, lng }];
+        }
+    }
+    return null;
+}
+
+/**
+ * Alignement clients (Flutter / ancienne app) → schéma attendu par `PolygonService.savePolygon`.
+ * - `coordinates` requis : dérivé de `geoJson` / `geoJSON`, chaîne JSON imbriquée, ou `lat`/`lon`.
+ * - `type` en majuscules (ex. MAISON_SEULE) pour filtres / alertes serveur.
+ */
+function normalizePolygonCreatePayload(polygonData) {
+    if (!polygonData || typeof polygonData !== 'object') return;
+
+    if (
+        polygonData.coordinates != null &&
+        typeof polygonData.coordinates === 'string' &&
+        String(polygonData.coordinates).trim()
+    ) {
+        try {
+            const parsed = parseJsonLoose(polygonData.coordinates, 4);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                polygonData.coordinates = parsed;
+            }
+        } catch (e) {
+            console.warn('⚠️ normalizePolygonCreatePayload coordinates string:', e.message);
+        }
+    }
+
+    const geoInput =
+        polygonData.geoJson != null
+            ? polygonData.geoJson
+            : polygonData.geoJSON != null
+              ? polygonData.geoJSON
+              : null;
+
+    const hasCoords =
+        polygonData.coordinates != null &&
+        polygonData.coordinates !== '' &&
+        !(Array.isArray(polygonData.coordinates) && polygonData.coordinates.length === 0);
+
+    if (!hasCoords && geoInput != null) {
+        try {
+            const raw = parseJsonLoose(geoInput, 5);
+            const ring = extractCoordinateRingFromGeoObject(raw);
+            if (ring && ring.length > 0) {
+                polygonData.coordinates = ring;
+            }
+        } catch (e) {
+            console.warn('⚠️ normalizePolygonCreatePayload geoJson:', e.message);
+        }
+    }
+
+    let stillNoCoords =
+        polygonData.coordinates == null ||
+        polygonData.coordinates === '' ||
+        (Array.isArray(polygonData.coordinates) && polygonData.coordinates.length === 0);
+    if (stillNoCoords) {
+        const lat = Number(
+            polygonData.lat != null ? polygonData.lat : polygonData.latitude
+        );
+        const lng = Number(
+            polygonData.lon != null ? polygonData.lon : polygonData.longitude
+        );
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            polygonData.coordinates = [{ lat, lng }];
+            stillNoCoords = false;
+        }
+    }
+
+    const rawType = String(polygonData.type || 'TERRAIN')
+        .trim()
+        .toUpperCase()
+        .replace(/-/g, '_');
+    if (rawType === 'MAISON') polygonData.type = 'MAISON_SEULE';
+    else polygonData.type = rawType || 'TERRAIN';
+}
+
+function hasValidPolygonCoordinates(polygonData) {
+    const c = polygonData && polygonData.coordinates;
+    if (c == null || c === '') return false;
+    if (!Array.isArray(c) || c.length === 0) return false;
+    return true;
+}
+
 app.post('/api/polygons', async (req, res) => {
     try {
         const authenticatedUser = await requireAuthenticatedUser(req, res);
@@ -669,6 +994,15 @@ app.post('/api/polygons', async (req, res) => {
             });
         }
         polygonData.userId = sellerId;
+        normalizePolygonCreatePayload(polygonData);
+
+        if (!hasValidPolygonCoordinates(polygonData)) {
+            return res.status(400).json({
+                error:
+                    'Coordonnees manquantes ou invalides : envoyez geoJson (Feature ou Polygon GeoJSON), coordinates (tableau), ou lat et lon.',
+                code: 'MISSING_COORDINATES'
+            });
+        }
 
         const savedPolygon = await polygonService.savePolygon(polygonData);
         const publicationRegistration = entitlementService.registerAnnouncementCreation(
@@ -3388,11 +3722,11 @@ app.get('/api/loyers/info', (req, res) => {
 
 app.get('/api/loyers/commune/:codeInsee', (req, res) => {
     try {
-        const code = String(req.params.codeInsee || '').trim();
-        if (!/^\d{5}$/.test(code)) {
+        const code = normalizeCommuneInseeInput(req.params.codeInsee);
+        if (!isValidCommuneInseeCode(code)) {
             return res.status(400).json({
                 error: 'Code INSEE invalide',
-                message: 'Le code commune doit comporter 5 chiffres (ex. 75107)'
+                message: 'Code commune attendu : 5 chiffres (ex. 75107) ou Corse 2A004 / 2B108'
             });
         }
         if (!loyersAnilService.isAvailable()) {
@@ -3418,12 +3752,15 @@ app.get('/api/loyers/commune/:codeInsee', (req, res) => {
 
 app.get('/api/loyers/estimate', (req, res) => {
     try {
-        const code = String(req.query.codeInsee || '').trim();
+        const code = normalizeCommuneInseeInput(req.query.codeInsee);
         const segment = String(req.query.segment || 'APP').toUpperCase();
         const surface = parseFloat(String(req.query.surface || '').replace(',', '.'));
         const allowed = ['APP', 'APP12', 'APP3', 'MAISON'];
-        if (!/^\d{5}$/.test(code)) {
-            return res.status(400).json({ error: 'codeInsee requis (5 chiffres)' });
+        if (!isValidCommuneInseeCode(code)) {
+            return res.status(400).json({
+                error: 'codeInsee invalide',
+                message: 'Attendu : 5 chiffres (ex. 40192) ou Corse 2A004 / 2B108'
+            });
         }
         if (!allowed.includes(segment)) {
             return res.status(400).json({
@@ -3455,8 +3792,8 @@ app.get('/api/loyers/estimate', (req, res) => {
 });
 
 /**
- * Heatmap locataire : communes dans la bbox (geo.api.gouv) + loyer au m² prédit ANIL pour un segment.
- * GeoJSON FeatureCollection de points (centroides communes).
+ * Heatmap locataire : communes visibles (centre dans la bbox) + contour geo.api.gouv + loyer au m² ANIL.
+ * GeoJSON FeatureCollection de polygones (remplissage vert → jaune → rouge côté client selon min/max locaux).
  */
 app.get('/api/loyers/bbox-heatmap', async (req, res) => {
     try {
@@ -3466,6 +3803,8 @@ app.get('/api/loyers/bbox-heatmap', async (req, res) => {
         const east = parseFloat(String(req.query.east ?? '').replace(',', '.'));
         const segment = String(req.query.segment || 'APP').toUpperCase();
         const allowed = ['APP', 'APP12', 'APP3', 'MAISON'];
+        const maxContours = Math.min(Math.max(parseInt(String(req.query.maxContours || '120'), 10) || 120, 1), 200);
+        const contourConcurrency = Math.min(Math.max(parseInt(String(req.query.contourConcurrency || '8'), 10) || 8, 1), 12);
         if (![south, west, north, east].every((x) => Number.isFinite(x))) {
             return res.status(400).json({ error: 'bbox invalide', message: 'south, west, north, east requis' });
         }
@@ -3482,52 +3821,90 @@ app.get('/api/loyers/bbox-heatmap', async (req, res) => {
             });
         }
 
-        const bboxParam = `${west},${south},${east},${north}`;
-        const geoUrl = `https://geo.api.gouv.fr/communes?bbox=${encodeURIComponent(bboxParam)}&fields=nom,code,centre&format=geojson&geometry=centre`;
-        const geo = await fetchHttpsJson(geoUrl);
-        const featsIn = Array.isArray(geo.features) ? geo.features : [];
-        const codeSet = new Set();
-        const byCode = new Map();
-        for (const f of featsIn) {
-            const code = f && f.properties && f.properties.code != null ? String(f.properties.code).padStart(5, '0') : '';
-            if (!/^\d{5}$/.test(code)) continue;
-            codeSet.add(code);
-            byCode.set(code, f);
+        const b = inflateBboxHeatmap(south, west, north, east);
+        const departements = await fetchDepartementsTouchingBbox(b.south, b.west, b.north, b.east);
+        if (!departements.length) {
+            return res.json({
+                type: 'FeatureCollection',
+                features: [],
+                segment,
+                geometryHint: 'Polygon',
+                sourceAttribution: 'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin',
+                datasetUrl:
+                    'https://www.data.gouv.fr/datasets/carte-des-loyers-indicateurs-de-loyers-dannonce-par-commune-en-2025'
+            });
         }
-        const codes = [...codeSet];
-        const loyerRows = loyersAnilService.getLoypredForCodes(codes, segment);
-        const loyByCode = new Map(loyerRows.map((r) => [r.codeInsee, r]));
 
-        const features = [];
-        for (const code of codes) {
-            const row = loyByCode.get(code);
-            if (!row || row.loypredm2 == null || !Number.isFinite(row.loypredm2)) continue;
-            const f = byCode.get(code);
-            const geom = f && f.geometry;
-            if (!geom || geom.type !== 'Point' || !Array.isArray(geom.coordinates) || geom.coordinates.length < 2) {
+        const communeByCode = new Map();
+        for (const dep of departements) {
+            let list;
+            try {
+                list = await fetchCommunesForDepartement(dep);
+            } catch (e) {
+                console.warn('⚠️ /departements', dep, '/communes:', e.message);
                 continue;
             }
-            const [lon, lat] = geom.coordinates;
-            if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-            const nom = (f.properties && f.properties.nom) || row.libgeo || '';
-            features.push({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [lon, lat] },
-                properties: {
-                    codeInsee: code,
-                    nom,
-                    segment,
-                    loypredm2: row.loypredm2,
-                    sourceAttribution:
-                        'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin'
+            if (!Array.isArray(list)) continue;
+            for (const row of list) {
+                const code = normalizeCommuneInseeInput(row.code);
+                if (!isValidCommuneInseeCode(code)) continue;
+                if (!communeCentreInBbox(row.centre, b.west, b.south, b.east, b.north)) continue;
+                if (!communeByCode.has(code)) {
+                    communeByCode.set(code, { nom: row.nom || '', centre: row.centre });
                 }
-            });
+            }
+        }
+
+        const codesInView = [...communeByCode.keys()];
+        const loyerRows = loyersAnilService.getLoypredForCodes(codesInView, segment);
+        const loyByCode = new Map(loyerRows.map((r) => [r.codeInsee, r]));
+        const withLoyer = codesInView.filter((code) => {
+            const row = loyByCode.get(code);
+            return row && row.loypredm2 != null && Number.isFinite(row.loypredm2);
+        });
+        const truncated = withLoyer.length > maxContours;
+        const codesToFetch = withLoyer.slice(0, maxContours);
+
+        const features = [];
+        for (let i = 0; i < codesToFetch.length; i += contourConcurrency) {
+            const batch = codesToFetch.slice(i, i + contourConcurrency);
+            const contours = await Promise.all(
+                batch.map((code) =>
+                    fetchCommuneContourGeoFeature(code).catch((e) => {
+                        console.warn('⚠️ contour commune', code, e.message);
+                        return null;
+                    })
+                )
+            );
+            for (let j = 0; j < batch.length; j++) {
+                const code = batch[j];
+                const row = loyByCode.get(code);
+                const contourFeat = contours[j];
+                if (!row || !contourFeat) continue;
+                const meta = communeByCode.get(code) || {};
+                const nom = (contourFeat.properties && contourFeat.properties.nom) || meta.nom || row.libgeo || '';
+                features.push({
+                    type: 'Feature',
+                    geometry: contourFeat.geometry,
+                    properties: {
+                        codeInsee: code,
+                        nom,
+                        segment,
+                        loypredm2: row.loypredm2,
+                        sourceAttribution:
+                            'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin'
+                    }
+                });
+            }
         }
 
         res.json({
             type: 'FeatureCollection',
             features,
             segment,
+            geometryHint: 'Polygon',
+            truncated,
+            maxContours,
             sourceAttribution: 'Estimations ANIL, à partir des données du Groupe SeLoger et de leboncoin',
             datasetUrl:
                 'https://www.data.gouv.fr/datasets/carte-des-loyers-indicateurs-de-loyers-dannonce-par-commune-en-2025'
